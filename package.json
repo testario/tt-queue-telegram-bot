@@ -2,17 +2,31 @@
   "name": "tt-queue-bot",
   "version": "1.0.0",
   "description": "",
+  "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "nodemon src/index"
+    "start": "nodemon src/index",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
   },
   "author": "",
   "license": "ISC",
+  "imports": {
+    "#application": "./src/application/index.js",
+    "#application/*": "./src/application/*",
+    "#domain": "./src/domain/index.js",
+    "#domain/*": "./src/domain/*",
+    "#infrastructure": "./src/infrastructure/index.js",
+    "#infrastructure/*": "./src/infrastructure/*",
+    "#interfaces": "./src/interfaces/index.js",
+    "#interfaces/*": "./src/interfaces/*"
+  },
   "dependencies": {
     "dotenv": "^16.4.7",
-    "node-telegram-bot-api": "^0.66.0"
+    "node-telegram-bot-api": "^0.67.0"
   },
   "devDependencies": {
+    "@jest/test-sequencer": "^29.7.0",
+    "jest": "^29.7.0",
     "nodemon": "^3.1.9"
   }
 }

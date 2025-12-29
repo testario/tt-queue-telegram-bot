@@ -1,5 +1,9 @@
 import TelegramApi from "node-telegram-bot-api";
-import { DEFAULT_GAME_TIME, TIME_READY } from "#application/config/time.js";
+import {
+  DEFAULT_GAME_TIME,
+  TIME_READY,
+  WORK_SCHEDULE,
+} from "#application/config/time.js";
 import { createLogger } from "#infrastructure/logger/Logger.js";
 import { QueueService } from "#domain/services/QueueService.js";
 import { InMemoryQueueRepository } from "#infrastructure/repositories/InMemoryQueueRepository.js";
@@ -65,6 +69,7 @@ const createBot = (token, { logger } = {}) => {
     const queueService = new QueueService({
       readyMs: TIME_READY,
       gameMs: DEFAULT_GAME_TIME,
+      workSchedule: WORK_SCHEDULE,
     });
     const repository = new InMemoryQueueRepository(queueService.createInitialState());
     const notifier = new EventNotifier();
@@ -86,6 +91,7 @@ const createBot = (token, { logger } = {}) => {
       repository,
       queueService,
       messages: templates,
+      clock,
       logger: log.child(`usecase:RegisterSearch:${chatId}`),
     });
     const addMatch = new AddMatch({
@@ -102,6 +108,7 @@ const createBot = (token, { logger } = {}) => {
       repository,
       queueService,
       messages: templates,
+      clock,
       logger: log.child(`usecase:CancelSearch:${chatId}`),
     });
     const cancelMatch = new CancelMatch({
@@ -121,7 +128,9 @@ const createBot = (token, { logger } = {}) => {
     });
     const getPlayed = new GetPlayed({
       repository,
+      queueService,
       messages: templates,
+      clock,
       logger: log.child(`usecase:GetPlayed:${chatId}`),
     });
 

@@ -1,19 +1,24 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
+/** Юзкейс постановки игрока в поиск соперника с учётом текущего состояния. */
 class RegisterSearch {
-  constructor({ repository, queueService, messages, logger }) {
+  constructor({ repository, queueService, messages, clock, logger }) {
     this.repository = repository;
     this.queueService = queueService;
     this.messages = messages;
+    this.clock = clock || { now: () => new Date() };
     this.logger = logger || createNullLogger();
   }
 
+  /** Регистрирует запрос игрока на поиск соперника и возвращает текст результата. */
   async execute(player) {
     this.logger.info("Игрок отправил запрос на поиск соперника", { player });
     const state = await this.repository.get();
+    const now = this.clock.now();
     const { state: nextState, status } = this.queueService.registerSearch(
       state,
-      player
+      player,
+      now
     );
     await this.repository.save(nextState);
 

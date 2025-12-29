@@ -3,7 +3,11 @@ import { AddMatch } from "#application/usecases/AddMatch.js";
 import { QueueService } from "#domain/services/QueueService.js";
 import { InMemoryQueueRepository } from "#infrastructure/repositories/InMemoryQueueRepository.js";
 import { templates } from "#application/messages/templates.js";
-import { DEFAULT_GAME_TIME, TIME_READY } from "#application/config/time.js";
+import {
+  DEFAULT_GAME_TIME,
+  TIME_READY,
+  WORK_SCHEDULE,
+} from "#application/config/time.js";
 import { QueueState } from "#domain/entities/QueueState.js";
 
 class StubNotifier {
@@ -40,7 +44,11 @@ describe("AddMatch use case", () => {
 
   beforeEach(() => {
     repository = new InMemoryQueueRepository();
-    queueService = new QueueService({ readyMs: TIME_READY, gameMs: DEFAULT_GAME_TIME });
+    queueService = new QueueService({
+      readyMs: TIME_READY,
+      gameMs: DEFAULT_GAME_TIME,
+      workSchedule: WORK_SCHEDULE,
+    });
     notifier = new StubNotifier();
     orchestrator = new StubOrchestrator();
     clock = new StubClock();

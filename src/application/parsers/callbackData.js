@@ -4,6 +4,10 @@ const cancelMatchPrefix = "i_want_to_out:";
 const testPrefix = "i_want_to_test:";
 const inlineTestPrefix = "inline_test:";
 
+/**
+ * Разбирает payload callback-кнопки и возвращает структурированное действие.
+ * Поддерживает поиск соперника, отмену поиска/матча и тестовые сценарии.
+ */
 const parseCallbackData = (data) => {
   if (data.startsWith(playWithPrefix)) {
     return { type: "play_with", player: data.split(":").pop() };

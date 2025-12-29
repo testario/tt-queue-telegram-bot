@@ -1,5 +1,6 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
+/** Юзкейс отмены матча текущего или будущего и пересчёта расписания. */
 class CancelMatch {
   constructor({
     chatId,
@@ -21,6 +22,7 @@ class CancelMatch {
     this.logger = logger || createNullLogger();
   }
 
+  /** Отменяет матч для игрока, уведомляет чат и управляет таймерами. */
   async execute(player) {
     this.logger.info("Отмена матча запрошена", { player });
     const state = await this.repository.get();

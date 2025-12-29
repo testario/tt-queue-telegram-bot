@@ -24,14 +24,20 @@ describe("GetPlayed use case", () => {
     const played = ["@p1", "@p2"];
     const repository = {
       get: jest.fn().mockResolvedValue(new QueueState({ played })),
+      save: jest.fn(),
+    };
+    const queueService = {
+      normalizeState: jest.fn((state) => ({ state })),
     };
     const messages = { playedList: jest.fn().mockReturnValue("played text") };
-    const useCase = new GetPlayed({ repository, messages });
+    const useCase = new GetPlayed({ repository, queueService, messages });
 
     const result = await useCase.execute();
 
     expect(result).toBe("played text");
     expect(messages.playedList).toHaveBeenCalledWith(played);
+    expect(queueService.normalizeState).toHaveBeenCalled();
+    expect(repository.save).toHaveBeenCalledWith(expect.any(QueueState));
   });
 });
 

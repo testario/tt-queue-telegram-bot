@@ -1,5 +1,9 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
+/**
+ * Управляет жизненным циклом матчей: планирует старт/финиш,
+ * уведомляет участников и актуализирует состояние очереди.
+ */
 class MatchOrchestrator {
   constructor({ chatId, timer, notifier, repository, queueService, messages, clock, logger }) {
     this.chatId = chatId;
@@ -12,10 +16,12 @@ class MatchOrchestrator {
     this.logger = logger || createNullLogger();
   }
 
+  /** Собирает уникальный идентификатор задачи таймера для матча. */
   buildId(prefix, match) {
     return `${prefix}:${match.player1}:${match.player2}:${match.startDate.getTime()}`;
   }
 
+  /** Планирует запуск и завершение указанного матча. */
   scheduleLifecycle(match) {
     const startId = this.buildId("start", match);
     const finishId = this.buildId("finish", match);
@@ -40,6 +46,7 @@ class MatchOrchestrator {
     });
   }
 
+  /** Отменяет таймеры старта и окончания конкретного матча. */
   cancelForMatch(match) {
     const startId = this.buildId("start", match);
     const finishId = this.buildId("finish", match);
@@ -51,11 +58,13 @@ class MatchOrchestrator {
     });
   }
 
+  /** Отменяет все запланированные таймеры матчей. */
   cancelAll() {
     this.timer.cancelAll();
     this.logger.warn("Отменены все таймеры матчей");
   }
 
+  /** Обрабатывает завершение матча: сохраняет состояние и запускает следующий матч, если есть. */
   async handleMatchFinished(match) {
     this.logger.info("Матч завершен", {
       player1: match.player1,

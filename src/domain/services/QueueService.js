@@ -2,17 +2,26 @@ import { Match } from "../entities/Match.js";
 import { QueueState } from "../entities/QueueState.js";
 
 class QueueService {
-  constructor({ readyMs, gameMs }) {
+  constructor({ readyMs, gameMs, workSchedule }) {
     this.readyMs = readyMs;
     this.gameMs = gameMs;
+    this.workSchedule =
+      workSchedule ||
+      {
+        workStart: { hour: 10, minute: 0 },
+        lunchStart: { hour: 14, minute: 0 },
+        lunchDurationMinutes: 60,
+        workEnd: { hour: 19, minute: 0 },
+      };
   }
 
   createInitialState() {
     return QueueState.createEmpty();
   }
 
-  registerSearch(state, player) {
-    const nextState = state.clone();
+  registerSearch(state, player, now = new Date()) {
+    const { state: normalizedState } = this.normalizeState(state, now);
+    const nextState = normalizedState.clone();
     if (!nextState.hasPlayer(player)) {
       nextState.addSearching(player);
       return { state: nextState, status: "added" };
@@ -29,8 +38,9 @@ class QueueService {
     return { state: nextState, status: "unknown" };
   }
 
-  cancelSearch(state, player) {
-    const nextState = state.clone();
+  cancelSearch(state, player, now = new Date()) {
+    const { state: normalizedState } = this.normalizeState(state, now);
+    const nextState = normalizedState.clone();
     if (nextState.isSearching(player)) {
       nextState.removeSearching(player);
       return { state: nextState, status: "removed" };
@@ -42,7 +52,8 @@ class QueueService {
     if (player1 === player2) {
       return { ok: false, reason: "same_player", state };
     }
-    const nextState = state.clone();
+    const { state: normalizedState } = this.normalizeState(state, now);
+    const nextState = normalizedState.clone();
     if (nextState.isPlayed(player1) || nextState.isPlayed(player2)) {
       return { ok: false, reason: "already_played", state: nextState };
     }
@@ -78,11 +89,13 @@ class QueueService {
   }
 
   finishCurrent(state, now) {
-    const nextState = state.clone();
+    const { state: normalizedState, isLunchTime, isAfterWork } =
+      this.normalizeState(state, now);
+    const nextState = normalizedState.clone();
     const endedMatch = nextState.shiftQueue();
     let nextMatch = null;
 
-    if (endedMatch) {
+    if (endedMatch && !isLunchTime && !isAfterWork) {
       nextState.played.push(endedMatch.player1, endedMatch.player2);
     }
 
@@ -99,7 +112,8 @@ class QueueService {
   }
 
   cancelMatch(state, player, now) {
-    const nextState = state.clone();
+    const { state: normalizedState } = this.normalizeState(state, now);
+    const nextState = normalizedState.clone();
     const { match, index } = nextState.removeMatchByPlayer(player);
 
     if (!match) {
@@ -149,6 +163,64 @@ class QueueService {
       match.endDate = new Date(match.startDate.getTime() + this.gameMs);
       previous = match;
     }
+  }
+
+  normalizeState(state, now) {
+    const nextState = state.clone();
+    const {
+      workStartTime,
+      lunchStart,
+      lunchEnd,
+      workEnd,
+      lunchStartTime,
+      workEndTime,
+    } = this.resolveSchedule(now);
+
+    const lastResetTime = nextState.lastPlayedResetAt
+      ? nextState.lastPlayedResetAt.getTime()
+      : 0;
+
+    const currentTime = now.getTime();
+    const shouldResetAtDayStart =
+      currentTime >= workStartTime && lastResetTime < workStartTime;
+    const shouldResetAtLunch =
+      currentTime >= lunchStartTime && lastResetTime < lunchStartTime;
+    const shouldResetAtWorkEnd =
+      currentTime >= workEndTime && lastResetTime < workEndTime;
+
+    if (shouldResetAtDayStart || shouldResetAtLunch || shouldResetAtWorkEnd) {
+      nextState.played = [];
+      nextState.lastPlayedResetAt = new Date(now);
+    }
+
+    const isLunchTime = now >= lunchStart && now < lunchEnd;
+    const isAfterWork = now >= workEnd;
+
+    return { state: nextState, isLunchTime, isAfterWork };
+  }
+
+  resolveSchedule(now) {
+    const lunchStart = this.toTodayTime(now, this.workSchedule.lunchStart);
+    const lunchEnd = new Date(
+      lunchStart.getTime() + this.workSchedule.lunchDurationMinutes * 60 * 1000
+    );
+    const workStart = this.toTodayTime(now, this.workSchedule.workStart);
+    const workEnd = this.toTodayTime(now, this.workSchedule.workEnd);
+
+    return {
+      workStartTime: workStart.getTime(),
+      lunchStart,
+      lunchEnd,
+      workEnd,
+      lunchStartTime: lunchStart.getTime(),
+      workEndTime: workEnd.getTime(),
+    };
+  }
+
+  toTodayTime(base, { hour, minute = 0 }) {
+    const date = new Date(base);
+    date.setHours(hour, minute, 0, 0);
+    return date;
   }
 }
 

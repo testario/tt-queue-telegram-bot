@@ -1,8 +1,16 @@
 class QueueState {
-  constructor({ queue = [], played = [], searching = [] } = {}) {
+  constructor({
+    queue = [],
+    played = [],
+    searching = [],
+    lastPlayedResetAt = null,
+  } = {}) {
     this.queue = queue;
     this.played = played;
     this.searching = searching;
+    this.lastPlayedResetAt = lastPlayedResetAt
+      ? new Date(lastPlayedResetAt)
+      : null;
   }
 
   static createEmpty() {
@@ -20,6 +28,9 @@ class QueueState {
       queue,
       played: raw.played || [],
       searching: raw.searching || [],
+      lastPlayedResetAt: raw.lastPlayedResetAt
+        ? new Date(raw.lastPlayedResetAt)
+        : null,
     });
   }
 
@@ -32,6 +43,9 @@ class QueueState {
       })),
       played: [...this.played],
       searching: [...this.searching],
+      lastPlayedResetAt: this.lastPlayedResetAt
+        ? new Date(this.lastPlayedResetAt)
+        : null,
     });
   }
 

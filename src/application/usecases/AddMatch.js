@@ -1,6 +1,7 @@
 import { Match } from "#domain";
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
+/** Юзкейс создания матча и постановки его в очередь либо немедленного старта. */
 class AddMatch {
   constructor({
     chatId,
@@ -22,6 +23,7 @@ class AddMatch {
     this.logger = logger || createNullLogger();
   }
 
+  /** Добавляет матч между двумя игроками, уведомляет чат и при необходимости планирует таймеры. */
   async execute(player1, player2) {
     this.logger.info("Попытка создать матч", { player1, player2 });
     const state = await this.repository.get();
@@ -61,6 +63,7 @@ class AddMatch {
     return { ok: true, match, text: creationText };
   }
 
+  /** Возвращает текст ошибки для причины неудачного создания матча. */
   failureMessage(reason) {
     switch (reason) {
       case "already_in_queue":

@@ -1,14 +1,22 @@
 import { QueueService } from "#domain/services/QueueService.js";
 import { QueueState } from "#domain/entities/QueueState.js";
 import { Match } from "#domain/entities/Match.js";
-import { DEFAULT_GAME_TIME, TIME_READY } from "#application/config/time.js";
+import {
+  DEFAULT_GAME_TIME,
+  TIME_READY,
+  WORK_SCHEDULE,
+} from "#application/config/time.js";
 
 describe("QueueService", () => {
   let service;
   let now;
 
   beforeEach(() => {
-    service = new QueueService({ readyMs: TIME_READY, gameMs: DEFAULT_GAME_TIME });
+    service = new QueueService({
+      readyMs: TIME_READY,
+      gameMs: DEFAULT_GAME_TIME,
+      workSchedule: WORK_SCHEDULE,
+    });
     now = new Date();
   });
 
@@ -154,6 +162,51 @@ describe("QueueService", () => {
     expect(waiting.startDate.getTime()).toBe(
       current.endDate.getTime() + TIME_READY
     );
+  });
+
+  test("очищает список сыгравших при наступлении обеда", () => {
+    const lunchTime = new Date(2024, 0, 1, 13, 15, 0, 0);
+    const state = new QueueState({
+      played: ["@p1", "@p2"],
+      lastPlayedResetAt: new Date(2024, 0, 1, 9, 0, 0, 0),
+    });
+
+    const { state: result, status } = service.registerSearch(state, "@p3", lunchTime);
+
+    expect(status).toBe("added");
+    expect(result.played).toEqual([]);
+    expect(result.lastPlayedResetAt).not.toBeNull();
+  });
+
+  test("не добавляет сыгравших во время обеда", () => {
+    const beforeLunch = new Date(2024, 0, 1, 12, 50, 0, 0);
+    const lunchTime = new Date(2024, 0, 1, 13, 5, 0, 0);
+    const { state: s1 } = service.registerSearch(
+      QueueState.createEmpty(),
+      "@p1",
+      beforeLunch
+    );
+    const { state: s2 } = service.scheduleMatch(s1, "@p1", "@p2", beforeLunch);
+
+    const { state: afterFinish } = service.finishCurrent(s2, lunchTime);
+
+    expect(afterFinish.played).toEqual([]);
+  });
+
+  test("очищает и не добавляет сыгравших после окончания рабочего дня", () => {
+    const beforeEnd = new Date(2024, 0, 1, 17, 0, 0, 0);
+    const afterEnd = new Date(2024, 0, 1, 18, 5, 0, 0);
+    const { state: s1 } = service.registerSearch(
+      QueueState.createEmpty(),
+      "@p1",
+      beforeEnd
+    );
+    const { state: s2 } = service.scheduleMatch(s1, "@p1", "@p2", beforeEnd);
+
+    const { state: afterFinish } = service.finishCurrent(s2, afterEnd);
+
+    expect(afterFinish.played).toEqual([]);
+    expect(afterFinish.lastPlayedResetAt).not.toBeNull();
   });
 
   test("cancel search returns not_found when player absent", () => {

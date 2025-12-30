@@ -1,10 +1,33 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
 /**
+ * @typedef {import("#domain/entities/Match.js").Match} Match
+ * @typedef {import("#domain/entities/QueueState.js").QueueState} QueueState
+ * @typedef {{ schedule: (id: string, delay: number, callback: () => void) => void, cancel: (id: string) => void, cancelAll: () => void }} Timer
+ * @typedef {{ notify: (chatId: string, text: string) => void }} Notifier
+ * @typedef {{ get: () => Promise<QueueState>, save: (state: QueueState) => Promise<void> }} QueueRepository
+ * @typedef {{ finishCurrent: (state: QueueState, now: Date) => { state: QueueState, nextMatch: Match | null } }} QueueService
+ * @typedef {{ matchStarted: (match: Match) => string, matchFinishedWithNext: (payload: { finished: Match, next: Match }) => string, matchFinished: (match: Match) => string }} Messages
+ * @typedef {{ now: () => Date }} Clock
+ * @typedef {{ info: Function, warn: Function, debug: Function }} Logger
+ */
+
+/**
  * Управляет жизненным циклом матчей: планирует старт/финиш,
  * уведомляет участников и актуализирует состояние очереди.
  */
 class MatchOrchestrator {
+  /**
+   * @param {Object} deps
+   * @param {string} deps.chatId
+   * @param {Timer} deps.timer
+   * @param {Notifier} deps.notifier
+   * @param {QueueRepository} deps.repository
+   * @param {QueueService} deps.queueService
+   * @param {Messages} deps.messages
+   * @param {Clock} deps.clock
+   * @param {Logger} [deps.logger]
+   */
   constructor({ chatId, timer, notifier, repository, queueService, messages, clock, logger }) {
     this.chatId = chatId;
     this.timer = timer;
@@ -16,12 +39,21 @@ class MatchOrchestrator {
     this.logger = logger || createNullLogger();
   }
 
-  /** Собирает уникальный идентификатор задачи таймера для матча. */
+  /**
+   * Собирает уникальный идентификатор задачи таймера для матча.
+   * @param {string} prefix
+   * @param {Match} match
+   * @returns {string}
+   */
   buildId(prefix, match) {
     return `${prefix}:${match.player1}:${match.player2}:${match.startDate.getTime()}`;
   }
 
-  /** Планирует запуск и завершение указанного матча. */
+  /**
+   * Планирует запуск и завершение указанного матча.
+   * @param {Match} match
+   * @returns {void}
+   */
   scheduleLifecycle(match) {
     const startId = this.buildId("start", match);
     const finishId = this.buildId("finish", match);
@@ -46,7 +78,11 @@ class MatchOrchestrator {
     });
   }
 
-  /** Отменяет таймеры старта и окончания конкретного матча. */
+  /**
+   * Отменяет таймеры старта и окончания конкретного матча.
+   * @param {Match} match
+   * @returns {void}
+   */
   cancelForMatch(match) {
     const startId = this.buildId("start", match);
     const finishId = this.buildId("finish", match);
@@ -58,13 +94,20 @@ class MatchOrchestrator {
     });
   }
 
-  /** Отменяет все запланированные таймеры матчей. */
+  /**
+   * Отменяет все запланированные таймеры матчей.
+   * @returns {void}
+   */
   cancelAll() {
     this.timer.cancelAll();
     this.logger.warn("Отменены все таймеры матчей");
   }
 
-  /** Обрабатывает завершение матча: сохраняет состояние и запускает следующий матч, если есть. */
+  /**
+   * Обрабатывает завершение матча: сохраняет состояние и запускает следующий матч, если есть.
+   * @param {Match} match
+   * @returns {Promise<void>}
+   */
   async handleMatchFinished(match) {
     this.logger.info("Матч завершен", {
       player1: match.player1,

@@ -5,8 +5,38 @@ const testPrefix = "i_want_to_test:";
 const inlineTestPrefix = "inline_test:";
 
 /**
+ * @typedef {Object} PlayWithData
+ * @property {"play_with"} type
+ * @property {string} player
+ *
+ * @typedef {Object} CancelSearchData
+ * @property {"cancel_search"} type
+ * @property {string} player
+ *
+ * @typedef {Object} CancelMatchData
+ * @property {"cancel_match"} type
+ * @property {string[]} players
+ *
+ * @typedef {Object} TestData
+ * @property {"test"} type
+ * @property {string} player
+ * @property {number} count
+ *
+ * @typedef {Object} InlineTestData
+ * @property {"inline_test"} type
+ * @property {number} count
+ *
+ * @typedef {Object} UnknownData
+ * @property {"unknown"} type
+ *
+ * @typedef {PlayWithData | CancelSearchData | CancelMatchData | TestData | InlineTestData | UnknownData} ParsedCallbackData
+ */
+
+/**
  * Разбирает payload callback-кнопки и возвращает структурированное действие.
  * Поддерживает поиск соперника, отмену поиска/матча и тестовые сценарии.
+ * @param {string} data
+ * @returns {ParsedCallbackData}
  */
 const parseCallbackData = (data) => {
   if (data.startsWith(playWithPrefix)) {

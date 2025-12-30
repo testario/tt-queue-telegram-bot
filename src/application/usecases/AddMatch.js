@@ -1,8 +1,30 @@
 import { Match } from "#domain";
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
+/**
+ * @typedef {import("#domain/entities/QueueState.js").QueueState} QueueState
+ * @typedef {{ get: () => Promise<QueueState>, save: (state: QueueState) => Promise<void> }} QueueRepository
+ * @typedef {{ scheduleMatch: (state: QueueState, player1: string, player2: string, now: Date) => { ok: boolean, match?: Match, reason?: string, state: QueueState } }} QueueService
+ * @typedef {{ scheduleLifecycle: (match: Match) => void }} Orchestrator
+ * @typedef {{ notify: (chatId: string, text: string) => void }} Notifier
+ * @typedef {{ matchCreated: (match: Match) => string, matchAlreadyInQueue: () => string, matchAlreadyPlayed: () => string, matchPlayerNotSearching: () => string, matchSamePlayer: () => string }} Messages
+ * @typedef {{ now: () => Date }} Clock
+ * @typedef {{ info: Function, warn: Function, debug: Function }} Logger
+ */
+
 /** Юзкейс создания матча и постановки его в очередь либо немедленного старта. */
 class AddMatch {
+  /**
+   * @param {Object} deps
+   * @param {string} deps.chatId
+   * @param {QueueRepository} deps.repository
+   * @param {QueueService} deps.queueService
+   * @param {Orchestrator} deps.orchestrator
+   * @param {Notifier} deps.notifier
+   * @param {Messages} deps.messages
+   * @param {Clock} deps.clock
+   * @param {Logger} [deps.logger]
+   */
   constructor({
     chatId,
     repository,
@@ -23,7 +45,12 @@ class AddMatch {
     this.logger = logger || createNullLogger();
   }
 
-  /** Добавляет матч между двумя игроками, уведомляет чат и при необходимости планирует таймеры. */
+  /**
+   * Добавляет матч между двумя игроками, уведомляет чат и при необходимости планирует таймеры.
+   * @param {string} player1
+   * @param {string} player2
+   * @returns {Promise<{ ok: true, match: Match, text: string } | { ok: false, reason?: string, text: string }>}
+   */
   async execute(player1, player2) {
     this.logger.info("Попытка создать матч", { player1, player2 });
     const state = await this.repository.get();
@@ -63,7 +90,11 @@ class AddMatch {
     return { ok: true, match, text: creationText };
   }
 
-  /** Возвращает текст ошибки для причины неудачного создания матча. */
+  /**
+   * Возвращает текст ошибки для причины неудачного создания матча.
+   * @param {"already_in_queue" | "already_played" | "player1_not_searching" | "same_player" | string} reason
+   * @returns {string}
+   */
   failureMessage(reason) {
     switch (reason) {
       case "already_in_queue":

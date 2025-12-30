@@ -1,7 +1,16 @@
 import { Match } from "../entities/Match.js";
 import { QueueState } from "../entities/QueueState.js";
 
+/**
+ * Сервис управления очередью матчей и расписанием.
+ */
 class QueueService {
+  /**
+   * @param {Object} params Конфигурация сервиса.
+   * @param {number} params.readyMs Время на подготовку перед матчем, мс.
+   * @param {number} params.gameMs Длительность матча, мс.
+   * @param {Object} [params.workSchedule] Настройки рабочего дня.
+   */
   constructor({ readyMs, gameMs, workSchedule }) {
     this.readyMs = readyMs;
     this.gameMs = gameMs;
@@ -15,10 +24,21 @@ class QueueService {
       };
   }
 
+  /**
+   * Создает исходное состояние очереди.
+   * @returns {QueueState}
+   */
   createInitialState() {
     return QueueState.createEmpty();
   }
 
+  /**
+   * Регистрирует игрока в поиске.
+   * @param {QueueState} state Текущее состояние.
+   * @param {string} player Игрок.
+   * @param {Date} [now] Текущее время.
+   * @returns {{state: QueueState, status: "added"|"already_searching"|"in_queue"|"played"|"unknown"}}
+   */
   registerSearch(state, player, now = new Date()) {
     const { state: normalizedState } = this.normalizeState(state, now);
     const nextState = normalizedState.clone();
@@ -38,6 +58,13 @@ class QueueService {
     return { state: nextState, status: "unknown" };
   }
 
+  /**
+   * Отменяет поиск игрока.
+   * @param {QueueState} state Текущее состояние.
+   * @param {string} player Игрок.
+   * @param {Date} [now] Текущее время.
+   * @returns {{state: QueueState, status: "removed"|"not_found"}}
+   */
   cancelSearch(state, player, now = new Date()) {
     const { state: normalizedState } = this.normalizeState(state, now);
     const nextState = normalizedState.clone();
@@ -48,6 +75,14 @@ class QueueService {
     return { state: nextState, status: "not_found" };
   }
 
+  /**
+   * Планирует матч и добавляет его в очередь.
+   * @param {QueueState} state Текущее состояние.
+   * @param {string} player1 Первый игрок (должен быть в поиске).
+   * @param {string} player2 Второй игрок.
+   * @param {Date} now Текущее время.
+   * @returns {{ok: false, reason: string, state: QueueState}|{ok: true, state: QueueState, match: import("../entities/Match.js").Match}}
+   */
   scheduleMatch(state, player1, player2, now) {
     if (player1 === player2) {
       return { ok: false, reason: "same_player", state };
@@ -88,6 +123,12 @@ class QueueService {
     return { ok: true, state: nextState, match };
   }
 
+  /**
+   * Завершает текущий матч и продвигает очередь.
+   * @param {QueueState} state Текущее состояние.
+   * @param {Date} now Текущее время.
+   * @returns {{state: QueueState, endedMatch: import("../entities/Match.js").Match|undefined, nextMatch: import("../entities/Match.js").Match|null}}
+   */
   finishCurrent(state, now) {
     const { state: normalizedState, isLunchTime, isAfterWork } =
       this.normalizeState(state, now);
@@ -111,6 +152,13 @@ class QueueService {
     return { state: nextState, endedMatch, nextMatch };
   }
 
+  /**
+   * Отменяет матч по участнику.
+   * @param {QueueState} state Текущее состояние.
+   * @param {string} player Игрок для отмены.
+   * @param {Date} now Текущее время.
+   * @returns {Object} Результат отмены с новым состоянием.
+   */
   cancelMatch(state, player, now) {
     const { state: normalizedState } = this.normalizeState(state, now);
     const nextState = normalizedState.clone();
@@ -152,6 +200,10 @@ class QueueService {
     };
   }
 
+  /**
+   * Пересчитывает времена ожидания для очереди.
+   * @param {QueueState} state Состояние с очередью.
+   */
   recalculateWaiting(state) {
     if (state.queue.length === 0) return;
 
@@ -165,6 +217,12 @@ class QueueService {
     }
   }
 
+  /**
+   * Нормализует состояние с учетом расписания дня.
+   * @param {QueueState} state Текущее состояние.
+   * @param {Date} now Текущее время.
+   * @returns {{state: QueueState, isLunchTime: boolean, isAfterWork: boolean}}
+   */
   normalizeState(state, now) {
     const nextState = state.clone();
     const {
@@ -199,6 +257,11 @@ class QueueService {
     return { state: nextState, isLunchTime, isAfterWork };
   }
 
+  /**
+   * Формирует временные метки для текущего дня по расписанию.
+   * @param {Date} now Текущее время.
+   * @returns {{workStartTime: number, lunchStart: Date, lunchEnd: Date, workEnd: Date, lunchStartTime: number, workEndTime: number}}
+   */
   resolveSchedule(now) {
     const lunchStart = this.toTodayTime(now, this.workSchedule.lunchStart);
     const lunchEnd = new Date(
@@ -217,6 +280,12 @@ class QueueService {
     };
   }
 
+  /**
+   * Приводит произвольное время к дате сегодняшнего дня.
+   * @param {Date} base Базовая дата.
+   * @param {{hour: number, minute?: number}} param1 Часы и минуты.
+   * @returns {Date}
+   */
   toTodayTime(base, { hour, minute = 0 }) {
     const date = new Date(base);
     date.setHours(hour, minute, 0, 0);

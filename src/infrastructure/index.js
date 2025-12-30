@@ -1,3 +1,8 @@
+/**
+ * Фасад инфраструктурного слоя.
+ * Экспортирует реализации, используемые приложением.
+ * @module infrastructure
+ */
 export { InMemoryQueueRepository } from "./repositories/InMemoryQueueRepository.js";
 export { EventNotifier } from "./notifier/EventNotifier.js";
 export { Logger, createLogger, createNullLogger } from "./logger/Logger.js";

@@ -1,3 +1,8 @@
+/**
+ * Уровни логирования по приоритету.
+ * @readonly
+ * @type {Record<"error"|"warn"|"info"|"debug", number>}
+ */
 const LEVELS = {
   error: 0,
   warn: 1,
@@ -5,6 +10,11 @@ const LEVELS = {
   debug: 3,
 };
 
+/**
+ * ANSI-палитра для раскрашивания уровней.
+ * @readonly
+ * @type {Record<string, {start: string, end: string}>}
+ */
 const COLORS = {
   error: { start: "\x1b[31m", end: "\x1b[0m" }, // red
   warn: { start: "\x1b[33m", end: "\x1b[0m" }, // yellow
@@ -12,7 +22,12 @@ const COLORS = {
   debug: { start: "\x1b[90m", end: "\x1b[0m" }, // gray
 };
 
-// Цвета префиксов зависят только от уровня вложенности (по сегментам).
+/**
+ * Цвета префиксов по глубине вложенности.
+ * Цвета префиксов зависят только от уровня вложенности (по сегментам).
+ * @readonly
+ * @type {Array<{start: string, end: string}>}
+ */
 const PREFIX_LEVEL_COLORS = [
   { start: "\x1b[34m", end: "\x1b[0m" }, // level 1: blue
   { start: "\x1b[33m", end: "\x1b[0m" }, // level 2: yellow
@@ -22,6 +37,12 @@ const PREFIX_LEVEL_COLORS = [
 
 const noop = () => {};
 
+/**
+ * Окрашивает префикс с учётом уровней вложенности.
+ * @param {string} prefix
+ * @param {string} outerColor
+ * @returns {string}
+ */
 const colorizePrefix = (prefix, outerColor) => {
   if (!prefix) {
     return "";
@@ -36,6 +57,9 @@ const colorizePrefix = (prefix, outerColor) => {
     .join(":");
 };
 
+/**
+ * Минимальный цветной логгер с поддержкой уровней и дочерних префиксов.
+ */
 class Logger {
   constructor({ level = "info", prefix = "", writer = console } = {}) {
     this.level = level;
@@ -43,6 +67,12 @@ class Logger {
     this.writer = writer;
   }
 
+  /**
+   * Унифицированная запись в лог.
+   * @param {"error"|"warn"|"info"|"debug"} level
+   * @param {string} message
+   * @param {Record<string, unknown>} [context]
+   */
   log(level, message, context) {
     if (LEVELS[level] > LEVELS[this.level]) {
       return;
@@ -60,30 +90,64 @@ class Logger {
     printer.call(this.writer, text);
   }
 
+  /**
+   * Лог уровня info.
+   * @param {string} message
+   * @param {Record<string, unknown>} [context]
+   */
   info(message, context) {
     this.log("info", message, context);
   }
 
+  /**
+   * Лог уровня warn.
+   * @param {string} message
+   * @param {Record<string, unknown>} [context]
+   */
   warn(message, context) {
     this.log("warn", message, context);
   }
 
+  /**
+   * Лог уровня error.
+   * @param {string} message
+   * @param {Record<string, unknown>} [context]
+   */
   error(message, context) {
     this.log("error", message, context);
   }
 
+  /**
+   * Лог уровня debug.
+   * @param {string} message
+   * @param {Record<string, unknown>} [context]
+   */
   debug(message, context) {
     this.log("debug", message, context);
   }
 
+  /**
+   * Создаёт дочерний логгер с добавленным префиксом.
+   * @param {string} suffix
+   * @returns {Logger}
+   */
   child(suffix) {
     const prefix = this.prefix ? `${this.prefix}:${suffix}` : suffix;
     return new Logger({ level: this.level, prefix, writer: this.writer });
   }
 }
 
+/**
+ * Создаёт экземпляр логгера.
+ * @param {{level?: "error"|"warn"|"info"|"debug", prefix?: string, writer?: Console}} [options]
+ * @returns {Logger}
+ */
 const createLogger = (options = {}) => new Logger(options);
 
+/**
+ * Возвращает логгер-заглушку, который игнорирует все сообщения.
+ * @returns {{info: Function, warn: Function, error: Function, debug: Function, child: Function}}
+ */
 const createNullLogger = () => ({
   info: noop,
   warn: noop,

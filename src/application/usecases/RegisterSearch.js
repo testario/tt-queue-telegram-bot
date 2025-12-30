@@ -1,7 +1,24 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
+/**
+ * @typedef {import("#domain/entities/QueueState.js").QueueState} QueueState
+ * @typedef {{ get: () => Promise<QueueState>, save: (state: QueueState) => Promise<void> }} QueueRepository
+ * @typedef {{ registerSearch: (state: QueueState, player: string, now: Date) => { state: QueueState, status: "added" | "already_searching" | "in_queue" | "played" | "unknown" } }} QueueService
+ * @typedef {{ searchAdded: (player: string) => string, searchAlready: (player: string) => string, searchInQueue: (player: string) => string, searchPlayed: (player: string) => string, searchUnknown: (player: string) => string }} Messages
+ * @typedef {{ now: () => Date }} Clock
+ * @typedef {{ info: Function, debug: Function }} Logger
+ */
+
 /** Юзкейс постановки игрока в поиск соперника с учётом текущего состояния. */
 class RegisterSearch {
+  /**
+   * @param {Object} deps
+   * @param {QueueRepository} deps.repository
+   * @param {QueueService} deps.queueService
+   * @param {Messages} deps.messages
+   * @param {Clock} [deps.clock]
+   * @param {Logger} [deps.logger]
+   */
   constructor({ repository, queueService, messages, clock, logger }) {
     this.repository = repository;
     this.queueService = queueService;
@@ -10,7 +27,11 @@ class RegisterSearch {
     this.logger = logger || createNullLogger();
   }
 
-  /** Регистрирует запрос игрока на поиск соперника и возвращает текст результата. */
+  /**
+   * Регистрирует запрос игрока на поиск соперника и возвращает текст результата.
+   * @param {string} player
+   * @returns {Promise<{ text: string, status: "added" | "already_searching" | "in_queue" | "played" | "unknown" }>}
+   */
   async execute(player) {
     this.logger.info("Игрок отправил запрос на поиск соперника", { player });
     const state = await this.repository.get();

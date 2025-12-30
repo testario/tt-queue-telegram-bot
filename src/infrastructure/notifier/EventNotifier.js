@@ -3,6 +3,9 @@ import EventEmitter from "events";
 /**
  * Уведомитель, публикующий события через `EventEmitter`.
  */
+/**
+ * @implements {import("#application/types.js").Notifier}
+ */
 class EventNotifier {
   constructor(emitter = new EventEmitter()) {
     this.emitter = emitter;

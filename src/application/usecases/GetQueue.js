@@ -1,10 +1,9 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
 /**
- * @typedef {import("#domain/entities/QueueState.js").QueueState} QueueState
- * @typedef {{ get: () => Promise<QueueState> }} QueueRepository
- * @typedef {{ queueList: (queue: QueueState["queue"]) => string }} Messages
- * @typedef {{ debug: Function }} Logger
+ * @typedef {import("#application/types.js").QueueRepository} QueueRepository
+ * @typedef {import("#application/types.js").BotMessages} Messages
+ * @typedef {import("#application/types.js").Logger} Logger
  */
 
 /** Юзкейс получения актуальной очереди матчей. */

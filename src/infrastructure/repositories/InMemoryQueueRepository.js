@@ -3,6 +3,9 @@ import { QueueState } from "#domain/entities/QueueState.js";
 /**
  * Хранит состояние очереди в памяти процесса.
  */
+/**
+ * @implements {import("#application/types.js").QueueRepository}
+ */
 class InMemoryQueueRepository {
   constructor(initialState) {
     this.state = initialState || QueueState.createEmpty();

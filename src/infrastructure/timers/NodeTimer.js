@@ -1,6 +1,9 @@
 /**
  * Планировщик таймеров поверх `setTimeout`.
  */
+/**
+ * @implements {import("#application/types.js").Timer}
+ */
 class NodeTimer {
   constructor() {
     this.handles = new Map();

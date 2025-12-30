@@ -20,6 +20,41 @@ import { GetQueue } from "#application/usecases/GetQueue.js";
 import { GetPlayed } from "#application/usecases/GetPlayed.js";
 import { parseCallbackData } from "#application/parsers/callbackData.js";
 
+/**
+ * @typedef {import("#application/types.js").Logger} Logger
+ * @typedef {import("#application/types.js").BotMessages} BotMessages
+ * @typedef {import("#application/types.js").QueueRepository} QueueRepository
+ * @typedef {import("#application/types.js").QueueService} QueueService
+ * @typedef {import("#application/types.js").Notifier} Notifier
+ * @typedef {import("#application/types.js").Timer} Timer
+ * @typedef {import("#application/types.js").Clock} Clock
+ * @typedef {import("#application/types.js").MatchLifecycle} MatchLifecycle
+ */
+
+/**
+ * @typedef {Object} ChatContext
+ * @property {number|string} chatId
+ * @property {QueueService} queueService
+ * @property {QueueRepository} repository
+ * @property {Notifier} notifier
+ * @property {Timer} timer
+ * @property {Clock} clock
+ * @property {MatchLifecycle} orchestrator
+ * @property {RegisterSearch} registerSearch
+ * @property {AddMatch} addMatch
+ * @property {CancelSearch} cancelSearch
+ * @property {CancelMatch} cancelMatch
+ * @property {GetQueue} getQueue
+ * @property {GetPlayed} getPlayed
+ * @property {string|null} inlineMessageId
+ */
+
+/**
+ * Создает и настраивает Telegram-бота с контекстами чатов.
+ * @param {string} token
+ * @param {{ logger?: Logger }} [options]
+ * @returns {TelegramApi}
+ */
 const createBot = (token, { logger } = {}) => {
   const log = logger || createLogger({ prefix: "bot" });
   log.info("Инициализация бота");
@@ -60,6 +95,11 @@ const createBot = (token, { logger } = {}) => {
     log.error(context, { message: error.message });
   };
 
+  /**
+   * Возвращает контекст для чата или создает новый.
+   * @param {number|string|null} chatId
+   * @returns {ChatContext|null}
+   */
   const getContext = (chatId) => {
     if (!chatId) return null;
     if (contexts.has(chatId)) {

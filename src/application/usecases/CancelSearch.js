@@ -1,12 +1,11 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
 /**
- * @typedef {import("#domain/entities/QueueState.js").QueueState} QueueState
- * @typedef {{ get: () => Promise<QueueState>, save: (state: QueueState) => Promise<void> }} QueueRepository
- * @typedef {{ cancelSearch: (state: QueueState, player: string, now: Date) => { state: QueueState, status: "removed" | "not_found" | "not_searching" } }} QueueService
- * @typedef {{ searchCancelled: () => string }} Messages
- * @typedef {{ now: () => Date }} Clock
- * @typedef {{ info: Function, debug: Function }} Logger
+ * @typedef {import("#application/types.js").QueueRepository} QueueRepository
+ * @typedef {import("#application/types.js").QueueService} QueueService
+ * @typedef {import("#application/types.js").BotMessages} Messages
+ * @typedef {import("#application/types.js").Clock} Clock
+ * @typedef {import("#application/types.js").Logger} Logger
  */
 
 /** Юзкейс удаления игрока из поиска соперника. */

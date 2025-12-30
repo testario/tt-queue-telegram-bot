@@ -1,12 +1,17 @@
 import { TIME_OPTIONS } from "../config/time.js";
 
 /**
+ * @typedef {import("../types.js").BotMessages} BotMessages
+ */
+
+/**
  * Преобразует дату к строке в локали ru по настроенным опциям времени.
  * @param {Date} date
  * @returns {string}
  */
 const formatDate = (date) => date.toLocaleString("ru", TIME_OPTIONS);
 
+/** @type {BotMessages} */
 const templates = {
   /**
    * Приветствие и инструкция по использованию бота.

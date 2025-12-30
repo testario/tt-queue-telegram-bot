@@ -1,15 +1,15 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
 /**
- * @typedef {import("#domain/entities/Match.js").Match} Match
- * @typedef {import("#domain/entities/QueueState.js").QueueState} QueueState
- * @typedef {{ schedule: (id: string, delay: number, callback: () => void) => void, cancel: (id: string) => void, cancelAll: () => void }} Timer
- * @typedef {{ notify: (chatId: string, text: string) => void }} Notifier
- * @typedef {{ get: () => Promise<QueueState>, save: (state: QueueState) => Promise<void> }} QueueRepository
- * @typedef {{ finishCurrent: (state: QueueState, now: Date) => { state: QueueState, nextMatch: Match | null } }} QueueService
- * @typedef {{ matchStarted: (match: Match) => string, matchFinishedWithNext: (payload: { finished: Match, next: Match }) => string, matchFinished: (match: Match) => string }} Messages
- * @typedef {{ now: () => Date }} Clock
- * @typedef {{ info: Function, warn: Function, debug: Function }} Logger
+ * @typedef {import("#application/types.js").Match} Match
+ * @typedef {import("#application/types.js").QueueState} QueueState
+ * @typedef {import("#application/types.js").Timer} Timer
+ * @typedef {import("#application/types.js").Notifier} Notifier
+ * @typedef {import("#application/types.js").QueueRepository} QueueRepository
+ * @typedef {import("#application/types.js").QueueService} QueueService
+ * @typedef {import("#application/types.js").BotMessages} Messages
+ * @typedef {import("#application/types.js").Clock} Clock
+ * @typedef {import("#application/types.js").Logger} Logger
  */
 
 /**

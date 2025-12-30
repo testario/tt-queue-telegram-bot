@@ -1,15 +1,14 @@
-import { Match } from "#domain";
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
+import { Match } from "#domain";
 
 /**
- * @typedef {import("#domain/entities/QueueState.js").QueueState} QueueState
- * @typedef {{ get: () => Promise<QueueState>, save: (state: QueueState) => Promise<void> }} QueueRepository
- * @typedef {{ scheduleMatch: (state: QueueState, player1: string, player2: string, now: Date) => { ok: boolean, match?: Match, reason?: string, state: QueueState } }} QueueService
- * @typedef {{ scheduleLifecycle: (match: Match) => void }} Orchestrator
- * @typedef {{ notify: (chatId: string, text: string) => void }} Notifier
- * @typedef {{ matchCreated: (match: Match) => string, matchAlreadyInQueue: () => string, matchAlreadyPlayed: () => string, matchPlayerNotSearching: () => string, matchSamePlayer: () => string }} Messages
- * @typedef {{ now: () => Date }} Clock
- * @typedef {{ info: Function, warn: Function, debug: Function }} Logger
+ * @typedef {import("#application/types.js").QueueRepository} QueueRepository
+ * @typedef {import("#application/types.js").QueueService} QueueService
+ * @typedef {import("#application/types.js").MatchLifecycle} Orchestrator
+ * @typedef {import("#application/types.js").Notifier} Notifier
+ * @typedef {import("#application/types.js").BotMessages} Messages
+ * @typedef {import("#application/types.js").Clock} Clock
+ * @typedef {import("#application/types.js").Logger} Logger
  */
 
 /** Юзкейс создания матча и постановки его в очередь либо немедленного старта. */

@@ -12,7 +12,12 @@
 
 ## Архитектура
 - Краткое описание слоёв и потоков: `docs/architecture.md`.
-- Сообщения и тексты: `src/application/messages/templates.js`.
+- Сообщения и тексты: `src/application/messages/localization.js` + `src/application/messages/locales/*`.
+
+## Локализация
+- Язык задаётся через переменные окружения `BOT_LOCALE` (по умолчанию `ru`) и `BOT_FALLBACK_LOCALE`.
+- Конфигурация: `src/application/config/i18n.js`.
+- Базовые локали: `src/application/messages/locales/ru.js` и `src/application/messages/locales/en.js`. При отсутствии ключа используется fallback.
 
 ## Основные команды
 - `/start` — подключает чат к уведомлениям и выводит приветствие.

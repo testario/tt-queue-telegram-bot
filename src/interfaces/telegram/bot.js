@@ -11,7 +11,8 @@ import { EventNotifier } from "#infrastructure/notifier/EventNotifier.js";
 import { NodeTimer } from "#infrastructure/timers/NodeTimer.js";
 import { SystemClock } from "#infrastructure/time/SystemClock.js";
 import { MatchOrchestrator } from "#application/services/MatchOrchestrator.js";
-import { templates } from "#application/messages/templates.js";
+import { I18N_CONFIG } from "#application/config/i18n.js";
+import { createLocalization } from "#application/messages/localization.js";
 import { RegisterSearch } from "#application/usecases/RegisterSearch.js";
 import { AddMatch } from "#application/usecases/AddMatch.js";
 import { CancelSearch } from "#application/usecases/CancelSearch.js";
@@ -52,19 +53,47 @@ import { parseCallbackData } from "#application/parsers/callbackData.js";
 /**
  * Создает и настраивает Telegram-бота с контекстами чатов.
  * @param {string} token
- * @param {{ logger?: Logger }} [options]
+ * @param {{ logger?: Logger, locale?: string }} [options]
  * @returns {TelegramApi}
  */
-const createBot = (token, { logger } = {}) => {
+const createBot = (token, { logger, locale } = {}) => {
+  const { messages, ui, locale: currentLocale } = createLocalization({
+    ...I18N_CONFIG,
+    locale: locale || I18N_CONFIG.locale,
+  });
   const log = logger || createLogger({ prefix: "bot" });
-  log.info("Инициализация бота");
+  log.info("Инициализация бота", { locale: currentLocale });
   const contexts = new Map();
   const userChatBindings = new Map();
 
+  /**
+   * Извлекает chatId из входящего сообщения.
+   * @param {import("node-telegram-bot-api").Message} message
+   * @returns {number|string|null}
+   */
   const resolveChatIdFromMessage = (message) => message?.chat?.id || null;
+
+  /**
+   * Извлекает chatId из callback-запроса, учитывая возможную привязку пользователя.
+   * @param {import("node-telegram-bot-api").CallbackQuery} callbackQuery
+   * @returns {number|string|null}
+   */
   const resolveChatIdFromCallback = (callbackQuery) =>
     callbackQuery?.message?.chat?.id || userChatBindings.get(callbackQuery?.from?.id) || null;
+
+  /**
+   * Возвращает chatId, если пользователь уже привязан к чату.
+   * @param {number|string|null} userId
+   * @returns {number|string|null}
+   */
   const resolveChatIdFromUser = (userId) => (userId ? userChatBindings.get(userId) || null : null);
+
+  /**
+   * Привязывает пользователя к чату для дальнейших inline-операций.
+   * @param {number|string|undefined} userId
+   * @param {number|string|undefined} chatId
+   * @returns {void}
+   */
   const bindUserToChat = (userId, chatId) => {
     if (userId && chatId) {
       userChatBindings.set(userId, chatId);
@@ -84,9 +113,20 @@ const createBot = (token, { logger } = {}) => {
   const MAX_TEST_MATCHES = 10;
   const isTestFeatureEnabled = process.env.ENABLE_TEST_FEATURE === "true";
 
+  /**
+   * Проверяет, является ли ошибка "message is not modified".
+   * @param {unknown} error
+   * @returns {boolean}
+   */
   const isMessageNotModifiedError = (error) =>
     error?.response?.body?.description?.includes("message is not modified");
 
+  /**
+   * Логирует ошибки редактирования сообщений с подавлением "message is not modified".
+   * @param {Error & { response?: { body?: { description?: string }}}} error
+   * @param {string} context
+   * @returns {void}
+   */
   const handleEditMessageError = (error, context) => {
     if (isMessageNotModifiedError(error)) {
       log.debug(`${context} пропущена: message is not modified`);
@@ -122,7 +162,7 @@ const createBot = (token, { logger } = {}) => {
       notifier,
       repository,
       queueService,
-      messages: templates,
+      messages,
       clock,
       logger: log.child(`service:orchestrator:${chatId}`),
     });
@@ -130,7 +170,7 @@ const createBot = (token, { logger } = {}) => {
     const registerSearch = new RegisterSearch({
       repository,
       queueService,
-      messages: templates,
+      messages,
       clock,
       logger: log.child(`usecase:RegisterSearch:${chatId}`),
     });
@@ -140,14 +180,14 @@ const createBot = (token, { logger } = {}) => {
       queueService,
       orchestrator,
       notifier,
-      messages: templates,
+      messages,
       clock,
       logger: log.child(`usecase:AddMatch:${chatId}`),
     });
     const cancelSearch = new CancelSearch({
       repository,
       queueService,
-      messages: templates,
+      messages,
       clock,
       logger: log.child(`usecase:CancelSearch:${chatId}`),
     });
@@ -157,19 +197,19 @@ const createBot = (token, { logger } = {}) => {
       queueService,
       orchestrator,
       notifier,
-      messages: templates,
+      messages,
       clock,
       logger: log.child(`usecase:CancelMatch:${chatId}`),
     });
     const getQueue = new GetQueue({
       repository,
-      messages: templates,
+      messages,
       logger: log.child(`usecase:GetQueue:${chatId}`),
     });
     const getPlayed = new GetPlayed({
       repository,
       queueService,
-      messages: templates,
+      messages,
       clock,
       logger: log.child(`usecase:GetPlayed:${chatId}`),
     });
@@ -208,25 +248,36 @@ const createBot = (token, { logger } = {}) => {
     return context;
   };
 
+  /**
+   * Формирует клавиатуру для inline-заявки на поиск соперника.
+   * @param {string} player
+   * @returns {{ inline_keyboard: Array<Array<{ text: string, callback_data: string }>> }}
+   */
   const buildSearchInlineKeyboard = (player) => ({
     inline_keyboard: [
       [
         {
-          text: "Хочу сыграть с ним!",
+          text: ui.inline.playWith,
           callback_data: "i_want_to_play_with_:" + player,
         },
         {
-          text: "Я автор, хочу отменить",
+          text: ui.inline.cancelOwn,
           callback_data: "i_want_to_cancel:" + player,
         },
       ],
     ],
   });
 
+  /**
+   * Создает указанное количество тестовых матчей для заданного чата.
+   * @param {number|string|null} chatId
+   * @param {number} count
+   * @returns {Promise<{created: Array<{searcher: string, opponent: string}>, failed: Array<{searcher?: string, opponent?: string, reason?: string, text: string}>}>}
+   */
   const createTestMatches = async (chatId, count) => {
     const context = getContext(chatId);
     if (!context) {
-      return { created: [], failed: [{ reason: "no_context", text: "Контекст чата не найден" }] };
+      return { created: [], failed: [{ reason: "no_context", text: ui.callback.contextNotFound }] };
     }
 
     const { registerSearch, addMatch } = context;
@@ -236,8 +287,8 @@ const createBot = (token, { logger } = {}) => {
     const failed = [];
 
     for (let i = 0; i < testCount; i += 1) {
-      const searcher = `Тестовый_${timestamp}_${i}_A`;
-      const opponent = `Тестовый_${timestamp}_${i}_B`;
+      const searcher = ui.test.playerName({ timestamp, index: i, suffix: "A" });
+      const opponent = ui.test.playerName({ timestamp, index: i, suffix: "B" });
 
       await registerSearch.execute(searcher);
       const addResult = await addMatch.execute(searcher, opponent);
@@ -252,13 +303,19 @@ const createBot = (token, { logger } = {}) => {
     return { created, failed };
   };
 
-  const formatTestSummary = (created) =>
-    created.length > 0
-      ? `Создано тестовых матчей: ${created.length}\n${created
-          .map(({ searcher, opponent }, index) => `${index + 1}. ${searcher} vs ${opponent}`)
-          .join("\n")}`
-      : "Не удалось создать тестовые матчи";
+  /**
+   * Собирает краткое описание созданных тестовых матчей.
+   * @param {Array<{searcher: string, opponent: string}>} created
+   * @returns {string}
+   */
+  const formatTestSummary = (created) => ui.test.summary(created);
 
+  /**
+   * Останавливает бота и очищает активные таймеры для всех контекстов.
+   * @param {number|string} chatId
+   * @param {string|undefined} username
+   * @returns {Promise<void>}
+   */
   const stopBot = async (chatId, username) => {
     if (isStopped) {
       log.info("Получена повторная команда /stop, бот уже остановлен", { chatId, username });
@@ -277,7 +334,7 @@ const createBot = (token, { logger } = {}) => {
       }
     });
     try {
-      await bot.sendMessage(chatId, templates.botStopped());
+      await bot.sendMessage(chatId, messages.botStopped());
     } catch (error) {
       log.error("Не удалось отправить сообщение об остановке", { message: error.message });
     }
@@ -289,6 +346,12 @@ const createBot = (token, { logger } = {}) => {
     }
   };
 
+  /**
+   * Перезапускает polling, если бот был остановлен.
+   * @param {number|string} chatId
+   * @param {string|undefined} username
+   * @returns {Promise<void>}
+   */
   const startBotIfStopped = async (chatId, username) => {
     if (!isStopped) {
       return;
@@ -311,7 +374,7 @@ const createBot = (token, { logger } = {}) => {
     getContext(chatId);
     await startBotIfStopped(chatId, username);
     log.info("Получена команда /start", { chatId, username });
-    bot.sendMessage(chatId, templates.greet());
+    bot.sendMessage(chatId, messages.greet());
   });
 
   bot.onText(/\/stop/, async (msg) => {
@@ -332,11 +395,11 @@ const createBot = (token, { logger } = {}) => {
           {
             type: "article",
             id: "no_chat_binding",
-            title: "Сначала нажми /start в чате",
+            title: ui.inline.noChatBinding.title,
             input_message_content: {
-              message_text: "Нужно открыть чат с ботом и отправить /start, чтобы привязать очередь к чату.",
+              message_text: ui.inline.noChatBinding.text,
             },
-            description: "Нет привязки к чату, команды недоступны",
+            description: ui.inline.noChatBinding.description,
           },
         ],
         { cache_time: 1, is_personal: true }
@@ -353,11 +416,11 @@ const createBot = (token, { logger } = {}) => {
           {
             type: "article",
             id: "no_context",
-            title: "Контекст чата не готов",
+            title: ui.inline.contextNotReady.title,
             input_message_content: {
-              message_text: "Не удалось найти контекст чата, попробуйте снова или отправьте /start.",
+              message_text: ui.inline.contextNotReady.text,
             },
-            description: "Попробуйте заново",
+            description: ui.inline.contextNotReady.description,
           },
         ],
         { cache_time: 1, is_personal: true }
@@ -372,11 +435,11 @@ const createBot = (token, { logger } = {}) => {
       {
         type: "article",
         id: "1",
-        title: "Найти игрока",
+        title: ui.inline.search.title,
         input_message_content: {
-          message_text: templates.searchAdded(player),
+          message_text: messages.searchAdded(player),
         },
-        description: "Крикнуть на весь чат, как ты хочешь поиграть с кем-нибудь",
+        description: ui.inline.search.description,
         reply_markup: {
           inline_keyboard: buildSearchInlineKeyboard(player).inline_keyboard,
         },
@@ -384,20 +447,20 @@ const createBot = (token, { logger } = {}) => {
       {
         type: "article",
         id: "2",
-        title: "Проверить очередь",
+        title: ui.inline.queue.title,
         input_message_content: {
           message_text: queueText,
         },
-        description: "Можно посмотреть, кто ожидает игру и время последней игры",
+        description: ui.inline.queue.description,
       },
       {
         type: "article",
         id: "3",
-        title: "Посмотреть тех, кто уже отыграл",
+        title: ui.inline.played.title,
         input_message_content: {
           message_text: playedText,
         },
-        description: "Проверить список отыгравших в текущей половине дня",
+        description: ui.inline.played.description,
       },
     ];
 
@@ -406,37 +469,37 @@ const createBot = (token, { logger } = {}) => {
         {
           type: "article",
           id: "test:1",
-          title: "Создать 1 тестовый матч",
+          title: ui.inline.test.createTitle(1),
           input_message_content: {
-            message_text: "Создаю 1 тестовый матч",
+            message_text: ui.inline.test.createText(1),
           },
-          description: "Генерация одного тестового матча",
+          description: ui.inline.test.createDescription(1),
           reply_markup: {
-            inline_keyboard: [[{ text: "Создать", callback_data: "inline_test:1" }]],
+            inline_keyboard: [[{ text: ui.inline.test.createButton, callback_data: "inline_test:1" }]],
           },
         },
         {
           type: "article",
           id: "test:3",
-          title: "Создать 3 тестовых матча",
+          title: ui.inline.test.createTitle(3),
           input_message_content: {
-            message_text: "Создаю 3 тестовых матча",
+            message_text: ui.inline.test.createText(3),
           },
-          description: "Быстро создать три тестовых матча",
+          description: ui.inline.test.createDescription(3),
           reply_markup: {
-            inline_keyboard: [[{ text: "Создать", callback_data: "inline_test:3" }]],
+            inline_keyboard: [[{ text: ui.inline.test.createButton, callback_data: "inline_test:3" }]],
           },
         },
         {
           type: "article",
           id: "test:5",
-          title: "Создать 5 тестовых матчей",
+          title: ui.inline.test.createTitle(5),
           input_message_content: {
-            message_text: "Создаю 5 тестовых матчей",
+            message_text: ui.inline.test.createText(5),
           },
-          description: "Создает пять тестовых матчей с фейковыми игроками",
+          description: ui.inline.test.createDescription(5),
           reply_markup: {
-            inline_keyboard: [[{ text: "Создать", callback_data: "inline_test:5" }]],
+            inline_keyboard: [[{ text: ui.inline.test.createButton, callback_data: "inline_test:5" }]],
           },
         }
       );
@@ -491,7 +554,7 @@ const createBot = (token, { logger } = {}) => {
     if (!chatId) {
       bot
         .answerCallbackQuery(callbackId, {
-          text: "Нужно начать диалог с ботом в чате (/start), чтобы обрабатывать запросы.",
+          text: ui.callback.startDialogRequired,
           show_alert: true,
         })
         .catch(console.error);
@@ -502,7 +565,7 @@ const createBot = (token, { logger } = {}) => {
     if (!context) {
       bot
         .answerCallbackQuery(callbackId, {
-          text: "Контекст чата не готов, попробуйте отправить /start.",
+          text: ui.callback.contextMissing,
           show_alert: true,
         })
         .catch(console.error);
@@ -528,7 +591,7 @@ const createBot = (token, { logger } = {}) => {
               inline_keyboard: [
                 [
                   {
-                    text: "Нет времени на игры!",
+                    text: ui.inline.confirmNoTime,
                     callback_data: `i_want_to_out:${player1},${player2}`,
                   },
                 ],
@@ -556,7 +619,7 @@ const createBot = (token, { logger } = {}) => {
         log.warn("Попытка отменить чужой поиск", { requester: player2, owner: parsed.player });
         bot
           .answerCallbackQuery(callbackId, {
-            text: "Только автор может отменить заявку",
+            text: ui.callback.cancelNotAuthor,
             show_alert: true,
           })
           .catch(console.error);
@@ -565,7 +628,7 @@ const createBot = (token, { logger } = {}) => {
       const cancelResult = await cancelSearch.execute(parsed.player);
       if (cancelResult.status === "removed") {
         bot
-          .editMessageText(templates.searchCancelled(), {
+          .editMessageText(messages.searchCancelled(), {
             inline_message_id: messageId,
           })
           .catch((error) =>
@@ -574,7 +637,7 @@ const createBot = (token, { logger } = {}) => {
       } else {
         bot
           .answerCallbackQuery(callbackId, {
-            text: "Заявка уже была удалена",
+            text: ui.callback.cancelAlreadyRemoved,
             show_alert: true,
           })
           .catch(console.error);
@@ -585,7 +648,7 @@ const createBot = (token, { logger } = {}) => {
         log.warn("Попытка отменить чужой матч", { requester: player2, playersInQueue });
         bot
           .answerCallbackQuery(callbackId, {
-            text: "Нельзя отменять чужие игры",
+            text: ui.callback.cancelForeignMatch,
             show_alert: true,
           })
           .catch(console.error);
@@ -596,14 +659,14 @@ const createBot = (token, { logger } = {}) => {
         log.warn("Матч для отмены не найден", { player: player2 });
         bot
           .answerCallbackQuery(callbackId, {
-            text: "Матч не найден",
+            text: ui.callback.matchNotFound,
             show_alert: true,
           })
           .catch(console.error);
       } else {
         log.info("Матч отменен по callback", { player: player2, status: cancelResult.status });
         bot
-          .editMessageText("Матч отменен", {
+          .editMessageText(ui.callback.matchCancelled, {
             inline_message_id: messageId,
           })
           .catch((error) =>
@@ -614,7 +677,7 @@ const createBot = (token, { logger } = {}) => {
       if (!isTestFeatureEnabled) {
         bot
           .answerCallbackQuery(callbackId, {
-            text: "Тестовый режим отключен",
+            text: ui.callback.testModeDisabled,
             show_alert: true,
           })
           .catch(console.error);

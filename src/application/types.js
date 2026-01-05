@@ -72,5 +72,85 @@
  * @property {() => string} botStopped
  */
 
+/**
+ * @typedef {Object} BotInlineUi
+ * @property {string} playWith
+ * @property {string} cancelOwn
+ * @property {{ title: string, text: string, description: string }} noChatBinding
+ * @property {{ title: string, text: string, description: string }} contextNotReady
+ * @property {{ title: string, description: string }} search
+ * @property {{ title: string, description: string }} queue
+ * @property {{ title: string, description: string }} played
+ * @property {{
+ *   createTitle: (count: number) => string,
+ *   createText: (count: number) => string,
+ *   createDescription: (count: number) => string,
+ *   createButton: string
+ * }} test
+ * @property {string} confirmNoTime
+ */
+
+/**
+ * @typedef {Object} BotCallbackUi
+ * @property {string} startDialogRequired
+ * @property {string} contextMissing
+ * @property {string} contextNotFound
+ * @property {string} cancelNotAuthor
+ * @property {string} cancelAlreadyRemoved
+ * @property {string} cancelForeignMatch
+ * @property {string} matchNotFound
+ * @property {string} matchCancelled
+ * @property {string} testModeDisabled
+ */
+
+/**
+ * @typedef {Object} BotTestUi
+ * @property {(params: { timestamp: number, index: number, suffix: string }) => string} playerName
+ * @property {(created: Array<{ searcher: string, opponent: string }>) => string} summary
+ */
+
+/**
+ * @typedef {Object} BotUi
+ * @property {BotInlineUi} inline
+ * @property {BotCallbackUi} callback
+ * @property {BotTestUi} test
+ */
+
+/**
+ * @typedef {Object} BotLocalization
+ * @property {string} locale
+ * @property {BotMessages} messages
+ * @property {BotUi} ui
+ */
+
+/**
+ * Поддерживаемые коды локалей.
+ * @typedef {"ru"|"en"|"es"|"fr"|"de"} LocaleCode
+ */
+
+/**
+ * Описание фабрики локали.
+ * @typedef {Object} LocaleDefinition
+ * @property {LocaleCode} code
+ * @property {string} dateLocale
+ * @property {(deps: { formatDate: (date: Date) => string }) => BotMessages} createMessages
+ * @property {() => BotUi} createUi
+ */
+
+/**
+ * Конфигурация создания локализации.
+ * @typedef {Object} LocalizationConfig
+ * @property {LocaleCode} [locale]
+ * @property {LocaleCode} [fallbackLocale]
+ */
+
+/**
+ * Результат фабрики локализации.
+ * @typedef {Object} LocalizationResult
+ * @property {LocaleCode} locale
+ * @property {BotMessages} messages
+ * @property {BotUi} ui
+ */
+
 export {};
 

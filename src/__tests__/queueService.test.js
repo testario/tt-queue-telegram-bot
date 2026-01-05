@@ -1,11 +1,14 @@
 import { QueueService } from "#domain/services/QueueService.js";
 import { QueueState } from "#domain/entities/QueueState.js";
 import { Match } from "#domain/entities/Match.js";
-import {
-  DEFAULT_GAME_TIME,
-  TIME_READY,
-  WORK_SCHEDULE,
-} from "#application/config/time.js";
+import { DEFAULT_GAME_TIME, TIME_READY } from "#application/config/time.js";
+
+const WORK_SCHEDULE_TEST = {
+  workStart: { hour: 10, minute: 0 },
+  lunchStart: { hour: 13, minute: 0 },
+  lunchDurationMinutes: 60,
+  workEnd: { hour: 18, minute: 0 },
+};
 
 describe("QueueService", () => {
   let service;
@@ -15,7 +18,7 @@ describe("QueueService", () => {
     service = new QueueService({
       readyMs: TIME_READY,
       gameMs: DEFAULT_GAME_TIME,
-      workSchedule: WORK_SCHEDULE,
+      workSchedule: WORK_SCHEDULE_TEST,
     });
     now = new Date();
   });

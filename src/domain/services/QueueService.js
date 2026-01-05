@@ -234,9 +234,11 @@ class QueueService {
       workEndTime,
     } = this.resolveSchedule(now);
 
-    const lastResetTime = nextState.lastPlayedResetAt
-      ? nextState.lastPlayedResetAt.getTime()
-      : 0;
+    if (!nextState.lastPlayedResetAt) {
+      nextState.lastPlayedResetAt = new Date(now);
+    }
+
+    const lastResetTime = nextState.lastPlayedResetAt.getTime();
 
     const currentTime = now.getTime();
     const shouldResetAtDayStart =

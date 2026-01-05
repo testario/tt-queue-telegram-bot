@@ -1,0 +1,113 @@
+const createDeMessages = ({ formatDate }) => ({
+  greet: () =>
+    `Hi!\nIch bin ein Bot zur Verwaltung der Tischtennis-Warteschlange.\n\nErwähne mich mit @ im Chat und wähle die gewünschte Option.\n\nViel Spaß!`,
+  searchAdded: (player) => `${player} möchte spielen. Wer macht mit?`,
+  searchAlready: (player) => `Spieler ${player} sucht bereits nach einem Gegner`,
+  searchInQueue: (player) => `Spieler ${player} steht schon in der Warteschlange`,
+  searchPlayed: (player) => `Spieler ${player} hat heute schon gespielt`,
+  searchUnknown: (player) => `Wie bist du hierher gekommen, ${player}?`,
+  searchCancelled: () => "Der Spieler hat seine Meinung geändert",
+  matchCreated: ({ player1, player2, startDate, endDate }) =>
+    `🏓 Match erstellt zwischen ${player1} und ${player2}\n🔔 30 Sekunden zur Vorbereitung\n⌚️ Start - ${formatDate(
+      startDate
+    )}\n🔚 Ende - ${formatDate(endDate)}`,
+  matchAlreadyInQueue: () => "Einer der Spieler spielt bereits",
+  matchAlreadyPlayed: () => "Du hast heute schon gespielt",
+  matchPlayerNotSearching: () => "Dieser Spieler sucht keinen Gegner",
+  matchSamePlayer: () => "Gegen die Wand brauchst du keine Warteschlange :)",
+  nextPair: ({ player1, player2 }) =>
+    `Nächstes Paar: ${player1} und ${player2}\n\nEs gibt 30 Sekunden zur Vorbereitung`,
+  matchStarted: ({ player1, player2 }) => `${player1} und ${player2} haben begonnen`,
+  matchFinished: ({ player1, player2 }) => `Das Spiel zwischen ${player1} und ${player2} ist beendet!`,
+  matchFinishedWithNext: ({ finished, next }) =>
+    `Das Spiel zwischen ${finished.player1} und ${finished.player2} ist beendet. Das nächste Paar ${next.player1} und ${next.player2} startet jetzt.`,
+  queueList: (queue) =>
+    queue.length > 0
+      ? "Warteschlange:\n\n" +
+        queue.reduce(
+          (current, next, index) =>
+            (current += `Match Nr.${index + 1}\n${next.player1} vs ${next.player2}\nStart - ${formatDate(
+              next.startDate
+            )}\nEnde - ${formatDate(next.endDate)}\n\n`),
+          ""
+        )
+      : "Die Warteschlange ist leer",
+  playedList: (played) =>
+    played.length
+      ? `Bereits gespielt:\n${played.join("\n")}`
+      : "Niemand hat bisher gespielt, Zeit sich anzustellen",
+  cancelCurrent: (player) =>
+    `Spieler ${player} hat storniert, nachfolgende Matches werden verschoben`,
+  cancelWaiting: (player) => `Spieler ${player} hat die Anmeldung storniert`,
+  botStopped: () =>
+    "Bot gestoppt. Starte den Prozess neu oder sende /start nachdem der Server läuft",
+});
+
+const pluralizeTestMatches = (count) => (count === 1 ? "Testmatch" : "Testmatches");
+
+const createDeUi = () => ({
+  inline: {
+    playWith: "Ich will spielen!",
+    cancelOwn: "Ich bin der Autor, abbrechen",
+    noChatBinding: {
+      title: "Erst /start im Chat senden",
+      text: "Öffne den Chat mit dem Bot und sende /start, um die Warteschlange zu verknüpfen.",
+      description: "Keine Chat-Verknüpfung, Befehle nicht verfügbar",
+    },
+    contextNotReady: {
+      title: "Chat-Kontext nicht bereit",
+      text: "Kontext nicht gefunden, versuche es erneut oder sende /start.",
+      description: "Nochmal versuchen",
+    },
+    search: {
+      title: "Spieler finden",
+      description: "Sage dem Chat, dass du spielen möchtest",
+    },
+    queue: {
+      title: "Warteschlange prüfen",
+      description: "Sieh, wer wartet und wann zuletzt gespielt wurde",
+    },
+    played: {
+      title: "Wer hat schon gespielt",
+      description: "Liste der Spieler, die in diesem Halbtag gespielt haben",
+    },
+    test: {
+      createTitle: (count) => `${count} ${pluralizeTestMatches(count)} erstellen`,
+      createText: (count) => `Erstelle ${count} ${pluralizeTestMatches(count)}`,
+      createDescription: (count) =>
+        count === 1 ? "Ein Testmatch erzeugen" : `${count} Testmatches schnell erzeugen`,
+      createButton: "Erstellen",
+    },
+    confirmNoTime: "Keine Zeit zum Spielen!",
+  },
+  callback: {
+    startDialogRequired: "Starte einen Chat mit dem Bot (/start), um Anfragen zu verarbeiten.",
+    contextMissing: "Chat-Kontext nicht bereit, versuche /start.",
+    contextNotFound: "Chat-Kontext nicht gefunden",
+    cancelNotAuthor: "Nur der Autor kann die Anfrage abbrechen",
+    cancelAlreadyRemoved: "Die Anfrage wurde bereits entfernt",
+    cancelForeignMatch: "Du kannst nicht das Match eines anderen abbrechen",
+    matchNotFound: "Match nicht gefunden",
+    matchCancelled: "Match abgebrochen",
+    testModeDisabled: "Testmodus ist deaktiviert",
+  },
+  test: {
+    playerName: ({ timestamp, index, suffix }) => `Test_${timestamp}_${index}_${suffix}`,
+    summary: (created) =>
+      created.length > 0
+        ? `Testmatches erstellt: ${created.length}\n${created
+            .map(({ searcher, opponent }, index) => `${index + 1}. ${searcher} vs ${opponent}`)
+            .join("\n")}`
+        : "Testmatches konnten nicht erstellt werden",
+  },
+});
+
+const de = {
+  code: "de",
+  dateLocale: "de",
+  createMessages: createDeMessages,
+  createUi: createDeUi,
+};
+
+export { de };
+

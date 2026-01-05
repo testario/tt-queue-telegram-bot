@@ -7,6 +7,13 @@ const createDeMessages = ({ formatDate }) => ({
   searchPlayed: (player) => `Spieler ${player} hat heute schon gespielt`,
   searchUnknown: (player) => `Wie bist du hierher gekommen, ${player}?`,
   searchCancelled: () => "Der Spieler hat seine Meinung geändert",
+  directOpponentRequired: () => "Gib den Benutzernamen des Gegners an, z. B. /play @opponent",
+  usernameRequired: () =>
+    "Dein Telegram-Username konnte nicht erkannt werden. Setze ihn in deinem Profil und versuche es erneut.",
+  directInvite: ({ from, to }) => `${from} lädt ${to} zum Spiel ein. Einladung annehmen?`,
+  directAccepted: ({ from, to }) => `${to} hat die Einladung von ${from} akzeptiert. Match erstellt.`,
+  directDeclined: ({ from, to }) => `${to} hat die Einladung von ${from} abgelehnt.`,
+  directCancelled: ({ from, to }) => `${from} hat die Einladung für ${to} zurückgezogen.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>
     `🏓 Match erstellt zwischen ${player1} und ${player2}\n🔔 30 Sekunden zur Vorbereitung\n⌚️ Start - ${formatDate(
       startDate
@@ -49,6 +56,9 @@ const createDeUi = () => ({
   inline: {
     playWith: "Ich will spielen!",
     cancelOwn: "Ich bin der Autor, abbrechen",
+    directAccept: "Annehmen",
+    directDecline: "Ablehnen",
+    directCancel: "Anfrage abbrechen",
     noChatBinding: {
       title: "Erst /start im Chat senden",
       text: "Öffne den Chat mit dem Bot und sende /start, um die Warteschlange zu verknüpfen.",
@@ -63,6 +73,9 @@ const createDeUi = () => ({
       title: "Spieler finden",
       description: "Sage dem Chat, dass du spielen möchtest",
     },
+    directTitle: (opponent) => `${opponent} einladen`,
+    directDescription: (opponent) => `Eine Einladung an ${opponent} senden`,
+    directPreview: (opponent) => `Sende Einladung an ${opponent}`,
     queue: {
       title: "Warteschlange prüfen",
       description: "Sieh, wer wartet und wann zuletzt gespielt wurde",
@@ -90,6 +103,8 @@ const createDeUi = () => ({
     matchNotFound: "Match nicht gefunden",
     matchCancelled: "Match abgebrochen",
     testModeDisabled: "Testmodus ist deaktiviert",
+    directNotTarget: "Nur der eingeladene Gegner kann antworten",
+    directNotAuthor: "Nur der Autor kann die Einladung abbrechen",
   },
   test: {
     playerName: ({ timestamp, index, suffix }) => `Test_${timestamp}_${index}_${suffix}`,

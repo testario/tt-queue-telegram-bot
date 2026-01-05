@@ -7,6 +7,16 @@ const createRuMessages = ({ formatDate }) => ({
   searchPlayed: (player) => `Игрок ${player} попытался попасть в поиск, но он уже играл`,
   searchUnknown: (player) => `Ты как сюда попал, ${player}?`,
   searchCancelled: () => "Игрок передумал",
+  directOpponentRequired: () => "Укажи ник оппонента, например /play @opponent",
+  usernameRequired: () =>
+    "Не удалось определить твой Telegram username. Установи его в настройках и повтори команду.",
+  directInvite: ({ from, to }) =>
+    `${from} приглашает ${to} на игру. Принять приглашение?`,
+  directAccepted: ({ from, to }) =>
+    `${to} принял приглашение от ${from}. Матч создан.`,
+  directDeclined: ({ from, to }) =>
+    `${to} отклонил приглашение от ${from}.`,
+  directCancelled: ({ from, to }) => `${from} отменил приглашение для ${to}.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>
     `🏓 Создан матч между ${player1} и ${player2}\n🔔 Дается 30 секунд на подготовку\n⌚️ Время начала - ${formatDate(
       startDate
@@ -49,6 +59,9 @@ const createRuUi = () => ({
   inline: {
     playWith: "Хочу сыграть с ним!",
     cancelOwn: "Я автор, хочу отменить",
+    directAccept: "Принять",
+    directDecline: "Отказаться",
+    directCancel: "Отменить запрос",
     noChatBinding: {
       title: "Сначала нажми /start в чате",
       text: "Нужно открыть чат с ботом и отправить /start, чтобы привязать очередь к чату.",
@@ -63,6 +76,9 @@ const createRuUi = () => ({
       title: "Найти игрока",
       description: "Крикнуть на весь чат, как ты хочешь поиграть с кем-нибудь",
     },
+    directTitle: (opponent) => `Пригласить ${opponent}`,
+    directDescription: (opponent) => `Отправить приглашение игроку ${opponent}`,
+    directPreview: (opponent) => `Отправляется приглашение для ${opponent}`,
     queue: {
       title: "Проверить очередь",
       description: "Можно посмотреть, кто ожидает игру и время последней игры",
@@ -90,6 +106,8 @@ const createRuUi = () => ({
     matchNotFound: "Матч не найден",
     matchCancelled: "Матч отменен",
     testModeDisabled: "Тестовый режим отключен",
+    directNotTarget: "Отвечать на приглашение может только указанный оппонент",
+    directNotAuthor: "Отменить может только автор приглашения",
   },
   test: {
     playerName: ({ timestamp, index, suffix }) => `Тестовый_${timestamp}_${index}_${suffix}`,

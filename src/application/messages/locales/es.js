@@ -7,6 +7,13 @@ const createEsMessages = ({ formatDate }) => ({
   searchPlayed: (player) => `El jugador ${player} ya jugó hoy`,
   searchUnknown: (player) => `¿Cómo llegaste aquí, ${player}?`,
   searchCancelled: () => "El jugador cambió de opinión",
+  directOpponentRequired: () => "Indica el usuario del oponente, por ejemplo /play @opponent",
+  usernameRequired: () =>
+    "No pudimos detectar tu usuario de Telegram. Configúralo en tu perfil y vuelve a intentarlo.",
+  directInvite: ({ from, to }) => `${from} invita a ${to} a jugar. ¿Aceptar partida?`,
+  directAccepted: ({ from, to }) => `${to} aceptó la invitación de ${from}. Partido creado.`,
+  directDeclined: ({ from, to }) => `${to} rechazó la invitación de ${from}.`,
+  directCancelled: ({ from, to }) => `${from} canceló la invitación para ${to}.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>
     `🏓 Partido creado entre ${player1} y ${player2}\n🔔 30 segundos para prepararse\n⌚️ Inicio - ${formatDate(
       startDate
@@ -49,6 +56,9 @@ const createEsUi = () => ({
   inline: {
     playWith: "¡Quiero jugar!",
     cancelOwn: "Soy el autor, cancelar",
+    directAccept: "Aceptar",
+    directDecline: "Rechazar",
+    directCancel: "Cancelar solicitud",
     noChatBinding: {
       title: "Primero pulsa /start en el chat",
       text: "Abre el chat con el bot y envía /start para vincular la cola.",
@@ -63,6 +73,9 @@ const createEsUi = () => ({
       title: "Buscar jugador",
       description: "Avísale al chat que quieres jugar con alguien",
     },
+    directTitle: (opponent) => `Invitar a ${opponent}`,
+    directDescription: (opponent) => `Enviar invitación a ${opponent}`,
+    directPreview: (opponent) => `Enviando invitación a ${opponent}`,
     queue: {
       title: "Ver la cola",
       description: "Revisa quién espera y la hora del último juego",
@@ -90,6 +103,8 @@ const createEsUi = () => ({
     matchNotFound: "Partido no encontrado",
     matchCancelled: "Partido cancelado",
     testModeDisabled: "El modo de prueba está desactivado",
+    directNotTarget: "Solo el oponente invitado puede responder",
+    directNotAuthor: "Solo el autor puede cancelar la invitación",
   },
   test: {
     playerName: ({ timestamp, index, suffix }) => `Prueba_${timestamp}_${index}_${suffix}`,

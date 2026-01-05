@@ -3,6 +3,9 @@ const cancelSearchPrefix = "i_want_to_cancel:";
 const cancelMatchPrefix = "i_want_to_out:";
 const testPrefix = "i_want_to_test:";
 const inlineTestPrefix = "inline_test:";
+const directAcceptPrefix = "direct_accept:";
+const directDeclinePrefix = "direct_decline:";
+const directCancelPrefix = "direct_cancel:";
 
 /**
  * @typedef {Object} PlayWithData
@@ -26,10 +29,22 @@ const inlineTestPrefix = "inline_test:";
  * @property {"inline_test"} type
  * @property {number} count
  *
+ * @typedef {Object} DirectAcceptData
+ * @property {"direct_accept"} type
+ * @property {string[]} players
+ *
+ * @typedef {Object} DirectDeclineData
+ * @property {"direct_decline"} type
+ * @property {string[]} players
+ *
+ * @typedef {Object} DirectCancelData
+ * @property {"direct_cancel"} type
+ * @property {string[]} players
+ *
  * @typedef {Object} UnknownData
  * @property {"unknown"} type
  *
- * @typedef {PlayWithData | CancelSearchData | CancelMatchData | TestData | InlineTestData | UnknownData} ParsedCallbackData
+ * @typedef {PlayWithData | CancelSearchData | CancelMatchData | TestData | InlineTestData | DirectAcceptData | DirectDeclineData | DirectCancelData | UnknownData} ParsedCallbackData
  */
 
 /**
@@ -59,6 +74,21 @@ const parseCallbackData = (data) => {
     const [, rawCount] = data.split(":");
     const count = Number.isFinite(Number(rawCount)) && Number(rawCount) > 0 ? Number(rawCount) : 1;
     return { type: "inline_test", count };
+  }
+  if (data.startsWith(directAcceptPrefix)) {
+    const payload = data.split(":").pop();
+    const players = (payload || "").split(",").filter(Boolean);
+    return { type: "direct_accept", players };
+  }
+  if (data.startsWith(directDeclinePrefix)) {
+    const payload = data.split(":").pop();
+    const players = (payload || "").split(",").filter(Boolean);
+    return { type: "direct_decline", players };
+  }
+  if (data.startsWith(directCancelPrefix)) {
+    const payload = data.split(":").pop();
+    const players = (payload || "").split(",").filter(Boolean);
+    return { type: "direct_cancel", players };
   }
   return { type: "unknown" };
 };

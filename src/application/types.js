@@ -56,6 +56,12 @@
  * @property {(player: string) => string} searchPlayed
  * @property {(player: string) => string} searchUnknown
  * @property {() => string} searchCancelled
+ * @property {() => string} directOpponentRequired
+ * @property {() => string} usernameRequired
+ * @property {(payload: { from: string, to: string }) => string} directInvite
+ * @property {(payload: { from: string, to: string }) => string} directAccepted
+ * @property {(payload: { from: string, to: string }) => string} directDeclined
+ * @property {(payload: { from: string, to: string }) => string} directCancelled
  * @property {(match: Match) => string} matchCreated
  * @property {() => string} matchAlreadyInQueue
  * @property {() => string} matchAlreadyPlayed
@@ -88,6 +94,12 @@
  *   createButton: string
  * }} test
  * @property {string} confirmNoTime
+ * @property {(opponent: string) => string} directTitle
+ * @property {(opponent: string) => string} directDescription
+ * @property {(opponent: string) => string} directPreview
+ * @property {string} directAccept
+ * @property {string} directDecline
+ * @property {string} directCancel
  */
 
 /**
@@ -101,6 +113,8 @@
  * @property {string} matchNotFound
  * @property {string} matchCancelled
  * @property {string} testModeDisabled
+ * @property {string} directNotTarget
+ * @property {string} directNotAuthor
  */
 
 /**

@@ -15,6 +15,7 @@ import { I18N_CONFIG } from "#application/config/i18n.js";
 import { createLocalization } from "#application/messages/localization.js";
 import { RegisterSearch } from "#application/usecases/RegisterSearch.js";
 import { AddMatch } from "#application/usecases/AddMatch.js";
+import { CreateDirectMatch } from "#application/usecases/CreateDirectMatch.js";
 import { CancelSearch } from "#application/usecases/CancelSearch.js";
 import { CancelMatch } from "#application/usecases/CancelMatch.js";
 import { GetQueue } from "#application/usecases/GetQueue.js";
@@ -43,6 +44,7 @@ import { parseCallbackData } from "#application/parsers/callbackData.js";
  * @property {MatchLifecycle} orchestrator
  * @property {RegisterSearch} registerSearch
  * @property {AddMatch} addMatch
+ * @property {CreateDirectMatch} directMatch
  * @property {CancelSearch} cancelSearch
  * @property {CancelMatch} cancelMatch
  * @property {GetQueue} getQueue
@@ -184,6 +186,11 @@ const createBot = (token, { logger, locale } = {}) => {
       clock,
       logger: log.child(`usecase:AddMatch:${chatId}`),
     });
+    const directMatch = new CreateDirectMatch({
+      registerSearch,
+      messages,
+      logger: log.child(`usecase:CreateDirectMatch:${chatId}`),
+    });
     const cancelSearch = new CancelSearch({
       repository,
       queueService,
@@ -224,6 +231,7 @@ const createBot = (token, { logger, locale } = {}) => {
       orchestrator,
       registerSearch,
       addMatch,
+      directMatch,
       cancelSearch,
       cancelMatch,
       getQueue,
@@ -383,8 +391,80 @@ const createBot = (token, { logger, locale } = {}) => {
     await stopBot(chatId, username);
   });
 
+  bot.onText(/\/play(?:@[\w_]+)?(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    const username = msg.from?.username;
+    const player = username ? `@${username}` : null;
+    const opponentRaw = (match && match[1]) || "";
+
+    if (!chatId) {
+      log.warn("Команда /play без chatId", { userId, username });
+      return;
+    }
+
+    const context = getContext(chatId);
+    if (!context) {
+      bot
+        .sendMessage(chatId, ui.callback.contextMissing)
+        .catch((error) => log.error("Не удалось отправить ответ о контексте для /play", { message: error.message }));
+      log.warn("Контекст не найден для команды /play", { chatId });
+      return;
+    }
+
+    bindUserToChat(userId, chatId);
+    log.info("Получена команда /play", { chatId, player, opponentRaw });
+
+    try {
+      const result = await context.directMatch.execute(player, opponentRaw);
+      if (!result.ok) {
+        await bot.sendMessage(chatId, result.text, {
+          reply_to_message_id: msg.message_id,
+        });
+        return;
+      }
+
+      const { invite } = result;
+      await bot.sendMessage(chatId, result.text, {
+        reply_to_message_id: msg.message_id,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: ui.inline.directAccept,
+                callback_data: `direct_accept:${invite.player},${invite.opponent}`,
+              },
+              {
+                text: ui.inline.directDecline,
+                callback_data: `direct_decline:${invite.player},${invite.opponent}`,
+              },
+            ],
+            [
+              {
+                text: ui.inline.directCancel,
+                callback_data: `direct_cancel:${invite.player},${invite.opponent}`,
+              },
+            ],
+          ],
+        },
+      });
+    } catch (error) {
+      log.error("Ошибка при прямом создании матча через /play", {
+        chatId,
+        message: error.message,
+      });
+      bot
+        .sendMessage(chatId, ui.callback.contextNotFound)
+        .catch((sendError) =>
+          log.error("Не удалось отправить сообщение об ошибке /play", { message: sendError.message })
+        );
+    }
+  });
+
   bot.on("inline_query", async (query) => {
     const player = "@" + query.from.username;
+    const opponentRaw = (query.query || "").trim();
+    const encodedOpponent = opponentRaw ? encodeURIComponent(opponentRaw) : "";
     const chatId = resolveChatIdFromUser(query.from?.id);
     log.info("Получен inline запрос", { player, chatId });
 
@@ -464,6 +544,18 @@ const createBot = (token, { logger, locale } = {}) => {
       },
     ];
 
+    if (opponentRaw) {
+      results.unshift({
+        type: "article",
+        id: `direct:${encodedOpponent}`,
+        title: ui.inline.directTitle(opponentRaw),
+        input_message_content: {
+          message_text: ui.inline.directPreview(opponentRaw),
+        },
+        description: ui.inline.directDescription(opponentRaw),
+      });
+    }
+
     if (isTestFeatureEnabled) {
       results.push(
         {
@@ -541,6 +633,63 @@ const createBot = (token, { logger, locale } = {}) => {
         }
       } catch (error) {
         log.error("Ошибка регистрации поиска после выбора inline", { player, message: error.message });
+      }
+    } else if (resultId?.startsWith("direct:")) {
+      const opponentRaw = decodeURIComponent(resultId.replace("direct:", ""));
+      const directResult = await context.directMatch.execute(player, opponentRaw);
+
+      // Всегда отправляем приглашение в общий чат
+      const sendInvite = (text, invite) =>
+        bot.sendMessage(chatId, text, {
+          reply_markup:
+            invite && invite.player && invite.opponent
+              ? {
+                  inline_keyboard: [
+                    [
+                      {
+                        text: ui.inline.directAccept,
+                        callback_data: `direct_accept:${invite.player},${invite.opponent}`,
+                      },
+                      {
+                        text: ui.inline.directDecline,
+                        callback_data: `direct_decline:${invite.player},${invite.opponent}`,
+                      },
+                    ],
+                    [
+                      {
+                        text: ui.inline.directCancel,
+                        callback_data: `direct_cancel:${invite.player},${invite.opponent}`,
+                      },
+                    ],
+                  ],
+                }
+              : undefined,
+        });
+
+      if (!directResult.ok) {
+        await sendInvite(directResult.text);
+        if (inlineMessageId) {
+          bot
+            .editMessageText(directResult.text, { inline_message_id: inlineMessageId })
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось обновить inline сообщение direct приглашения (ошибка)")
+            );
+        }
+        return;
+      }
+
+      const { invite } = directResult;
+      await sendInvite(directResult.text, invite);
+
+      if (inlineMessageId) {
+        bot
+          .editMessageText(" ", {
+            inline_message_id: inlineMessageId,
+            reply_markup: { inline_keyboard: [] },
+          })
+          .catch((error) =>
+            handleEditMessageError(error, "Не удалось очистить inline сообщение после отправки приглашения")
+          );
       }
     }
   });
@@ -671,6 +820,151 @@ const createBot = (token, { logger, locale } = {}) => {
           })
           .catch((error) =>
             handleEditMessageError(error, "Не удалось обновить inline сообщение об отмене матча")
+          );
+      }
+    } else if (parsed.type === "direct_accept") {
+      const [player1, invited] = parsed.players || [];
+      const editTarget = messageId
+        ? { inline_message_id: messageId }
+        : { chat_id: chatId, message_id: callbackQuery.message?.message_id };
+
+      if (!player1 || !invited) {
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: ui.callback.contextNotFound,
+            show_alert: true,
+          })
+          .catch(console.error);
+        return;
+      }
+
+      if (player2 !== invited) {
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: ui.callback.directNotTarget,
+            show_alert: true,
+          })
+          .catch(console.error);
+        return;
+      }
+
+      const addResult = await addMatch.execute(player1, player2);
+      if (addResult.ok) {
+        bot
+          .editMessageText(addResult.text, {
+            ...editTarget,
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: ui.inline.confirmNoTime,
+                    callback_data: `i_want_to_out:${player1},${player2}`,
+                  },
+                ],
+              ],
+            },
+          })
+          .catch((error) =>
+            handleEditMessageError(error, "Не удалось обновить сообщение о принятии прямого матча")
+          );
+      } else {
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: addResult.text,
+            show_alert: true,
+          })
+          .catch(console.error);
+      }
+    } else if (parsed.type === "direct_decline") {
+      const [player1, invited] = parsed.players || [];
+      const editTarget = messageId
+        ? { inline_message_id: messageId }
+        : { chat_id: chatId, message_id: callbackQuery.message?.message_id };
+
+      if (!player1 || !invited) {
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: ui.callback.contextNotFound,
+            show_alert: true,
+          })
+          .catch(console.error);
+        return;
+      }
+
+      if (player2 !== invited) {
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: ui.callback.directNotTarget,
+            show_alert: true,
+          })
+          .catch(console.error);
+        return;
+      }
+
+      await cancelSearch.execute(player1);
+      bot
+        .editMessageText(messages.directDeclined({ from: player1, to: player2 }), {
+          ...editTarget,
+        })
+        .catch((error) =>
+          handleEditMessageError(error, "Не удалось обновить сообщение об отказе в прямом матче")
+        );
+    } else if (parsed.type === "direct_cancel") {
+      const [player1, invited] = parsed.players || [];
+      const editTarget = messageId
+        ? { inline_message_id: messageId }
+        : { chat_id: chatId, message_id: callbackQuery.message?.message_id };
+      const canDelete =
+        callbackQuery.message?.chat?.id !== undefined &&
+        callbackQuery.message?.message_id !== undefined;
+
+      if (!player1 || !invited) {
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: ui.callback.contextNotFound,
+            show_alert: true,
+          })
+          .catch(console.error);
+        return;
+      }
+
+      if (player2 !== player1) {
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: ui.callback.directNotAuthor,
+            show_alert: true,
+          })
+          .catch(console.error);
+        return;
+      }
+
+      await cancelSearch.execute(player1);
+      if (canDelete) {
+        bot
+          .deleteMessage(chatId, callbackQuery.message.message_id)
+          .catch((error) =>
+            handleEditMessageError(error, "Не удалось удалить сообщение с прямым приглашением")
+          );
+        if (messageId) {
+          bot
+            .editMessageText(messages.directCancelled({ from: player1, to: invited }), {
+              inline_message_id: messageId,
+              reply_markup: { inline_keyboard: [] },
+            })
+            .catch((error) =>
+              handleEditMessageError(
+                error,
+                "Не удалось обновить inline сообщение после удаления прямого приглашения"
+              )
+            );
+        }
+      } else {
+        bot
+          .editMessageText(messages.directCancelled({ from: player1, to: invited }), {
+            ...editTarget,
+          })
+          .catch((error) =>
+            handleEditMessageError(error, "Не удалось обновить сообщение об отмене прямого приглашения")
           );
       }
     } else if (parsed.type === "inline_test") {

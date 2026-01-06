@@ -7,6 +7,11 @@
 2. В `.env` задайте `TG_BOT_API_TOKEN`.
 3. `npm start`
 
+### Метрики использования
+- Для включения метрик задайте `METRICS_MONGODB_URI` (и при необходимости `METRICS_MONGODB_DB`, `METRICS_MONGODB_COLLECTION`).
+- Ограничьте чат для выдачи статистики: `METRICS_CHAT_ID` (числовой id).
+- Команда `/metrics 24h` (или `/metrics 7d`, по умолчанию 24h) показывает сводку использования только в доверенном чате.
+
 ## Тесты
 - Unit: `npm test` (Jest, покрыты доменный сервис и use-case создания матча).
 

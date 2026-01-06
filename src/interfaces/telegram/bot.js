@@ -21,6 +21,8 @@ import { CancelMatch } from "#application/usecases/CancelMatch.js";
 import { GetQueue } from "#application/usecases/GetQueue.js";
 import { GetPlayed } from "#application/usecases/GetPlayed.js";
 import { parseCallbackData } from "#application/parsers/callbackData.js";
+import { UsageMetricsService } from "#application/services/UsageMetricsService.js";
+import { MongoUsageMetricsRepository } from "#infrastructure/metrics/MongoUsageMetricsRepository.js";
 
 /**
  * @typedef {import("#application/types.js").Logger} Logger
@@ -67,6 +69,29 @@ const createBot = (token, { logger, locale } = {}) => {
   log.info("Инициализация бота", { locale: currentLocale });
   const contexts = new Map();
   const userChatBindings = new Map();
+  const metricsChatId = process.env.METRICS_CHAT_ID ? String(process.env.METRICS_CHAT_ID) : null;
+  const metricsUri = process.env.METRICS_MONGODB_URI || process.env.MONGODB_URI || null;
+  const metricsDb = process.env.METRICS_MONGODB_DB || process.env.MONGODB_DB || "tt-queue-bot";
+  const metricsCollection = process.env.METRICS_MONGODB_COLLECTION || "usage_metrics";
+
+  const metricsRepository =
+    metricsUri && metricsDb
+      ? new MongoUsageMetricsRepository({
+          uri: metricsUri,
+          dbName: metricsDb,
+          collectionName: metricsCollection,
+          logger: log.child("infra:metrics"),
+        })
+      : null;
+
+  if (!metricsRepository) {
+    log.warn("Метрики отключены: нет строки подключения к MongoDB");
+  }
+
+  const usageMetrics = new UsageMetricsService({
+    repository: metricsRepository,
+    logger: log.child("service:metrics"),
+  });
 
   /**
    * Извлекает chatId из входящего сообщения.
@@ -100,6 +125,67 @@ const createBot = (token, { logger, locale } = {}) => {
     if (userId && chatId) {
       userChatBindings.set(userId, chatId);
     }
+  };
+
+  /**
+   * Безопасная запись события метрики (если хранилище настроено).
+   * Данные пользователя и произвольные поля не передаются (обезличивание).
+   * @param {string} type
+   * @param {Record<string, unknown>} [payload]
+   */
+  const trackUsage = (type, payload = undefined) => {
+    if (!type) return;
+    usageMetrics.track({ type, payload });
+  };
+
+  /**
+   * Парсит период для метрик из строки вида "24h", "7d", "2w".
+   * @param {string} rawRange
+   * @returns {{ from?: Date, to?: Date, error?: string }}
+   */
+  const parseMetricsRange = (rawRange) => {
+    const trimmed = (rawRange || "").trim();
+    if (!trimmed) {
+      const to = new Date();
+      return { from: new Date(to.getTime() - 24 * 60 * 60 * 1000), to };
+    }
+
+    const match = trimmed.match(/^(\d+)\s*(h|d|w)$/i);
+    if (!match) {
+      return { error: "invalid" };
+    }
+
+    const value = Number(match[1]);
+    const unit = match[2].toLowerCase();
+    const unitMs = {
+      h: 60 * 60 * 1000,
+      d: 24 * 60 * 60 * 1000,
+      w: 7 * 24 * 60 * 60 * 1000,
+    }[unit];
+
+    if (!unitMs || value <= 0) {
+      return { error: "invalid" };
+    }
+
+    const to = new Date();
+    return { from: new Date(to.getTime() - value * unitMs), to };
+  };
+
+  /**
+   * Нормализует result_id inline-результата для метрик без пользовательских данных.
+   * @param {string|undefined|null} resultId
+   * @returns {{ category: string, variant: string }}
+   */
+  const normalizeInlineResultForMetrics = (resultId) => {
+    if (!resultId) return { category: "unknown", variant: "unknown" };
+    if (resultId.startsWith("direct:")) {
+      return { category: "direct", variant: "direct" };
+    }
+    if (resultId === "1") return { category: "preset", variant: "search" };
+    if (resultId === "2") return { category: "preset", variant: "queue" };
+    if (resultId === "3") return { category: "preset", variant: "played" };
+    if (resultId.startsWith("test:")) return { category: "test", variant: "test" };
+    return { category: "other", variant: "other" };
   };
 
   const bot = new TelegramApi(token, {
@@ -382,13 +468,61 @@ const createBot = (token, { logger, locale } = {}) => {
     getContext(chatId);
     await startBotIfStopped(chatId, username);
     log.info("Получена команда /start", { chatId, username });
+    trackUsage("command:start", { restarted: isStopped });
     bot.sendMessage(chatId, messages.greet());
   });
 
   bot.onText(/\/stop/, async (msg) => {
     const chatId = msg.chat.id;
-    const username = msg.from?.username;
+    trackUsage("command:stop");
     await stopBot(chatId, username);
+  });
+
+  bot.onText(/\/metrics(?:@[\w_]+)?(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const rangeRaw = (match && match[1]) || "";
+
+    trackUsage("command:metrics", { hasRange: Boolean(rangeRaw.trim()) });
+
+    if (!usageMetrics.isEnabled()) {
+      await bot.sendMessage(chatId, messages.metricsDisabled());
+      return;
+    }
+
+    if (!metricsChatId || String(chatId) !== String(metricsChatId)) {
+      log.warn("Запрос метрик отклонен: неверный чат", { chatId, metricsChatId, userId });
+      await bot.sendMessage(chatId, messages.metricsAccessDenied());
+      return;
+    }
+
+    const range = parseMetricsRange(rangeRaw);
+    if (range.error) {
+      await bot.sendMessage(chatId, messages.metricsRangeInvalid(), {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
+
+    const summaryResult = await usageMetrics.getSummary({ ...range, limit: 25 });
+    if (!summaryResult.ok) {
+      await bot.sendMessage(chatId, messages.metricsUnavailable());
+      return;
+    }
+
+    const summary = summaryResult.summary;
+    if (!summary.total) {
+      await bot.sendMessage(chatId, messages.metricsEmpty({ from: range.from, to: range.to }));
+      return;
+    }
+
+    const text = messages.metricsSummary({
+      from: range.from || summary.firstEventAt,
+      to: range.to || summary.lastEventAt,
+      total: summary.total,
+      byType: summary.byType,
+      inlineVariants: summary.inlineVariants,
+    });
+    await bot.sendMessage(chatId, text);
   });
 
   bot.onText(/\/play(?:@[\w_]+)?(?:\s+(.+))?/, async (msg, match) => {
@@ -397,6 +531,8 @@ const createBot = (token, { logger, locale } = {}) => {
     const username = msg.from?.username;
     const player = username ? `@${username}` : null;
     const opponentRaw = (match && match[1]) || "";
+
+    trackUsage("command:play", { hasOpponent: Boolean(opponentRaw.trim()) });
 
     if (!chatId) {
       log.warn("Команда /play без chatId", { userId, username });
@@ -417,6 +553,7 @@ const createBot = (token, { logger, locale } = {}) => {
 
     try {
       const result = await context.directMatch.execute(player, opponentRaw);
+      trackUsage("usecase:direct_match", { ok: result.ok, reason: result.reason });
       if (!result.ok) {
         await bot.sendMessage(chatId, result.text, {
           reply_to_message_id: msg.message_id,
@@ -467,6 +604,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const encodedOpponent = opponentRaw ? encodeURIComponent(opponentRaw) : "";
     const chatId = resolveChatIdFromUser(query.from?.id);
     log.info("Получен inline запрос", { player, chatId });
+    trackUsage("inline:query", { hasOpponent: Boolean(opponentRaw) });
 
     if (!chatId) {
       bot.answerInlineQuery(
@@ -615,6 +753,12 @@ const createBot = (token, { logger, locale } = {}) => {
     const resultId = result.result_id;
 
     log.info("Выбран inline результат", { player, resultId, chatId });
+    const normalizedInline = normalizeInlineResultForMetrics(resultId);
+    trackUsage("inline:choose", {
+      category: normalizedInline.category,
+      variant: normalizedInline.variant,
+      hasContext: Boolean(context),
+    });
     context.inlineMessageId = inlineMessageId || context.inlineMessageId;
     bindUserToChat(userId, chatId);
 
@@ -727,6 +871,9 @@ const createBot = (token, { logger, locale } = {}) => {
     const { addMatch, cancelSearch, cancelMatch } = context;
     const parsed = parseCallbackData(callbackQuery.data || "");
     log.info("Обработка callback", { type: parsed.type, player: player2, chatId });
+    trackUsage(`callback:${parsed.type || "unknown"}`, {
+      hasMessageId: Boolean(messageId),
+    });
 
     if (parsed.type === "play_with") {
       const player1 = parsed.player;

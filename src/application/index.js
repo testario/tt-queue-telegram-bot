@@ -6,6 +6,7 @@ export { GetQueue } from "./usecases/GetQueue.js";
 export { CreateDirectMatch } from "./usecases/CreateDirectMatch.js";
 export { RegisterSearch } from "./usecases/RegisterSearch.js";
 export { MatchOrchestrator } from "./services/MatchOrchestrator.js";
+export { UsageMetricsService } from "./services/UsageMetricsService.js";
 export { I18N_CONFIG } from "./config/i18n.js";
 export { createLocalization } from "./messages/localization.js";
 export { messagesLocale, templates, ui } from "./messages/templates.js";

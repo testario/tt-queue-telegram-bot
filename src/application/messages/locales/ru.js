@@ -51,6 +51,30 @@ const createRuMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `Игрок ${player} отменил запись`,
   botStopped: () =>
     "Бот остановлен. Для повторного запуска перезапустите процесс или выполните /start после запуска сервера",
+  metricsAccessDenied: () => "Просмотр метрик доступен только из доверенного чата.",
+  metricsDisabled: () => "Хранилище метрик не настроено. Добавьте METRICS_MONGODB_URI и перезапустите бота.",
+  metricsEmpty: ({ from, to }) => {
+    const fromText = from ? formatDate(from) : "не задан";
+    const toText = to ? formatDate(to) : "не задан";
+    return `Метрики за период ${fromText} — ${toText} отсутствуют.`;
+  },
+  metricsSummary: ({ from, to, total, byType, inlineVariants }) => {
+    const fromText = from ? formatDate(from) : "начало";
+    const toText = to ? formatDate(to) : "сейчас";
+    const lines =
+      byType && byType.length
+        ? byType.map((item) => `• ${item.type}: ${item.count}`).join("\n")
+        : "—";
+    const inlinePart =
+      inlineVariants && inlineVariants.length
+        ? `\nInline выборы:\n${inlineVariants
+            .map((item) => `• ${item.variant}: ${item.count}`)
+            .join("\n")}`
+        : "";
+    return `Метрики за период ${fromText} — ${toText}\nВсего событий: ${total}\nПо типам:\n${lines}${inlinePart}`;
+  },
+  metricsRangeInvalid: () => "Неверный период. Используйте форматы 24h, 7d или 2w.",
+  metricsUnavailable: () => "Не удалось получить метрики, попробуйте позже.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "тестовый матч" : "тестовых матчей");

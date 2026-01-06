@@ -42,6 +42,43 @@
  */
 
 /**
+ * @typedef {Object} UsageMetricEvent
+ * @property {string} type
+ * @property {Record<string, unknown>} [payload]
+ * @property {Date|number|string} [createdAt]
+ */
+
+/**
+ * @typedef {Object} UsageMetricsSummaryItem
+ * @property {string} type
+ * @property {number} count
+ */
+
+/**
+ * @typedef {Object} UsageMetricsSummary
+ * @property {number} total
+ * @property {Date|null} from
+ * @property {Date|null} to
+ * @property {Date|null} firstEventAt
+ * @property {Date|null} lastEventAt
+ * @property {Array<UsageMetricsSummaryItem>} byType
+ * @property {Array<{ variant: string, count: number }>} [inlineVariants]
+ */
+
+/**
+ * @typedef {Object} UsageMetricsSummaryRequest
+ * @property {Date|null} [from]
+ * @property {Date|null} [to]
+ * @property {number} [limit]
+ */
+
+/**
+ * @typedef {Object} UsageMetricsRepository
+ * @property {(event: UsageMetricEvent) => Promise<void>} save
+ * @property {(params: UsageMetricsSummaryRequest) => Promise<UsageMetricsSummary>} getSummary
+ */
+
+/**
  * @typedef {Object} MatchLifecycle
  * @property {(match: Match) => void} scheduleLifecycle
  * @property {(match: Match) => void} cancelForMatch
@@ -76,6 +113,12 @@
  * @property {(player: string) => string} cancelCurrent
  * @property {(player: string) => string} cancelWaiting
  * @property {() => string} botStopped
+ * @property {() => string} metricsAccessDenied
+ * @property {() => string} metricsDisabled
+ * @property {(payload: { from?: Date|null, to?: Date|null }) => string} metricsEmpty
+ * @property {(payload: { from?: Date|null, to?: Date|null, total: number, byType: Array<{ type: string, count: number }> }) => string} metricsSummary
+ * @property {() => string} metricsRangeInvalid
+ * @property {() => string} metricsUnavailable
  */
 
 /**

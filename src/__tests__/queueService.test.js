@@ -90,15 +90,17 @@ describe("QueueService", () => {
   });
 
   test("moves to next match on finish", () => {
+    // Используем фиксированное время внутри рабочего дня, чтобы не зависеть от локального времени запуска тестов
+    const matchTime = new Date(2024, 0, 1, 11, 0, 0, 0);
     const base = QueueState.createEmpty();
-    const { state: s1 } = service.registerSearch(base, "@p1");
-    const { state: s2 } = service.scheduleMatch(s1, "@p1", "@p2", now);
-    const { state: s3 } = service.registerSearch(s2, "@p3");
-    const { state: s4 } = service.scheduleMatch(s3, "@p3", "@p4", now);
+    const { state: s1 } = service.registerSearch(base, "@p1", matchTime);
+    const { state: s2 } = service.scheduleMatch(s1, "@p1", "@p2", matchTime);
+    const { state: s3 } = service.registerSearch(s2, "@p3", matchTime);
+    const { state: s4 } = service.scheduleMatch(s3, "@p3", "@p4", matchTime);
 
     const { state: afterFinish, endedMatch, nextMatch } = service.finishCurrent(
       s4,
-      now
+      matchTime
     );
 
     expect(endedMatch.player1).toBe("@p1");

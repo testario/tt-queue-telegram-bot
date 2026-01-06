@@ -53,6 +53,15 @@ const createEsMessages = ({ formatDate }) => ({
 const pluralizeTestMatches = (count) => (count === 1 ? "partido de prueba" : "partidos de prueba");
 
 const createEsUi = () => ({
+  commands: {
+    start: "Iniciar el bot y vincular el chat",
+    play: "Invitar a un oponente: /play @usuario",
+    search: "Buscar oponente: /search",
+    queue: "Mostrar la cola: /queue",
+    played: "Quién ya jugó: /played",
+    metrics: "Resumen de uso (solo chat confiable)",
+    stop: "Detener el bot (admin)",
+  },
   inline: {
     playWith: "¡Quiero jugar!",
     cancelOwn: "Soy el autor, cancelar",

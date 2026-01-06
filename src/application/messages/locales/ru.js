@@ -80,6 +80,15 @@ const createRuMessages = ({ formatDate }) => ({
 const pluralizeTestMatches = (count) => (count === 1 ? "тестовый матч" : "тестовых матчей");
 
 const createRuUi = () => ({
+  commands: {
+    start: "Запустить бота и привязать чат",
+    play: "Пригласить соперника: /play @username",
+    search: "Позвать соперника: /search",
+    queue: "Показать очередь: /queue",
+    played: "Кто уже играл: /played",
+    metrics: "Сводка использования (только доверенный чат)",
+    stop: "Остановить бота (админ)",
+  },
   inline: {
     playWith: "Хочу сыграть с ним!",
     cancelOwn: "Я автор, хочу отменить",

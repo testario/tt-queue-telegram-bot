@@ -53,6 +53,15 @@ const createFrMessages = ({ formatDate }) => ({
 const pluralizeTestMatches = (count) => (count === 1 ? "match de test" : "matchs de test");
 
 const createFrUi = () => ({
+  commands: {
+    start: "Démarrer le bot et lier le chat",
+    play: "Inviter un adversaire : /play @pseudo",
+    search: "Chercher un adversaire : /search",
+    queue: "Afficher la file : /queue",
+    played: "Qui a déjà joué : /played",
+    metrics: "Résumé d'usage (chat de confiance uniquement)",
+    stop: "Arrêter le bot (admin)",
+  },
   inline: {
     playWith: "Je veux jouer !",
     cancelOwn: "Je suis l’auteur, annuler",

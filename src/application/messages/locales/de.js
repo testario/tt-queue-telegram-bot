@@ -53,6 +53,15 @@ const createDeMessages = ({ formatDate }) => ({
 const pluralizeTestMatches = (count) => (count === 1 ? "Testmatch" : "Testmatches");
 
 const createDeUi = () => ({
+  commands: {
+    start: "Bot starten und Chat verknüpfen",
+    play: "Gegner einladen: /play @username",
+    search: "Gegner suchen: /search",
+    queue: "Warteschlange anzeigen: /queue",
+    played: "Wer schon gespielt hat: /played",
+    metrics: "Nutzungsstatistik (nur vertrauenswürdiger Chat)",
+    stop: "Bot stoppen (Admin)",
+  },
   inline: {
     playWith: "Ich will spielen!",
     cancelOwn: "Ich bin der Autor, abbrechen",

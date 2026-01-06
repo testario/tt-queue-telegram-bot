@@ -53,6 +53,15 @@ const createEnMessages = ({ formatDate }) => ({
 const pluralizeTestMatches = (count) => (count === 1 ? "test match" : "test matches");
 
 const createEnUi = () => ({
+  commands: {
+    start: "Start the bot and bind chat",
+    play: "Invite an opponent: /play @username",
+    search: "Call for an opponent: /search",
+    queue: "Show the queue: /queue",
+    played: "Who already played: /played",
+    metrics: "Usage metrics (trusted chat only)",
+    stop: "Stop the bot (admin)",
+  },
   inline: {
     playWith: "I want to play!",
     cancelOwn: "I'm the author, cancel",

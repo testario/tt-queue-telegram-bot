@@ -122,6 +122,17 @@
  */
 
 /**
+ * @typedef {Object} BotCommandsUi
+ * @property {string} start
+ * @property {string} play
+ * @property {string} search
+ * @property {string} queue
+ * @property {string} played
+ * @property {string} metrics
+ * @property {string} stop
+ */
+
+/**
  * @typedef {Object} BotInlineUi
  * @property {string} playWith
  * @property {string} cancelOwn
@@ -168,6 +179,7 @@
 
 /**
  * @typedef {Object} BotUi
+ * @property {BotCommandsUi} commands
  * @property {BotInlineUi} inline
  * @property {BotCallbackUi} callback
  * @property {BotTestUi} test

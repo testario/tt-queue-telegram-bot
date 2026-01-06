@@ -124,6 +124,7 @@ const createBot = (token, { logger, locale } = {}) => {
   const bindUserToChat = (userId, chatId) => {
     if (userId && chatId) {
       userChatBindings.set(userId, chatId);
+      applyChatSlashCommands(chatId);
     }
   };
 
@@ -197,6 +198,53 @@ const createBot = (token, { logger, locale } = {}) => {
     },
   });
   log.info("Бот запущен в режиме polling");
+
+  const globalSlashCommands = [{ command: "start", description: ui.commands.start }];
+  const chatSlashCommands = [
+    { command: "play", description: ui.commands.play },
+    { command: "search", description: ui.commands.search },
+    { command: "queue", description: ui.commands.queue },
+    { command: "played", description: ui.commands.played },
+  ];
+
+  const applyGlobalSlashCommands = async () => {
+    try {
+      await bot.setMyCommands(globalSlashCommands, { language_code: currentLocale });
+      log.info("Глобальное меню слэш-команд обновлено", {
+        locale: currentLocale,
+        commands: globalSlashCommands.map(({ command }) => command),
+      });
+    } catch (error) {
+      log.error("Не удалось установить глобальные слэш-команды", { message: error.message });
+    }
+  };
+
+  const commandsAppliedForChats = new Set();
+  const applyChatSlashCommands = async (chatId) => {
+    if (!chatId || commandsAppliedForChats.has(chatId)) return;
+    commandsAppliedForChats.add(chatId);
+
+    const commands =
+      metricsChatId && String(chatId) === String(metricsChatId)
+        ? [...chatSlashCommands, { command: "metrics", description: ui.commands.metrics }]
+        : chatSlashCommands;
+
+    try {
+      await bot.setMyCommands(commands, {
+        language_code: currentLocale,
+        scope: { type: "chat", chat_id: chatId },
+      });
+      log.info("Меню слэш-команд для чата обновлено", {
+        locale: currentLocale,
+        chatId,
+        commands: commands.map(({ command }) => command),
+      });
+    } catch (error) {
+      log.error("Не удалось установить слэш-команды для чата", { message: error.message, chatId });
+    }
+  };
+
+  applyGlobalSlashCommands();
   let isStopped = false;
   const MAX_TEST_MATCHES = 10;
   const isTestFeatureEnabled = process.env.ENABLE_TEST_FEATURE === "true";
@@ -339,6 +387,7 @@ const createBot = (token, { logger, locale } = {}) => {
     });
 
     contexts.set(chatId, context);
+    applyChatSlashCommands(chatId);
     return context;
   };
 
@@ -525,7 +574,107 @@ const createBot = (token, { logger, locale } = {}) => {
     await bot.sendMessage(chatId, text);
   });
 
-  bot.onText(/\/play(?:@[\w_]+)?(?:\s+(.+))?/, async (msg, match) => {
+  bot.onText(/\/search(?:@[\w_]+)?/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    const username = msg.from?.username;
+    const player = username ? `@${username}` : null;
+
+    trackUsage("command:search");
+
+    if (!chatId) {
+      log.warn("Команда /search без chatId", { userId, username });
+      return;
+    }
+
+    if (!player) {
+      await bot.sendMessage(chatId, messages.usernameRequired());
+      return;
+    }
+
+    const context = getContext(chatId);
+    if (!context) {
+      await bot.sendMessage(chatId, ui.callback.contextMissing);
+      log.warn("Контекст не найден для команды /search", { chatId });
+      return;
+    }
+
+    bindUserToChat(userId, chatId);
+
+    try {
+      const searchResult = await context.registerSearch.execute(player);
+      const replyMarkup =
+        searchResult.status === "added" || searchResult.status === "already_searching"
+          ? buildSearchInlineKeyboard(player)
+          : undefined;
+
+      await bot.sendMessage(chatId, searchResult.text, {
+        reply_to_message_id: msg.message_id,
+        reply_markup: replyMarkup,
+      });
+    } catch (error) {
+      log.error("Ошибка при выполнении /search", { chatId, message: error.message });
+      await bot.sendMessage(chatId, ui.callback.contextNotFound);
+    }
+  });
+
+  bot.onText(/\/queue/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    const username = msg.from?.username;
+
+    trackUsage("command:queue");
+
+    if (!chatId) {
+      log.warn("Команда /queue без chatId", { userId, username });
+      return;
+    }
+
+    const context = getContext(chatId);
+    if (!context) {
+      await bot.sendMessage(chatId, ui.callback.contextMissing);
+      log.warn("Контекст не найден для команды /queue", { chatId });
+      return;
+    }
+
+    try {
+      const queueText = await context.getQueue.execute();
+      await bot.sendMessage(chatId, queueText, { reply_to_message_id: msg.message_id });
+    } catch (error) {
+      log.error("Ошибка при выполнении /queue", { chatId, message: error.message });
+      await bot.sendMessage(chatId, ui.callback.contextNotFound);
+    }
+  });
+
+  bot.onText(/\/played/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    const username = msg.from?.username;
+
+    trackUsage("command:played");
+
+    if (!chatId) {
+      log.warn("Команда /played без chatId", { userId, username });
+      return;
+    }
+
+    const context = getContext(chatId);
+    if (!context) {
+      await bot.sendMessage(chatId, ui.callback.contextMissing);
+      log.warn("Контекст не найден для команды /played", { chatId });
+      return;
+    }
+
+    try {
+      const playedText = await context.getPlayed.execute();
+      await bot.sendMessage(chatId, playedText, { reply_to_message_id: msg.message_id });
+    } catch (error) {
+      log.error("Ошибка при выполнении /played", { chatId, message: error.message });
+      await bot.sendMessage(chatId, ui.callback.contextNotFound);
+    }
+  });
+
+  bot.onText(/^\/play(?:@[\w_]+)?\s+(@[\w_]+)/, async (msg, match) => {
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;

@@ -51,6 +51,17 @@ const createRuMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `Игрок ${player} отменил запись`,
   botStopped: () =>
     "Бот остановлен. Для повторного запуска перезапустите процесс или выполните /start после запуска сервера",
+  adminOnly: () => "Эта команда доступна только администраторам чата.",
+  pauseModeEnabled: () =>
+    "Режим паузы включен: можно встать в очередь, но матчи начнутся только после /continue.",
+  pauseModeAlreadyEnabled: () =>
+    "Режим паузы уже активен. Введите /continue, чтобы запустить очередь.",
+  pauseModeDisabledNoQueue: () =>
+    "Режим паузы снят. Очередь пуста — запускать нечего.",
+  pauseModeDisabled: ({ player1, player2, startDate }) =>
+    `Режим паузы снят. Первыми играют ${player1} и ${player2}.\nСтарт в ${formatDate(startDate)}.`,
+  pauseModeOnHold: () => "Очередь на паузе: игры начнутся после /continue.",
+  pauseModeNotEnabled: () => "Режим паузы не активен.",
   metricsAccessDenied: () => "Просмотр метрик доступен только из доверенного чата.",
   metricsDisabled: () => "Хранилище метрик не настроено. Добавьте METRICS_MONGODB_URI и перезапустите бота.",
   metricsEmpty: ({ from, to }) => {
@@ -88,6 +99,8 @@ const createRuUi = () => ({
     played: "Кто уже играл: /played",
     metrics: "Сводка использования (только доверенный чат)",
     stop: "Остановить бота (админ)",
+    pause: "Поставить очередь на паузу (админ)",
+    continue: "Запустить очередь после паузы (админ)",
   },
   inline: {
     playWith: "Хочу сыграть с ним!",

@@ -48,9 +48,10 @@ class AddMatch {
    * Добавляет матч между двумя игроками, уведомляет чат и при необходимости планирует таймеры.
    * @param {string} player1
    * @param {string} player2
+   * @param {{ scheduleLifecycle?: boolean }} [options]
    * @returns {Promise<{ ok: true, match: Match, text: string } | { ok: false, reason?: string, text: string }>}
    */
-  async execute(player1, player2) {
+  async execute(player1, player2, { scheduleLifecycle = true } = {}) {
     this.logger.info("Попытка создать матч", { player1, player2 });
     const state = await this.repository.get();
     const now = this.clock.now();
@@ -65,9 +66,12 @@ class AddMatch {
       };
     }
 
-    await this.repository.save(result.state);
-
     const { match } = result;
+    if (!scheduleLifecycle && match.status === Match.statuses.playing) {
+      match.status = Match.statuses.waiting;
+    }
+
+    await this.repository.save(result.state);
     this.logger.info("Матч создан", {
       player1: match.player1,
       player2: match.player2,
@@ -78,7 +82,7 @@ class AddMatch {
     const creationText = this.messages.matchCreated(match);
     this.notifier.notify(this.chatId, creationText, { type: "match_created", match });
 
-    if (match.status === Match.statuses.playing) {
+    if (scheduleLifecycle && match.status === Match.statuses.playing) {
       this.logger.debug("Матч стартует сразу, планируем жизненный цикл", {
         player1: match.player1,
         player2: match.player2,

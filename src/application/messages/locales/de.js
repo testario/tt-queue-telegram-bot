@@ -48,6 +48,17 @@ const createDeMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `Spieler ${player} hat die Anmeldung storniert`,
   botStopped: () =>
     "Bot gestoppt. Starte den Prozess neu oder sende /start nachdem der Server läuft",
+  adminOnly: () => "Dieser Befehl ist nur für Chat-Administratoren verfügbar.",
+  pauseModeEnabled: () =>
+    "Pausenmodus aktiviert: Du kannst dich anstellen, Matches starten nach /continue.",
+  pauseModeAlreadyEnabled: () =>
+    "Pausenmodus ist bereits aktiv. Sende /continue, um die Warteschlange zu starten.",
+  pauseModeDisabledNoQueue: () =>
+    "Pausenmodus deaktiviert. Die Warteschlange ist leer – nichts zu starten.",
+  pauseModeDisabled: ({ player1, player2, startDate }) =>
+    `Pausenmodus deaktiviert. Erstes Match: ${player1} vs ${player2}.\nStart um ${formatDate(startDate)}.`,
+  pauseModeOnHold: () => "Warteschlange pausiert: Matches starten nach /continue.",
+  pauseModeNotEnabled: () => "Pausenmodus ist nicht aktiv.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "Testmatch" : "Testmatches");
@@ -61,6 +72,8 @@ const createDeUi = () => ({
     played: "Wer schon gespielt hat: /played",
     metrics: "Nutzungsstatistik (nur vertrauenswürdiger Chat)",
     stop: "Bot stoppen (Admin)",
+    pause: "Warteschlange pausieren (Admin)",
+    continue: "Warteschlange nach Pause starten (Admin)",
   },
   inline: {
     playWith: "Ich will spielen!",

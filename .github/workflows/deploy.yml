@@ -26,18 +26,18 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           key_raw="${{ secrets.VPS_SSH_KEY }}"
-          # Восстанавливаем переводы строк, убираем CR
-          key_fmt="$(printf '%s' "$key_raw" | perl -0777 -pe 's/\\n/\n/g' | tr -d '\r')"
+          # Восстанавливаем переводы строк, убираем CR и возможные обёртки в кавычки/бэктики
+          key_fmt="$(printf '%s' "$key_raw" | perl -0777 -pe 's/^\\s+|\\s+$//g; s/^["'\''`]//; s/["'\''`]$//; s/\\n/\n/g' | tr -d '\r')"
 
           tmp_key=$(mktemp)
-          printf '%s' "$key_fmt" > "$tmp_key"
+          printf '%s\n' "$key_fmt" > "$tmp_key"
           chmod 600 "$tmp_key"
 
           # Если формат не читается, пробуем base64-декод
           if ! ssh-keygen -y -f "$tmp_key" >/dev/null 2>&1; then
             decoded="$(printf '%s' "$key_fmt" | base64 -d 2>/dev/null || true)"
             if [ -n "$decoded" ]; then
-              printf '%s' "$decoded" > "$tmp_key"
+              printf '%s\n' "$decoded" > "$tmp_key"
               chmod 600 "$tmp_key"
             fi
           fi
@@ -47,6 +47,7 @@ jobs:
           echo "key lines: $(wc -l < "$tmp_key")"
           echo "key head: $(head -n1 "$tmp_key")"
           echo "key tail: $(tail -n1 "$tmp_key")"
+          echo "key sha256: $(sha256sum "$tmp_key" | cut -d' ' -f1)"
 
           # Финальная проверка с выводом ошибки
           if ! ssh-keygen -y -f "$tmp_key" >/dev/null 2>sshkey.err; then

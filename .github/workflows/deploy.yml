@@ -48,6 +48,16 @@ jobs:
           mv "$tmp_key" ~/.ssh/id_rsa
           ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
+      - name: Debug SSH key
+        run: |
+          set -e
+          ls -l ~/.ssh/id_rsa
+          echo "bytes: $(wc -c < ~/.ssh/id_rsa)"
+          echo "lines: $(wc -l < ~/.ssh/id_rsa)"
+          echo "head: $(head -n1 ~/.ssh/id_rsa)"
+          echo "tail: $(tail -n1 ~/.ssh/id_rsa)"
+          ssh-keygen -lf ~/.ssh/id_rsa
+
       - name: Deploy & restart
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}

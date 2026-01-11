@@ -23,6 +23,7 @@ import { GetPlayed } from "#application/usecases/GetPlayed.js";
 import { parseCallbackData } from "#application/parsers/callbackData.js";
 import { UsageMetricsService } from "#application/services/UsageMetricsService.js";
 import { MongoUsageMetricsRepository } from "#infrastructure/metrics/MongoUsageMetricsRepository.js";
+import { Match } from "#domain";
 
 /**
  * @typedef {import("#application/types.js").Logger} Logger
@@ -139,6 +140,26 @@ const createBot = (token, { logger, locale } = {}) => {
     usageMetrics.track({ type, payload });
   };
 
+  const pauseModeChats = new Set();
+
+  const normalizeChatKey = (chatId) =>
+    chatId === null || chatId === undefined ? null : String(chatId);
+
+  const isPauseModeEnabled = (chatId) => {
+    const key = normalizeChatKey(chatId);
+    return key ? pauseModeChats.has(key) : false;
+  };
+
+  const setPauseMode = (chatId, enabled) => {
+    const key = normalizeChatKey(chatId);
+    if (!key) return;
+    if (enabled) {
+      pauseModeChats.add(key);
+    } else {
+      pauseModeChats.delete(key);
+    }
+  };
+
   /**
    * Парсит период для метрик из строки вида "24h", "7d", "2w".
    * @param {string} rawRange
@@ -205,6 +226,8 @@ const createBot = (token, { logger, locale } = {}) => {
     { command: "search", description: ui.commands.search },
     { command: "queue", description: ui.commands.queue },
     { command: "played", description: ui.commands.played },
+    { command: "pause", description: ui.commands.pause },
+    { command: "continue", description: ui.commands.continue },
   ];
 
   const applyGlobalSlashCommands = async () => {
@@ -242,6 +265,33 @@ const createBot = (token, { logger, locale } = {}) => {
     } catch (error) {
       log.error("Не удалось установить слэш-команды для чата", { message: error.message, chatId });
     }
+  };
+
+  const isUserAdmin = async (chatId, userId) => {
+    if (!chatId || !userId) return false;
+    try {
+      const member = await bot.getChatMember(chatId, userId);
+      return ["administrator", "creator"].includes(member?.status);
+    } catch (error) {
+      log.error("Не удалось проверить права администратора", {
+        chatId,
+        userId,
+        message: error.message,
+      });
+      return false;
+    }
+  };
+
+  const ensureAdminOrReply = async ({ chatId, userId, replyToMessageId }) => {
+    const admin = await isUserAdmin(chatId, userId);
+    if (!admin) {
+      await bot.sendMessage(
+        chatId,
+        messages.adminOnly(),
+        replyToMessageId ? { reply_to_message_id: replyToMessageId } : undefined
+      );
+    }
+    return admin;
   };
 
   applyGlobalSlashCommands();
@@ -432,6 +482,47 @@ const createBot = (token, { logger, locale } = {}) => {
     ],
   });
 
+  const freezeQueueForPause = async (context) => {
+    if (!context) return { hasQueue: false };
+    context.orchestrator.cancelAll();
+    const state = await context.repository.get();
+    if (!state.queue.length) {
+      return { hasQueue: false };
+    }
+    state.queue.forEach((item) => {
+      item.status = Match.statuses.waiting;
+    });
+    context.queueService.recalculateWaiting(state);
+    await context.repository.save(state);
+    return { hasQueue: true, nextMatch: state.queue[0] };
+  };
+
+  const resumeQueueAfterPause = async (context) => {
+    if (!context) return { hasQueue: false };
+    const state = await context.repository.get();
+    if (!state.queue.length) {
+      return { hasQueue: false };
+    }
+    const now = context.clock.now();
+    const nextMatch = state.queue[0];
+    nextMatch.status = Match.statuses.playing;
+    nextMatch.startDate = new Date(now.getTime() + context.queueService.readyMs);
+    nextMatch.endDate = new Date(nextMatch.startDate.getTime() + context.queueService.gameMs);
+    context.queueService.recalculateWaiting(state);
+    await context.repository.save(state);
+    context.orchestrator.scheduleLifecycle(nextMatch);
+    return { hasQueue: true, nextMatch };
+  };
+
+  const notifyQueuePausedIfNeeded = async (chatId, replyToMessageId) => {
+    if (!isPauseModeEnabled(chatId)) return;
+    await bot.sendMessage(
+      chatId,
+      messages.pauseModeOnHold(),
+      replyToMessageId ? { reply_to_message_id: replyToMessageId } : undefined
+    );
+  };
+
   /**
    * Создает указанное количество тестовых матчей для заданного чата.
    * @param {number|string|null} chatId
@@ -455,7 +546,9 @@ const createBot = (token, { logger, locale } = {}) => {
       const opponent = ui.test.playerName({ timestamp, index: i, suffix: "B" });
 
       await registerSearch.execute(searcher);
-      const addResult = await addMatch.execute(searcher, opponent);
+      const addResult = await addMatch.execute(searcher, opponent, {
+        scheduleLifecycle: !isPauseModeEnabled(chatId),
+      });
 
       if (addResult.ok) {
         created.push({ searcher, opponent });
@@ -546,6 +639,104 @@ const createBot = (token, { logger, locale } = {}) => {
     const chatId = msg.chat.id;
     trackUsage("command:stop");
     await stopBot(chatId, username);
+  });
+
+  bot.onText(/\/pause(?:@[\w_]+)?/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    const username = msg.from?.username;
+
+    trackUsage("command:pause");
+
+    if (!chatId) {
+      log.warn("Команда /pause без chatId", { userId, username });
+      return;
+    }
+
+    const context = getContext(chatId);
+    if (!context) {
+      await bot.sendMessage(chatId, ui.callback.contextMissing);
+      log.warn("Контекст не найден для команды /pause", { chatId });
+      return;
+    }
+
+    const isAdmin = await ensureAdminOrReply({
+      chatId,
+      userId,
+      replyToMessageId: msg.message_id,
+    });
+    if (!isAdmin) return;
+
+    if (isPauseModeEnabled(chatId)) {
+      await bot.sendMessage(chatId, messages.pauseModeAlreadyEnabled(), {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
+
+    setPauseMode(chatId, true);
+    const freezeResult = await freezeQueueForPause(context);
+    log.info("Режим паузы включен", { chatId, username, queueFrozen: freezeResult.hasQueue });
+
+    await bot.sendMessage(chatId, messages.pauseModeEnabled(), {
+      reply_to_message_id: msg.message_id,
+    });
+  });
+
+  bot.onText(/\/continue(?:@[\w_]+)?/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    const username = msg.from?.username;
+
+    trackUsage("command:continue");
+
+    if (!chatId) {
+      log.warn("Команда /continue без chatId", { userId, username });
+      return;
+    }
+
+    const context = getContext(chatId);
+    if (!context) {
+      await bot.sendMessage(chatId, ui.callback.contextMissing);
+      log.warn("Контекст не найден для команды /continue", { chatId });
+      return;
+    }
+
+    const isAdmin = await ensureAdminOrReply({
+      chatId,
+      userId,
+      replyToMessageId: msg.message_id,
+    });
+    if (!isAdmin) return;
+
+    if (!isPauseModeEnabled(chatId)) {
+      await bot.sendMessage(chatId, messages.pauseModeNotEnabled(), {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
+
+    setPauseMode(chatId, false);
+    const resumeResult = await resumeQueueAfterPause(context);
+    log.info("Режим паузы выключен", { chatId, username, queueStarted: resumeResult.hasQueue });
+
+    if (!resumeResult.hasQueue) {
+      await bot.sendMessage(chatId, messages.pauseModeDisabledNoQueue(), {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
+
+    const { nextMatch } = resumeResult;
+    await bot.sendMessage(
+      chatId,
+      messages.pauseModeDisabled({
+        player1: nextMatch.player1,
+        player2: nextMatch.player2,
+        startDate: nextMatch.startDate,
+      }),
+      { reply_to_message_id: msg.message_id }
+    );
   });
 
   bot.onText(/\/metrics(?:@[\w_]+)?(?:\s+(.+))?/, async (msg, match) => {
@@ -1047,7 +1238,9 @@ const createBot = (token, { logger, locale } = {}) => {
 
     if (parsed.type === "play_with") {
       const player1 = parsed.player;
-      const addResult = await addMatch.execute(player1, player2);
+      const addResult = await addMatch.execute(player1, player2, {
+        scheduleLifecycle: !isPauseModeEnabled(chatId),
+      });
       if (addResult.ok) {
         log.info("Матч принят через callback", { player1, player2 });
         bot
@@ -1067,6 +1260,7 @@ const createBot = (token, { logger, locale } = {}) => {
           .catch((error) =>
             handleEditMessageError(error, "Не удалось обновить inline сообщение подтверждения матча")
           );
+        await notifyQueuePausedIfNeeded(chatId, callbackQuery.message?.message_id);
       } else {
         log.warn("Не удалось создать матч через callback", {
           player1,
@@ -1165,7 +1359,9 @@ const createBot = (token, { logger, locale } = {}) => {
         return;
       }
 
-      const addResult = await addMatch.execute(player1, player2);
+      const addResult = await addMatch.execute(player1, player2, {
+        scheduleLifecycle: !isPauseModeEnabled(chatId),
+      });
       if (addResult.ok) {
         bot
           .editMessageText(addResult.text, {
@@ -1184,6 +1380,7 @@ const createBot = (token, { logger, locale } = {}) => {
           .catch((error) =>
             handleEditMessageError(error, "Не удалось обновить сообщение о принятии прямого матча")
           );
+        await notifyQueuePausedIfNeeded(chatId, callbackQuery.message?.message_id);
       } else {
         bot
           .answerCallbackQuery(callbackId, {

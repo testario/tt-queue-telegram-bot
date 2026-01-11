@@ -48,6 +48,17 @@ const createEsMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `El jugador ${player} canceló su turno`,
   botStopped: () =>
     "Bot detenido. Reinicia el proceso o envía /start después de que el servidor esté activo",
+  adminOnly: () => "Este comando está disponible solo para administradores del chat.",
+  pauseModeEnabled: () =>
+    "Modo de pausa activado: puedes unirte a la cola, los partidos comenzarán después de /continue.",
+  pauseModeAlreadyEnabled: () =>
+    "El modo de pausa ya está activo. Envía /continue para iniciar la cola.",
+  pauseModeDisabledNoQueue: () =>
+    "Modo de pausa desactivado. La cola está vacía, no hay nada que iniciar.",
+  pauseModeDisabled: ({ player1, player2, startDate }) =>
+    `Modo de pausa desactivado. Primer partido: ${player1} vs ${player2}.\nInicio a ${formatDate(startDate)}.`,
+  pauseModeOnHold: () => "La cola está en pausa: los partidos comenzarán después de /continue.",
+  pauseModeNotEnabled: () => "El modo de pausa no está activo.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "partido de prueba" : "partidos de prueba");
@@ -61,6 +72,8 @@ const createEsUi = () => ({
     played: "Quién ya jugó: /played",
     metrics: "Resumen de uso (solo chat confiable)",
     stop: "Detener el bot (admin)",
+    pause: "Pausar el movimiento de la cola (admin)",
+    continue: "Reanudar la cola tras la pausa (admin)",
   },
   inline: {
     playWith: "¡Quiero jugar!",

@@ -1,14 +1,90 @@
 import { jest } from "@jest/globals";
 import { AddMatch } from "#application/usecases/AddMatch.js";
+import { templates } from "#application/messages/templates.js";
+import { Match } from "#domain";
 import { QueueService } from "#domain/services/QueueService.js";
 import { InMemoryQueueRepository } from "#infrastructure/repositories/InMemoryQueueRepository.js";
-import { templates } from "#application/messages/templates.js";
 import {
   DEFAULT_GAME_TIME,
   TIME_READY,
   WORK_SCHEDULE,
 } from "#application/config/time.js";
 import { QueueState } from "#domain/entities/QueueState.js";
+
+const createRepo = (state = {}) => ({
+  get: jest.fn().mockResolvedValue(state),
+  save: jest.fn(),
+});
+
+const baseDeps = ({ matchStatus = Match.statuses.playing } = {}) => {
+  const repository = createRepo();
+  const queueService = {
+    scheduleMatch: jest.fn().mockReturnValue({
+      ok: true,
+      state: { some: "state" },
+      match: {
+        player1: "@p1",
+        player2: "@p2",
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 1_000),
+        status: matchStatus,
+      },
+    }),
+  };
+  const orchestrator = { scheduleLifecycle: jest.fn() };
+  const notifier = { notify: jest.fn() };
+  const clock = { now: jest.fn(() => new Date()) };
+
+  return { repository, queueService, orchestrator, notifier, clock };
+};
+
+describe("AddMatch use case", () => {
+  test("планирует жизненный цикл при статусе playing (по умолчанию)", async () => {
+    const { repository, queueService, orchestrator, notifier, clock } = baseDeps();
+    const useCase = new AddMatch({
+      chatId: 42,
+      repository,
+      queueService,
+      orchestrator,
+      notifier,
+      messages: templates,
+      clock,
+    });
+
+    const result = await useCase.execute("@p1", "@p2");
+
+    expect(result.ok).toBe(true);
+    expect(queueService.scheduleMatch).toHaveBeenCalled();
+    expect(repository.save).toHaveBeenCalledWith({ some: "state" });
+    expect(notifier.notify).toHaveBeenCalledWith(42, expect.any(String), {
+      type: "match_created",
+      match: expect.objectContaining({ player1: "@p1", player2: "@p2" }),
+    });
+    expect(orchestrator.scheduleLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ player1: "@p1", player2: "@p2", status: Match.statuses.playing })
+    );
+  });
+
+  test("не планирует жизненный цикл и переводит матч в waiting при паузе", async () => {
+    const { repository, queueService, orchestrator, notifier, clock } = baseDeps();
+    const useCase = new AddMatch({
+      chatId: 42,
+      repository,
+      queueService,
+      orchestrator,
+      notifier,
+      messages: templates,
+      clock,
+    });
+
+    const result = await useCase.execute("@p1", "@p2", { scheduleLifecycle: false });
+
+    expect(result.ok).toBe(true);
+    expect(result.match.status).toBe(Match.statuses.waiting);
+    expect(orchestrator.scheduleLifecycle).not.toHaveBeenCalled();
+    expect(repository.save).toHaveBeenCalledWith({ some: "state" });
+  });
+});
 
 class StubNotifier {
   constructor() {

@@ -48,6 +48,16 @@ const createEnMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `Player ${player} canceled the entry`,
   botStopped: () =>
     "Bot stopped. Restart the process or send /start after the server is up",
+  adminOnly: () => "This command is available to chat administrators only.",
+  pauseModeEnabled: () =>
+    "Pause mode enabled: you can queue up, matches will start after /continue.",
+  pauseModeAlreadyEnabled: () =>
+    "Pause mode is already active. Send /continue to start the queue.",
+  pauseModeDisabledNoQueue: () => "Pause mode disabled. Queue is empty, nothing to start.",
+  pauseModeDisabled: ({ player1, player2, startDate }) =>
+    `Pause mode disabled. First match: ${player1} vs ${player2}.\nStart at ${formatDate(startDate)}.`,
+  pauseModeOnHold: () => "Queue is on hold: matches will start after /continue.",
+  pauseModeNotEnabled: () => "Pause mode is not active.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "test match" : "test matches");
@@ -61,6 +71,8 @@ const createEnUi = () => ({
     played: "Who already played: /played",
     metrics: "Usage metrics (trusted chat only)",
     stop: "Stop the bot (admin)",
+    pause: "Pause queue movement (admin)",
+    continue: "Resume queue after pause (admin)",
   },
   inline: {
     playWith: "I want to play!",

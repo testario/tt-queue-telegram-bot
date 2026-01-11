@@ -48,6 +48,17 @@ const createFrMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `Le joueur ${player} a annulé son inscription`,
   botStopped: () =>
     "Bot arrêté. Redémarre le processus ou envoie /start après le démarrage du serveur",
+  adminOnly: () => "Cette commande est réservée aux administrateurs du chat.",
+  pauseModeEnabled: () =>
+    "Mode pause activé : on peut rejoindre la file, les matchs démarreront après /continue.",
+  pauseModeAlreadyEnabled: () =>
+    "Le mode pause est déjà actif. Envoie /continue pour lancer la file.",
+  pauseModeDisabledNoQueue: () =>
+    "Mode pause désactivé. La file est vide, rien à lancer.",
+  pauseModeDisabled: ({ player1, player2, startDate }) =>
+    `Mode pause désactivé. Premier match : ${player1} vs ${player2}.\nDébut à ${formatDate(startDate)}.`,
+  pauseModeOnHold: () => "File en pause : les matchs commenceront après /continue.",
+  pauseModeNotEnabled: () => "Le mode pause n'est pas actif.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "match de test" : "matchs de test");
@@ -61,6 +72,8 @@ const createFrUi = () => ({
     played: "Qui a déjà joué : /played",
     metrics: "Résumé d'usage (chat de confiance uniquement)",
     stop: "Arrêter le bot (admin)",
+    pause: "Mettre la file en pause (admin)",
+    continue: "Relancer la file après pause (admin)",
   },
   inline: {
     playWith: "Je veux jouer !",

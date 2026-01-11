@@ -15,14 +15,15 @@ class EventNotifier {
    * Отправляет сообщение подписчикам.
    * @param {number|string} chatId
    * @param {string} text
+   * @param {Record<string, unknown>} [meta]
    */
-  notify(chatId, text) {
-    this.emitter.emit("message", { chatId, text });
+  notify(chatId, text, meta = undefined) {
+    this.emitter.emit("message", { chatId, text, meta });
   }
 
   /**
    * Подписывается на входящие сообщения.
-   * @param {(payload: {chatId: number|string, text: string}) => void} handler
+   * @param {(payload: {chatId: number|string, text: string, meta?: Record<string, unknown>}) => void} handler
    */
   onMessage(handler) {
     this.emitter.on("message", handler);

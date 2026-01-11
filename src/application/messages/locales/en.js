@@ -1,6 +1,6 @@
 const createEnMessages = ({ formatDate }) => ({
   greet: () =>
-    `Hi!\nI'm a bot that helps manage the table tennis queue.\n\nTo use me, mention my nickname with @ in chat and choose the option you need.\n\nHave a great game!`,
+    `Bot is active and ready to work!`,
   searchAdded: (player) => `${player} wants to play. Who will join?`,
   searchAlready: (player) => `Player ${player} tried to search, but is already searching`,
   searchInQueue: (player) => `Player ${player} tried to search, but is already in queue`,

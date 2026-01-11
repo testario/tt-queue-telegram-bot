@@ -76,7 +76,7 @@ class AddMatch {
       status: match.status,
     });
     const creationText = this.messages.matchCreated(match);
-    this.notifier.notify(this.chatId, creationText);
+    this.notifier.notify(this.chatId, creationText, { type: "match_created", match });
 
     if (match.status === Match.statuses.playing) {
       this.logger.debug("Матч стартует сразу, планируем жизненный цикл", {

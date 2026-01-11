@@ -88,7 +88,11 @@ describe("MatchOrchestrator", () => {
     expect(timer.tasks.has(startId)).toBe(true);
 
     timer.run(startId);
-    expect(notifier.notify).toHaveBeenCalledWith(1, "started");
+    expect(notifier.notify).toHaveBeenCalledWith(
+      1,
+      "started",
+      expect.objectContaining({ type: "match_started", match })
+    );
     expect(messages.matchStarted).toHaveBeenCalledWith(match);
     expect(timer.tasks.has(finishId)).toBe(true);
 

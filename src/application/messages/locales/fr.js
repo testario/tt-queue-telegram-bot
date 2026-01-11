@@ -1,6 +1,6 @@
 const createFrMessages = ({ formatDate }) => ({
   greet: () =>
-    `Salut !\nJe suis un bot pour gérer la file de ping-pong.\n\nMentionne-moi avec @ dans le chat et choisis l’option dont tu as besoin.\n\nBonne partie !`,
+    `Bot actif et prêt à travailler !`,
   searchAdded: (player) => `${player} veut jouer. Qui se joint ?`,
   searchAlready: (player) => `Le joueur ${player} cherche déjà un adversaire`,
   searchInQueue: (player) => `Le joueur ${player} est déjà dans la file`,

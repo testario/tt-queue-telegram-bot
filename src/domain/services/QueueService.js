@@ -170,8 +170,8 @@ class QueueService {
 
     if (index === 0) {
       const currentTime = now.getTime();
-      const elapsed = Math.max(0, currentTime - match.startDate.getTime());
-      const remains = Math.max(0, this.gameMs - elapsed);
+      // Оставшееся время для пользователей: считаем до конца матча, включая подготовку, если отмена пришла раньше старта.
+      const remains = Math.max(0, match.endDate.getTime() - currentTime);
 
       let nextMatch = null;
       if (nextState.queue.length > 0) {

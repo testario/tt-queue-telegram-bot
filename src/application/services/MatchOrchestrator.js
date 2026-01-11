@@ -70,7 +70,10 @@ class MatchOrchestrator {
         player1: match.player1,
         player2: match.player2,
       });
-      this.notifier.notify(this.chatId, this.messages.matchStarted(match));
+      this.notifier.notify(this.chatId, this.messages.matchStarted(match), {
+        type: "match_started",
+        match,
+      });
       const finishDelay = Math.max(0, match.endDate.getTime() - this.clock.now().getTime());
       this.timer.schedule(finishId, finishDelay, () =>
         this.handleMatchFinished(match)

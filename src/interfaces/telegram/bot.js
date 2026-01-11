@@ -373,11 +373,16 @@ const createBot = (token, { logger, locale } = {}) => {
       inlineMessageId: null,
     };
 
-    notifier.onMessage(({ chatId: targetChatId, text }) => {
+    notifier.onMessage(({ chatId: targetChatId, text, meta }) => {
       if (targetChatId !== chatId) return;
 
+      const replyMarkup =
+        meta && meta.match && (meta.type === "match_created" || meta.type === "match_started")
+          ? buildMatchCancelKeyboard(meta.match)
+          : undefined;
+
       bot
-        .sendMessage(chatId, text)
+        .sendMessage(chatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined)
         .catch((error) =>
           log.error("Не удалось отправить уведомление", {
             chatId,
@@ -406,6 +411,22 @@ const createBot = (token, { logger, locale } = {}) => {
         {
           text: ui.inline.cancelOwn,
           callback_data: "i_want_to_cancel:" + player,
+        },
+      ],
+    ],
+  });
+
+  /**
+   * Формирует клавиатуру для отмены созданного матча участниками.
+   * @param {{ player1: string, player2: string }} match
+   * @returns {{ inline_keyboard: Array<Array<{ text: string, callback_data: string }>> }}
+   */
+  const buildMatchCancelKeyboard = (match) => ({
+    inline_keyboard: [
+      [
+        {
+          text: ui.inline.confirmNoTime,
+          callback_data: `i_want_to_out:${match.player1},${match.player2}`,
         },
       ],
     ],

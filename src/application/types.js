@@ -24,7 +24,7 @@
 
 /**
  * @typedef {Object} Notifier
- * @property {(chatId: string|number, text: string) => void} notify
+ * @property {(chatId: string|number, text: string, meta?: Record<string, unknown>) => void} notify
  */
 
 /**

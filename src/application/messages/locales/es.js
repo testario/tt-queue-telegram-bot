@@ -1,6 +1,6 @@
 const createEsMessages = ({ formatDate }) => ({
   greet: () =>
-    `¡Hola!\nSoy un bot que ayuda a gestionar la cola de tenis de mesa.\n\nMencióname con @ en el chat y elige la opción que necesites.\n\n¡Buen juego!`,
+    `¡Bot activo y listo para trabajar!`,
   searchAdded: (player) => `${player} quiere jugar. ¿Quién se apunta?`,
   searchAlready: (player) => `El jugador ${player} ya está buscando oponente`,
   searchInQueue: (player) => `El jugador ${player} ya está en la cola`,

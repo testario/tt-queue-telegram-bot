@@ -1,6 +1,6 @@
 const createDeMessages = ({ formatDate }) => ({
   greet: () =>
-    `Hi!\nIch bin ein Bot zur Verwaltung der Tischtennis-Warteschlange.\n\nErwähne mich mit @ im Chat und wähle die gewünschte Option.\n\nViel Spaß!`,
+    `Bot ist aktiv und bereit zum Einsatz!`,
   searchAdded: (player) => `${player} möchte spielen. Wer macht mit?`,
   searchAlready: (player) => `Spieler ${player} sucht bereits nach einem Gegner`,
   searchInQueue: (player) => `Spieler ${player} steht schon in der Warteschlange`,

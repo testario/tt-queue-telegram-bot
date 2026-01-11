@@ -27,8 +27,8 @@ jobs:
 
           cd "$VPS_APP_PATH"
 
-          git fetch origin master
-          git checkout master
+          git fetch origin deploy
+          git checkout deploy
           git pull --ff-only
 
           npm ci

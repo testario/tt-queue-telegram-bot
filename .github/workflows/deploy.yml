@@ -64,6 +64,9 @@ jobs:
           set -e
 
           echo "VPS_APP_PATH=$VPS_APP_PATH"
+          echo "whoami: $(whoami)"
+          echo "parent listing:"
+          ls -la "$(dirname "$VPS_APP_PATH")"
           if [ -z "$VPS_APP_PATH" ]; then
             echo "VPS_APP_PATH is empty"
             exit 1
@@ -73,7 +76,10 @@ jobs:
             exit 1
           fi
 
-          cd "$VPS_APP_PATH"
+          if ! cd $VPS_APP_PATH; then
+            echo "Failed to cd into: $VPS_APP_PATH"
+            exit 1
+          fi
           echo "PWD after cd: $(pwd)"
           ls -la
           if [ ! -d .git ]; then

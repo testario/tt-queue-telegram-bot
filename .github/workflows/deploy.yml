@@ -9,19 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: tt-bot
     steps:
-      - name: Check secrets
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_APP_PATH: ${{ secrets.VPS_APP_PATH }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-        run: |
-          missing=0
-          for v in VPS_HOST VPS_PORT VPS_USER VPS_APP_PATH VPS_SSH_KEY; do
-            if [ -z "${!v}" ]; then echo "Missing secret: $v"; missing=1; fi
-          done
-          [ $missing -eq 0 ]
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
@@ -58,28 +45,12 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_APP_PATH: ${{ secrets.VPS_APP_PATH }}
         run: |
           ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" << 'EOF'
-          set -e
+          set -echo
+        
+          cd ${{ secrets.VPS_APP_PATH }}
 
-          echo "VPS_APP_PATH=$VPS_APP_PATH"
-          echo "whoami: $(whoami)"
-          echo "parent listing:"
-          ls -la "$(dirname "$VPS_APP_PATH")"
-          if [ -z "$VPS_APP_PATH" ]; then
-            echo "VPS_APP_PATH is empty"
-            exit 1
-          fi
-          if [ ! -d "$VPS_APP_PATH" ]; then
-            echo "VPS_APP_PATH does not exist: $VPS_APP_PATH"
-            exit 1
-          fi
-
-          if ! cd $VPS_APP_PATH; then
-            echo "Failed to cd into: $VPS_APP_PATH"
-            exit 1
-          fi
           echo "PWD after cd: $(pwd)"
           ls -la
           if [ ! -d .git ]; then

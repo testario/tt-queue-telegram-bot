@@ -42,13 +42,6 @@ jobs:
             fi
           fi
 
-          # Базовая диагностика до финальной проверки
-          echo "key bytes: $(wc -c < "$tmp_key")"
-          echo "key lines: $(wc -l < "$tmp_key")"
-          echo "key head: $(head -n1 "$tmp_key")"
-          echo "key tail: $(tail -n1 "$tmp_key")"
-          echo "key sha256: $(sha256sum "$tmp_key" | cut -d' ' -f1)"
-
           # Финальная проверка с выводом ошибки
           if ! ssh-keygen -y -f "$tmp_key" >/dev/null 2>sshkey.err; then
             echo "Invalid VPS_SSH_KEY format"
@@ -60,16 +53,6 @@ jobs:
           mv "$tmp_key" ~/.ssh/id_rsa
           ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Debug SSH key
-        run: |
-          set -e
-          ls -l ~/.ssh/id_rsa
-          echo "bytes: $(wc -c < ~/.ssh/id_rsa)"
-          echo "lines: $(wc -l < ~/.ssh/id_rsa)"
-          echo "head: $(head -n1 ~/.ssh/id_rsa)"
-          echo "tail: $(tail -n1 ~/.ssh/id_rsa)"
-          ssh-keygen -lf ~/.ssh/id_rsa
-
       - name: Deploy & restart
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -80,11 +63,21 @@ jobs:
           ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" << 'EOF'
           set -e
 
+          echo "VPS_APP_PATH=$VPS_APP_PATH"
+          if [ -z "$VPS_APP_PATH" ]; then
+            echo "VPS_APP_PATH is empty"
+            exit 1
+          fi
+          if [ ! -d "$VPS_APP_PATH" ]; then
+            echo "VPS_APP_PATH does not exist: $VPS_APP_PATH"
+            exit 1
+          fi
+
           cd "$VPS_APP_PATH"
-          echo "PWD: $(pwd)"
+          echo "PWD after cd: $(pwd)"
           ls -la
           if [ ! -d .git ]; then
-            echo "Repo not initialized in $PWD (.git missing)"
+            echo "Repo not initialized in $(pwd) (.git missing)"
             exit 1
           fi
 

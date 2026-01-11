@@ -42,8 +42,19 @@ jobs:
             fi
           fi
 
-          # Финальная проверка
-          ssh-keygen -y -f "$tmp_key" >/dev/null 2>&1 || { echo "Invalid VPS_SSH_KEY format"; exit 1; }
+          # Базовая диагностика до финальной проверки
+          echo "key bytes: $(wc -c < "$tmp_key")"
+          echo "key lines: $(wc -l < "$tmp_key")"
+          echo "key head: $(head -n1 "$tmp_key")"
+          echo "key tail: $(tail -n1 "$tmp_key")"
+
+          # Финальная проверка с выводом ошибки
+          if ! ssh-keygen -y -f "$tmp_key" >/dev/null 2>sshkey.err; then
+            echo "Invalid VPS_SSH_KEY format"
+            cat sshkey.err
+            exit 1
+          fi
+          rm -f sshkey.err
 
           mv "$tmp_key" ~/.ssh/id_rsa
           ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts

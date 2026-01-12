@@ -1330,6 +1330,14 @@ const createBot = (token, { logger, locale } = {}) => {
       hasMessageId: Boolean(messageId),
     });
 
+    const editTarget =
+      messageId != null
+        ? { inline_message_id: messageId }
+        : callbackQuery.message?.message_id != null
+        ? { chat_id: chatId, message_id: callbackQuery.message.message_id }
+        : null;
+    const buildEditOptions = (extra = {}) => (editTarget ? { ...editTarget, ...extra } : null);
+
     if (parsed.type === "play_with") {
       const player1 = parsed.player;
       const addResult = await addMatch.execute(player1, player2, {
@@ -1337,23 +1345,31 @@ const createBot = (token, { logger, locale } = {}) => {
       });
       if (addResult.ok) {
         log.info("Матч принят через callback", { player1, player2 });
-        bot
-          .editMessageText(addResult.text, {
-            inline_message_id: messageId,
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: ui.inline.confirmNoTime,
-                    callback_data: `i_want_to_out:${player1},${player2}`,
-                  },
-                ],
+        const editOptions = buildEditOptions({
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: ui.inline.confirmNoTime,
+                  callback_data: `i_want_to_out:${player1},${player2}`,
+                },
               ],
-            },
-          })
-          .catch((error) =>
-            handleEditMessageError(error, "Не удалось обновить inline сообщение подтверждения матча")
-          );
+            ],
+          },
+        });
+        if (editOptions) {
+          bot
+            .editMessageText(addResult.text, editOptions)
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось обновить сообщение подтверждения матча")
+            );
+        } else {
+          log.warn("Нет цели для редактирования сообщения подтверждения матча", {
+            chatId,
+            player1,
+            player2,
+          });
+        }
         await notifyQueuePausedIfNeeded(chatId, callbackQuery.message?.message_id);
       } else {
         log.warn("Не удалось создать матч через callback", {
@@ -1381,13 +1397,24 @@ const createBot = (token, { logger, locale } = {}) => {
       }
       const cancelResult = await cancelSearch.execute(parsed.player);
       if (cancelResult.status === "removed") {
-        bot
-          .editMessageText(messages.searchCancelled(), {
-            inline_message_id: messageId,
-          })
-          .catch((error) =>
-            handleEditMessageError(error, "Не удалось обновить inline сообщение об отмене поиска")
-          );
+        const editOptions = buildEditOptions();
+        if (editOptions) {
+          bot
+            .editMessageText(messages.searchCancelled(), editOptions)
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось обновить сообщение об отмене поиска")
+            );
+        } else {
+          log.warn("Нет цели для редактирования сообщения об отмене поиска", {
+            chatId,
+            player: parsed.player,
+          });
+          bot
+            .sendMessage(chatId, messages.searchCancelled())
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось отправить уведомление об отмене поиска")
+            );
+        }
       } else {
         bot
           .answerCallbackQuery(callbackId, {
@@ -1419,19 +1446,27 @@ const createBot = (token, { logger, locale } = {}) => {
           .catch(console.error);
       } else {
         log.info("Матч отменен по callback", { player: player2, status: cancelResult.status });
-        bot
-          .editMessageText(ui.callback.matchCancelled, {
-            inline_message_id: messageId,
-          })
-          .catch((error) =>
-            handleEditMessageError(error, "Не удалось обновить inline сообщение об отмене матча")
-          );
+        const editOptions = buildEditOptions();
+        if (editOptions) {
+          bot
+            .editMessageText(ui.callback.matchCancelled, editOptions)
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось обновить сообщение об отмене матча")
+            );
+        } else {
+          log.warn("Нет цели для редактирования сообщения об отмене матча", {
+            chatId,
+            player: player2,
+          });
+          bot
+            .sendMessage(chatId, ui.callback.matchCancelled)
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось отправить уведомление об отмене матча")
+            );
+        }
       }
     } else if (parsed.type === "direct_accept") {
       const [player1, invited] = parsed.players || [];
-      const editTarget = messageId
-        ? { inline_message_id: messageId }
-        : { chat_id: chatId, message_id: callbackQuery.message?.message_id };
 
       if (!player1 || !invited) {
         bot
@@ -1457,13 +1492,21 @@ const createBot = (token, { logger, locale } = {}) => {
         scheduleLifecycle: !isPauseModeEnabled(chatId),
       });
       if (addResult.ok) {
-        bot
-          .editMessageText(messages.directAcceptedShort(), {
-            ...editTarget
-          })
-          .catch((error) =>
-            handleEditMessageError(error, "Не удалось обновить сообщение о принятии прямого матча")
-          );
+        const editOptions = buildEditOptions();
+        if (editOptions) {
+          bot
+            .editMessageText(messages.directAcceptedShort(), editOptions)
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось обновить сообщение о принятии прямого матча")
+            );
+        } else {
+          log.warn("Нет цели для обновления сообщения о принятии прямого матча", { chatId, player1, player2 });
+          bot
+            .sendMessage(chatId, messages.directAcceptedShort())
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось отправить сообщение о принятии прямого матча")
+            );
+        }
         await notifyQueuePausedIfNeeded(chatId, callbackQuery.message?.message_id);
       } else {
         bot
@@ -1475,9 +1518,6 @@ const createBot = (token, { logger, locale } = {}) => {
       }
     } else if (parsed.type === "direct_decline") {
       const [player1, invited] = parsed.players || [];
-      const editTarget = messageId
-        ? { inline_message_id: messageId }
-        : { chat_id: chatId, message_id: callbackQuery.message?.message_id };
 
       if (!player1 || !invited) {
         bot
@@ -1500,18 +1540,23 @@ const createBot = (token, { logger, locale } = {}) => {
       }
 
       await cancelSearch.execute(player1);
-      bot
-        .editMessageText(messages.directDeclined({ from: player1, to: player2 }), {
-          ...editTarget,
-        })
-        .catch((error) =>
-          handleEditMessageError(error, "Не удалось обновить сообщение об отказе в прямом матче")
-        );
+      const editOptions = buildEditOptions();
+      if (editOptions) {
+        bot
+          .editMessageText(messages.directDeclined({ from: player1, to: player2 }), editOptions)
+          .catch((error) =>
+            handleEditMessageError(error, "Не удалось обновить сообщение об отказе в прямом матче")
+          );
+      } else {
+        log.warn("Нет цели для обновления сообщения об отказе в прямом матче", { chatId, player1, player2 });
+        bot
+          .sendMessage(chatId, messages.directDeclined({ from: player1, to: player2 }))
+          .catch((error) =>
+            handleEditMessageError(error, "Не удалось отправить сообщение об отказе в прямом матче")
+          );
+      }
     } else if (parsed.type === "direct_cancel") {
       const [player1, invited] = parsed.players || [];
-      const editTarget = messageId
-        ? { inline_message_id: messageId }
-        : { chat_id: chatId, message_id: callbackQuery.message?.message_id };
       const canDelete =
         callbackQuery.message?.chat?.id !== undefined &&
         callbackQuery.message?.message_id !== undefined;
@@ -1557,13 +1602,25 @@ const createBot = (token, { logger, locale } = {}) => {
             );
         }
       } else {
-        bot
-          .editMessageText(messages.directCancelled({ from: player1, to: invited }), {
-            ...editTarget,
-          })
-          .catch((error) =>
-            handleEditMessageError(error, "Не удалось обновить сообщение об отмене прямого приглашения")
-          );
+        const editOptions = buildEditOptions();
+        if (editOptions) {
+          bot
+            .editMessageText(messages.directCancelled({ from: player1, to: invited }), editOptions)
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось обновить сообщение об отмене прямого приглашения")
+            );
+        } else {
+          log.warn("Нет цели для обновления сообщения об отмене прямого приглашения", {
+            chatId,
+            player: player1,
+            invited,
+          });
+          bot
+            .sendMessage(chatId, messages.directCancelled({ from: player1, to: invited }))
+            .catch((error) =>
+              handleEditMessageError(error, "Не удалось отправить сообщение об отмене прямого приглашения")
+            );
+        }
       }
     } else if (parsed.type === "inline_test") {
       if (!isTestFeatureEnabled) {

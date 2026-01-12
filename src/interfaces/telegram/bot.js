@@ -62,11 +62,45 @@ import { Match } from "#domain";
  * @returns {TelegramApi}
  */
 const createBot = (token, { logger, locale } = {}) => {
-  const { messages, ui, locale: currentLocale } = createLocalization({
+  const { messages: rawMessages, ui, locale: currentLocale } = createLocalization({
     ...I18N_CONFIG,
     locale: locale || I18N_CONFIG.locale,
   });
   const log = logger || createLogger({ prefix: "bot" });
+  const playerDisplayNames = new Map();
+
+  const composeDisplayName = ({ username, firstName, lastName }) => {
+    if (!username) return "";
+    const handle = `@${username}`;
+    const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+    return fullName ? `${handle} (${fullName})` : handle;
+  };
+
+  const rememberUserDisplayName = (user) => {
+    const username = user?.username;
+    if (!username) return null;
+    const displayName = composeDisplayName({
+      username,
+      firstName: user?.first_name,
+      lastName: user?.last_name,
+    });
+    const key = `@${username}`;
+    playerDisplayNames.set(key, displayName);
+    return displayName;
+  };
+
+  const formatPlayerForMessage = (player) => playerDisplayNames.get(player) || player;
+
+  const formatMatchForMessage = (match) =>
+    match
+      ? {
+          ...match,
+          player1: formatPlayerForMessage(match.player1),
+          player2: formatPlayerForMessage(match.player2),
+        }
+      : match;
+
+  const messages = createMessagesWithDisplay(rawMessages);
   log.info("Инициализация бота", { locale: currentLocale });
   const contexts = new Map();
   const userChatBindings = new Map();
@@ -320,6 +354,56 @@ const createBot = (token, { logger, locale } = {}) => {
     }
     log.error(context, { message: error.message });
   };
+
+  function createMessagesWithDisplay(baseMessages) {
+    return {
+      ...baseMessages,
+      searchAdded: (player) => baseMessages.searchAdded(formatPlayerForMessage(player)),
+      searchAlready: (player) => baseMessages.searchAlready(formatPlayerForMessage(player)),
+      searchInQueue: (player) => baseMessages.searchInQueue(formatPlayerForMessage(player)),
+      searchPlayed: (player) => baseMessages.searchPlayed(formatPlayerForMessage(player)),
+      searchUnknown: (player) => baseMessages.searchUnknown(formatPlayerForMessage(player)),
+      directInvite: ({ from, to }) =>
+        baseMessages.directInvite({
+          from: formatPlayerForMessage(from),
+          to: formatPlayerForMessage(to),
+        }),
+      directAccepted: ({ from, to }) =>
+        baseMessages.directAccepted({
+          from: formatPlayerForMessage(from),
+          to: formatPlayerForMessage(to),
+        }),
+      directDeclined: ({ from, to }) =>
+        baseMessages.directDeclined({
+          from: formatPlayerForMessage(from),
+          to: formatPlayerForMessage(to),
+        }),
+      directCancelled: ({ from, to }) =>
+        baseMessages.directCancelled({
+          from: formatPlayerForMessage(from),
+          to: formatPlayerForMessage(to),
+        }),
+      matchCreated: (match) => baseMessages.matchCreated(formatMatchForMessage(match)),
+      nextPair: (match) => baseMessages.nextPair(formatMatchForMessage(match)),
+      matchStarted: (match) => baseMessages.matchStarted(formatMatchForMessage(match)),
+      matchFinished: (match) => baseMessages.matchFinished(formatMatchForMessage(match)),
+      matchFinishedWithNext: ({ finished, next }) =>
+        baseMessages.matchFinishedWithNext({
+          finished: formatMatchForMessage(finished),
+          next: formatMatchForMessage(next),
+        }),
+      queueList: (queue) => baseMessages.queueList(queue.map(formatMatchForMessage)),
+      playedList: (played) => baseMessages.playedList(played.map(formatPlayerForMessage)),
+      cancelCurrent: (player) => baseMessages.cancelCurrent(formatPlayerForMessage(player)),
+      cancelWaiting: (player) => baseMessages.cancelWaiting(formatPlayerForMessage(player)),
+      pauseModeDisabled: ({ player1, player2, startDate }) =>
+        baseMessages.pauseModeDisabled({
+          player1: formatPlayerForMessage(player1),
+          player2: formatPlayerForMessage(player2),
+          startDate,
+        }),
+    };
+  }
 
   /**
    * Возвращает контекст для чата или создает новый.
@@ -627,6 +711,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
+    rememberUserDisplayName(msg.from);
     bindUserToChat(userId, chatId);
     getContext(chatId);
     await startBotIfStopped(chatId, username);
@@ -645,6 +730,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
+    rememberUserDisplayName(msg.from);
 
     trackUsage("command:pause");
 
@@ -687,6 +773,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
+    rememberUserDisplayName(msg.from);
 
     trackUsage("command:continue");
 
@@ -791,6 +878,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const userId = msg.from?.id;
     const username = msg.from?.username;
     const player = username ? `@${username}` : null;
+    rememberUserDisplayName(msg.from);
 
     trackUsage("command:search");
 
@@ -834,6 +922,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
+    rememberUserDisplayName(msg.from);
 
     trackUsage("command:queue");
 
@@ -862,6 +951,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
+    rememberUserDisplayName(msg.from);
 
     trackUsage("command:played");
 
@@ -891,6 +981,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const userId = msg.from?.id;
     const username = msg.from?.username;
     const player = username ? `@${username}` : null;
+    rememberUserDisplayName(msg.from);
     const opponentRaw = (match && match[1]) || "";
 
     trackUsage("command:play", { hasOpponent: Boolean(opponentRaw.trim()) });
@@ -964,6 +1055,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const opponentRaw = (query.query || "").trim();
     const encodedOpponent = opponentRaw ? encodeURIComponent(opponentRaw) : "";
     const chatId = resolveChatIdFromUser(query.from?.id);
+    rememberUserDisplayName(query.from);
     log.info("Получен inline запрос", { player, chatId });
     trackUsage("inline:query", { hasOpponent: Boolean(opponentRaw) });
 
@@ -1103,6 +1195,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const player = "@" + result.from.username;
     const userId = result.from?.id;
     const chatId = resolveChatIdFromUser(userId);
+    rememberUserDisplayName(result.from);
     const context = chatId ? getContext(chatId) : null;
     if (!context) {
       log.warn("Игрок выбрал inline результат без привязки к чату", { player, userId });
@@ -1204,6 +1297,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const messageId = callbackQuery.inline_message_id;
     const player2 = "@" + callbackQuery.from.username;
     const chatId = resolveChatIdFromCallback(callbackQuery);
+    rememberUserDisplayName(callbackQuery.from);
     const userId = callbackQuery.from?.id;
     if (!chatId) {
       bot

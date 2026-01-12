@@ -12,6 +12,7 @@ const createEsMessages = ({ formatDate }) => ({
     "No pudimos detectar tu usuario de Telegram. Configúralo en tu perfil y vuelve a intentarlo.",
   directInvite: ({ from, to }) => `${from} invita a ${to} a jugar. ¿Aceptar partida?`,
   directAccepted: ({ from, to }) => `${to} aceptó la invitación de ${from}. Partido creado.`,
+  directAcceptedShort: () => "Invitación aceptada",
   directDeclined: ({ from, to }) => `${to} rechazó la invitación de ${from}.`,
   directCancelled: ({ from, to }) => `${from} canceló la invitación para ${to}.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>

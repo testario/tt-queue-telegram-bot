@@ -14,6 +14,7 @@ const createRuMessages = ({ formatDate }) => ({
     `${from} приглашает ${to} на игру. Принять приглашение?`,
   directAccepted: ({ from, to }) =>
     `${to} принял приглашение от ${from}. Матч создан.`,
+  directAcceptedShort: () => "Приглашение принято",
   directDeclined: ({ from, to }) =>
     `${to} отклонил приглашение от ${from}.`,
   directCancelled: ({ from, to }) => `${from} отменил приглашение для ${to}.`,

@@ -1364,18 +1364,8 @@ const createBot = (token, { logger, locale } = {}) => {
       });
       if (addResult.ok) {
         bot
-          .editMessageText(addResult.text, {
-            ...editTarget,
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: ui.inline.confirmNoTime,
-                    callback_data: `i_want_to_out:${player1},${player2}`,
-                  },
-                ],
-              ],
-            },
+          .editMessageText(messages.directAcceptedShort(), {
+            ...editTarget
           })
           .catch((error) =>
             handleEditMessageError(error, "Не удалось обновить сообщение о принятии прямого матча")

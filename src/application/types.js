@@ -97,6 +97,7 @@
  * @property {() => string} usernameRequired
  * @property {(payload: { from: string, to: string }) => string} directInvite
  * @property {(payload: { from: string, to: string }) => string} directAccepted
+ * @property {() => string} directAcceptedShort
  * @property {(payload: { from: string, to: string }) => string} directDeclined
  * @property {(payload: { from: string, to: string }) => string} directCancelled
  * @property {(match: Match) => string} matchCreated

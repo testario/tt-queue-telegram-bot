@@ -12,6 +12,7 @@ const createDeMessages = ({ formatDate }) => ({
     "Dein Telegram-Username konnte nicht erkannt werden. Setze ihn in deinem Profil und versuche es erneut.",
   directInvite: ({ from, to }) => `${from} lädt ${to} zum Spiel ein. Einladung annehmen?`,
   directAccepted: ({ from, to }) => `${to} hat die Einladung von ${from} akzeptiert. Match erstellt.`,
+  directAcceptedShort: () => "Einladung angenommen",
   directDeclined: ({ from, to }) => `${to} hat die Einladung von ${from} abgelehnt.`,
   directCancelled: ({ from, to }) => `${from} hat die Einladung für ${to} zurückgezogen.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>

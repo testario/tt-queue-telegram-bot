@@ -12,6 +12,7 @@ const createFrMessages = ({ formatDate }) => ({
     "Impossible de détecter ton nom d’utilisateur Telegram. Renseigne-le dans ton profil et réessaie.",
   directInvite: ({ from, to }) => `${from} invite ${to} à jouer. Accepter le match ?`,
   directAccepted: ({ from, to }) => `${to} a accepté l’invitation de ${from}. Match créé.`,
+  directAcceptedShort: () => "Invitation acceptée",
   directDeclined: ({ from, to }) => `${to} a refusé l’invitation de ${from}.`,
   directCancelled: ({ from, to }) => `${from} a annulé l’invitation pour ${to}.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>

@@ -1,21 +1,29 @@
+import { stripAt, formatReadyTime } from "./utils.js";
+import { TIME_READY } from "#application/config/time.js";
+
+const readyTimeText = formatReadyTime(TIME_READY, "es");
+
 const createEsMessages = ({ formatDate }) => ({
   greet: () =>
     `¡Bot activo y listo para trabajar!`,
   searchAdded: (player) => `${player} quiere jugar. ¿Quién se apunta?`,
+  searchAccepted: (player) => `${player} aceptó la invitación para jugar. Partido creado.`,
   searchAlready: (player) => `El jugador ${player} ya está buscando oponente`,
   searchInQueue: (player) => `El jugador ${player} ya está en la cola`,
   searchPlayed: (player) => `El jugador ${player} ya jugó hoy`,
   searchUnknown: (player) => `¿Cómo llegaste aquí, ${player}?`,
   searchCancelled: () => "El jugador cambió de opinión",
   directOpponentRequired: () => "Indica el usuario del oponente, por ejemplo /play @opponent",
+  directOpponentPlayed: (opponent) => `${opponent} ya jugó en esta mitad del día`,
   usernameRequired: () =>
     "No pudimos detectar tu usuario de Telegram. Configúralo en tu perfil y vuelve a intentarlo.",
   directInvite: ({ from, to }) => `${from} invita a ${to} a jugar. ¿Aceptar partida?`,
   directAccepted: ({ from, to }) => `${to} aceptó la invitación de ${from}. Partido creado.`,
+  directAcceptedShort: () => "Invitación aceptada",
   directDeclined: ({ from, to }) => `${to} rechazó la invitación de ${from}.`,
   directCancelled: ({ from, to }) => `${from} canceló la invitación para ${to}.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>
-    `🏓 Partido creado entre ${player1} y ${player2}\n🔔 30 segundos para prepararse\n⌚️ Inicio - ${formatDate(
+    `🏓 Partido creado entre ${player1} y ${player2}\n🔔 ${readyTimeText} para prepararse\n⌚️ Inicio - ${formatDate(
       startDate
     )}\n🔚 Fin - ${formatDate(endDate)}`,
   matchAlreadyInQueue: () => "Uno de los jugadores ya está jugando",
@@ -23,7 +31,7 @@ const createEsMessages = ({ formatDate }) => ({
   matchPlayerNotSearching: () => "Este jugador no está buscando oponente",
   matchSamePlayer: () => "Puedes jugar contra la pared sin cola :)",
   nextPair: ({ player1, player2 }) =>
-    `La siguiente pareja es ${player1} y ${player2}\n\nTienen 30 segundos para prepararse`,
+    `La siguiente pareja es ${player1} y ${player2}\n\nTienen ${readyTimeText} para prepararse`,
   matchStarted: ({ player1, player2 }) => `${player1} y ${player2} comenzaron a jugar`,
   matchFinished: ({ player1, player2 }) => `¡La partida entre ${player1} y ${player2} terminó!`,
   matchFinishedWithNext: ({ finished, next }) =>
@@ -33,15 +41,15 @@ const createEsMessages = ({ formatDate }) => ({
       ? "Cola:\n\n" +
         queue.reduce(
           (current, next, index) =>
-            (current += `Partido nº${index + 1}\n${next.player1} vs ${next.player2}\nInicio - ${formatDate(
-              next.startDate
-            )}\nFin - ${formatDate(next.endDate)}\n\n`),
+            (current += `Partido nº${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+              next.player2
+            )}\nInicio - ${formatDate(next.startDate)}\nFin - ${formatDate(next.endDate)}\n\n`),
           ""
         )
       : "La cola está vacía",
   playedList: (played) =>
     played.length
-      ? `Ya jugaron:\n${played.join("\n")}`
+      ? `Ya jugaron:\n${played.map(stripAt).join("\n")}`
       : "Nadie ha jugado todavía, es momento de unirse a la cola",
   cancelCurrent: (player) =>
     `El jugador ${player} canceló, los siguientes partidos se mueven según el tiempo restante`,

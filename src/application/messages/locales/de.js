@@ -1,21 +1,29 @@
+import { stripAt, formatReadyTime } from "./utils.js";
+import { TIME_READY } from "#application/config/time.js";
+
+const readyTimeText = formatReadyTime(TIME_READY, "de");
+
 const createDeMessages = ({ formatDate }) => ({
   greet: () =>
     `Bot ist aktiv und bereit zum Einsatz!`,
   searchAdded: (player) => `${player} möchte spielen. Wer macht mit?`,
+  searchAccepted: (player) => `${player} hat die Einladung zum Spiel akzeptiert. Match erstellt.`,
   searchAlready: (player) => `Spieler ${player} sucht bereits nach einem Gegner`,
   searchInQueue: (player) => `Spieler ${player} steht schon in der Warteschlange`,
   searchPlayed: (player) => `Spieler ${player} hat heute schon gespielt`,
   searchUnknown: (player) => `Wie bist du hierher gekommen, ${player}?`,
   searchCancelled: () => "Der Spieler hat seine Meinung geändert",
   directOpponentRequired: () => "Gib den Benutzernamen des Gegners an, z. B. /play @opponent",
+  directOpponentPlayed: (opponent) => `${opponent} hat in dieser Tageshälfte schon gespielt`,
   usernameRequired: () =>
     "Dein Telegram-Username konnte nicht erkannt werden. Setze ihn in deinem Profil und versuche es erneut.",
   directInvite: ({ from, to }) => `${from} lädt ${to} zum Spiel ein. Einladung annehmen?`,
   directAccepted: ({ from, to }) => `${to} hat die Einladung von ${from} akzeptiert. Match erstellt.`,
+  directAcceptedShort: () => "Einladung angenommen",
   directDeclined: ({ from, to }) => `${to} hat die Einladung von ${from} abgelehnt.`,
   directCancelled: ({ from, to }) => `${from} hat die Einladung für ${to} zurückgezogen.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>
-    `🏓 Match erstellt zwischen ${player1} und ${player2}\n🔔 30 Sekunden zur Vorbereitung\n⌚️ Start - ${formatDate(
+    `🏓 Match erstellt zwischen ${player1} und ${player2}\n🔔 ${readyTimeText} zur Vorbereitung\n⌚️ Start - ${formatDate(
       startDate
     )}\n🔚 Ende - ${formatDate(endDate)}`,
   matchAlreadyInQueue: () => "Einer der Spieler spielt bereits",
@@ -23,7 +31,7 @@ const createDeMessages = ({ formatDate }) => ({
   matchPlayerNotSearching: () => "Dieser Spieler sucht keinen Gegner",
   matchSamePlayer: () => "Gegen die Wand brauchst du keine Warteschlange :)",
   nextPair: ({ player1, player2 }) =>
-    `Nächstes Paar: ${player1} und ${player2}\n\nEs gibt 30 Sekunden zur Vorbereitung`,
+    `Nächstes Paar: ${player1} und ${player2}\n\nEs gibt ${readyTimeText} zur Vorbereitung`,
   matchStarted: ({ player1, player2 }) => `${player1} und ${player2} haben begonnen`,
   matchFinished: ({ player1, player2 }) => `Das Spiel zwischen ${player1} und ${player2} ist beendet!`,
   matchFinishedWithNext: ({ finished, next }) =>
@@ -33,15 +41,15 @@ const createDeMessages = ({ formatDate }) => ({
       ? "Warteschlange:\n\n" +
         queue.reduce(
           (current, next, index) =>
-            (current += `Match Nr.${index + 1}\n${next.player1} vs ${next.player2}\nStart - ${formatDate(
-              next.startDate
-            )}\nEnde - ${formatDate(next.endDate)}\n\n`),
+            (current += `Match Nr.${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+              next.player2
+            )}\nStart - ${formatDate(next.startDate)}\nEnde - ${formatDate(next.endDate)}\n\n`),
           ""
         )
       : "Die Warteschlange ist leer",
   playedList: (played) =>
     played.length
-      ? `Bereits gespielt:\n${played.join("\n")}`
+      ? `Bereits gespielt:\n${played.map(stripAt).join("\n")}`
       : "Niemand hat bisher gespielt, Zeit sich anzustellen",
   cancelCurrent: (player) =>
     `Spieler ${player} hat storniert, nachfolgende Matches werden verschoben`,

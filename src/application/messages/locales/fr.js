@@ -1,21 +1,29 @@
+import { stripAt, formatReadyTime } from "./utils.js";
+import { TIME_READY } from "#application/config/time.js";
+
+const readyTimeText = formatReadyTime(TIME_READY, "fr");
+
 const createFrMessages = ({ formatDate }) => ({
   greet: () =>
     `Bot actif et prêt à travailler !`,
   searchAdded: (player) => `${player} veut jouer. Qui se joint ?`,
+  searchAccepted: (player) => `${player} a accepté l’invitation à jouer. Match créé.`,
   searchAlready: (player) => `Le joueur ${player} cherche déjà un adversaire`,
   searchInQueue: (player) => `Le joueur ${player} est déjà dans la file`,
   searchPlayed: (player) => `Le joueur ${player} a déjà joué aujourd’hui`,
   searchUnknown: (player) => `Comment es-tu arrivé ici, ${player} ?`,
   searchCancelled: () => "Le joueur a changé d’avis",
   directOpponentRequired: () => "Indique le pseudo de l’adversaire, par ex. /play @opponent",
+  directOpponentPlayed: (opponent) => `${opponent} a déjà joué dans cette demi-journée`,
   usernameRequired: () =>
     "Impossible de détecter ton nom d’utilisateur Telegram. Renseigne-le dans ton profil et réessaie.",
   directInvite: ({ from, to }) => `${from} invite ${to} à jouer. Accepter le match ?`,
   directAccepted: ({ from, to }) => `${to} a accepté l’invitation de ${from}. Match créé.`,
+  directAcceptedShort: () => "Invitation acceptée",
   directDeclined: ({ from, to }) => `${to} a refusé l’invitation de ${from}.`,
   directCancelled: ({ from, to }) => `${from} a annulé l’invitation pour ${to}.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>
-    `🏓 Match créé entre ${player1} et ${player2}\n🔔 30 secondes pour se préparer\n⌚️ Début - ${formatDate(
+    `🏓 Match créé entre ${player1} et ${player2}\n🔔 ${readyTimeText} pour se préparer\n⌚️ Début - ${formatDate(
       startDate
     )}\n🔚 Fin - ${formatDate(endDate)}`,
   matchAlreadyInQueue: () => "Un des joueurs joue déjà",
@@ -23,7 +31,7 @@ const createFrMessages = ({ formatDate }) => ({
   matchPlayerNotSearching: () => "Ce joueur ne cherche pas d’adversaire",
   matchSamePlayer: () => "Tu peux jouer contre le mur sans file :)",
   nextPair: ({ player1, player2 }) =>
-    `Prochaine paire : ${player1} et ${player2}\n\n30 secondes pour se préparer`,
+    `Prochaine paire : ${player1} et ${player2}\n\n${readyTimeText} pour se préparer`,
   matchStarted: ({ player1, player2 }) => `${player1} et ${player2} ont commencé à jouer`,
   matchFinished: ({ player1, player2 }) => `Le match entre ${player1} et ${player2} est terminé !`,
   matchFinishedWithNext: ({ finished, next }) =>
@@ -33,15 +41,15 @@ const createFrMessages = ({ formatDate }) => ({
       ? "File :\n\n" +
         queue.reduce(
           (current, next, index) =>
-            (current += `Match n°${index + 1}\n${next.player1} vs ${next.player2}\nDébut - ${formatDate(
-              next.startDate
-            )}\nFin - ${formatDate(next.endDate)}\n\n`),
+            (current += `Match n°${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+              next.player2
+            )}\nDébut - ${formatDate(next.startDate)}\nFin - ${formatDate(next.endDate)}\n\n`),
           ""
         )
       : "La file est vide",
   playedList: (played) =>
     played.length
-      ? `Ont déjà joué :\n${played.join("\n")}`
+      ? `Ont déjà joué :\n${played.map(stripAt).join("\n")}`
       : "Personne n’a encore joué, il est temps d’entrer dans la file",
   cancelCurrent: (player) =>
     `Le joueur ${player} a annulé, les prochains matchs sont décalés selon le temps restant`,

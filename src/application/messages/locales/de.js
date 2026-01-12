@@ -1,3 +1,5 @@
+import { stripAt } from "./utils.js";
+
 const createDeMessages = ({ formatDate }) => ({
   greet: () =>
     `Bot ist aktiv und bereit zum Einsatz!`,
@@ -34,15 +36,15 @@ const createDeMessages = ({ formatDate }) => ({
       ? "Warteschlange:\n\n" +
         queue.reduce(
           (current, next, index) =>
-            (current += `Match Nr.${index + 1}\n${next.player1} vs ${next.player2}\nStart - ${formatDate(
-              next.startDate
-            )}\nEnde - ${formatDate(next.endDate)}\n\n`),
+            (current += `Match Nr.${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+              next.player2
+            )}\nStart - ${formatDate(next.startDate)}\nEnde - ${formatDate(next.endDate)}\n\n`),
           ""
         )
       : "Die Warteschlange ist leer",
   playedList: (played) =>
     played.length
-      ? `Bereits gespielt:\n${played.join("\n")}`
+      ? `Bereits gespielt:\n${played.map(stripAt).join("\n")}`
       : "Niemand hat bisher gespielt, Zeit sich anzustellen",
   cancelCurrent: (player) =>
     `Spieler ${player} hat storniert, nachfolgende Matches werden verschoben`,

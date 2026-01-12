@@ -1,3 +1,5 @@
+import { stripAt } from "./utils.js";
+
 const createRuMessages = ({ formatDate }) => ({
   greet: () =>
     `Бот активен и готов к работе!`,
@@ -37,15 +39,17 @@ const createRuMessages = ({ formatDate }) => ({
       ? "Очередь:\n\n" +
         queue.reduce(
           (current, next, index) =>
-            (current += `Матч №${index + 1}\nИграют ${next.player1} и ${next.player2}\nДата начала - ${formatDate(
-              next.startDate
-            )}\nДата окончания - ${formatDate(next.endDate)}\n\n`),
+            (current += `Матч №${index + 1}\nИграют ${stripAt(next.player1)} и ${stripAt(
+              next.player2
+            )}\nДата начала - ${formatDate(next.startDate)}\nДата окончания - ${formatDate(
+              next.endDate
+            )}\n\n`),
           ""
         )
       : "Очередь пуста",
   playedList: (played) =>
     played.length
-      ? `Отыгравшие игроки: \n${played.join("\n")}`
+      ? `Отыгравшие игроки: \n${played.map(stripAt).join("\n")}`
       : "Еще никто не играл, самое время встать в очередь",
   cancelCurrent: (player) =>
     `Игрок ${player} отменил запись, время следующих пар игроков сдвигается на оставшееся время`,

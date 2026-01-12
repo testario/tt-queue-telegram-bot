@@ -1,3 +1,5 @@
+import { stripAt } from "./utils.js";
+
 const createEnMessages = ({ formatDate }) => ({
   greet: () =>
     `Bot is active and ready to work!`,
@@ -32,17 +34,17 @@ const createEnMessages = ({ formatDate }) => ({
   queueList: (queue) =>
     queue.length > 0
       ? "Queue:\n\n" +
-        queue.reduce(
-          (current, next, index) =>
-            (current += `Match #${index + 1}\n${next.player1} vs ${next.player2}\nStart - ${formatDate(
-              next.startDate
-            )}\nEnd - ${formatDate(next.endDate)}\n\n`),
-          ""
-        )
+      queue.reduce(
+        (current, next, index) =>
+        (current += `Match #${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+          next.player2
+        )}\nStart - ${formatDate(next.startDate)}\nEnd - ${formatDate(next.endDate)}\n\n`),
+        ""
+      )
       : "Queue is empty",
   playedList: (played) =>
     played.length
-      ? `Players who already played: \n${played.join("\n")}`
+      ? `Players who already played: \n${played.map(stripAt).join("\n")}`
       : "No one has played yet, time to queue up",
   cancelCurrent: (player) =>
     `Player ${player} canceled, next pairs are shifted by the remaining time`,

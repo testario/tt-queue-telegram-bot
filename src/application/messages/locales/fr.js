@@ -1,3 +1,5 @@
+import { stripAt } from "./utils.js";
+
 const createFrMessages = ({ formatDate }) => ({
   greet: () =>
     `Bot actif et prêt à travailler !`,
@@ -34,15 +36,15 @@ const createFrMessages = ({ formatDate }) => ({
       ? "File :\n\n" +
         queue.reduce(
           (current, next, index) =>
-            (current += `Match n°${index + 1}\n${next.player1} vs ${next.player2}\nDébut - ${formatDate(
-              next.startDate
-            )}\nFin - ${formatDate(next.endDate)}\n\n`),
+            (current += `Match n°${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+              next.player2
+            )}\nDébut - ${formatDate(next.startDate)}\nFin - ${formatDate(next.endDate)}\n\n`),
           ""
         )
       : "La file est vide",
   playedList: (played) =>
     played.length
-      ? `Ont déjà joué :\n${played.join("\n")}`
+      ? `Ont déjà joué :\n${played.map(stripAt).join("\n")}`
       : "Personne n’a encore joué, il est temps d’entrer dans la file",
   cancelCurrent: (player) =>
     `Le joueur ${player} a annulé, les prochains matchs sont décalés selon le temps restant`,

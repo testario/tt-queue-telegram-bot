@@ -1,3 +1,5 @@
+import { stripAt } from "./utils.js";
+
 const createEsMessages = ({ formatDate }) => ({
   greet: () =>
     `¡Bot activo y listo para trabajar!`,
@@ -34,15 +36,15 @@ const createEsMessages = ({ formatDate }) => ({
       ? "Cola:\n\n" +
         queue.reduce(
           (current, next, index) =>
-            (current += `Partido nº${index + 1}\n${next.player1} vs ${next.player2}\nInicio - ${formatDate(
-              next.startDate
-            )}\nFin - ${formatDate(next.endDate)}\n\n`),
+            (current += `Partido nº${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+              next.player2
+            )}\nInicio - ${formatDate(next.startDate)}\nFin - ${formatDate(next.endDate)}\n\n`),
           ""
         )
       : "La cola está vacía",
   playedList: (played) =>
     played.length
-      ? `Ya jugaron:\n${played.join("\n")}`
+      ? `Ya jugaron:\n${played.map(stripAt).join("\n")}`
       : "Nadie ha jugado todavía, es momento de unirse a la cola",
   cancelCurrent: (player) =>
     `El jugador ${player} canceló, los siguientes partidos se mueven según el tiempo restante`,

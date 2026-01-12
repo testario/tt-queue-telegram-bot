@@ -331,6 +331,7 @@ const createBot = (token, { logger, locale } = {}) => {
   applyGlobalSlashCommands();
   let isStopped = false;
   const MAX_TEST_MATCHES = 10;
+  const MAX_CALLBACK_DATA_BYTES = 64;
   const isTestFeatureEnabled = process.env.ENABLE_TEST_FEATURE === "true";
 
   /**
@@ -555,16 +556,24 @@ const createBot = (token, { logger, locale } = {}) => {
    * @param {{ player1: string, player2: string }} match
    * @returns {{ inline_keyboard: Array<Array<{ text: string, callback_data: string }>> }}
    */
-  const buildMatchCancelKeyboard = (match) => ({
-    inline_keyboard: [
-      [
-        {
-          text: ui.inline.confirmNoTime,
-          callback_data: `i_want_to_out:${match.player1},${match.player2}`,
-        },
-      ],
-    ],
-  });
+  const buildMatchCancelKeyboard = (match) => {
+    if (!match) return undefined;
+
+    const callbackData = `i_want_to_out:${match.player1},${match.player2}`;
+    const payloadBytes = Buffer.byteLength(callbackData, "utf8");
+    if (payloadBytes > MAX_CALLBACK_DATA_BYTES) {
+      log.warn("Пропускаем клавиатуру отмены: callback_data слишком длинная", {
+        player1: match.player1,
+        player2: match.player2,
+        payloadBytes,
+      });
+      return undefined;
+    }
+
+    return {
+      inline_keyboard: [[{ text: ui.inline.confirmNoTime, callback_data: callbackData }]],
+    };
+  };
 
   const freezeQueueForPause = async (context) => {
     if (!context) return { hasQueue: false };

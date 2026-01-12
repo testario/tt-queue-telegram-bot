@@ -1,4 +1,7 @@
-import { stripAt } from "./utils.js";
+import { stripAt, formatReadyTime } from "./utils.js";
+import { TIME_READY } from "#application/config/time.js";
+
+const readyTimeText = formatReadyTime(TIME_READY, "es");
 
 const createEsMessages = ({ formatDate }) => ({
   greet: () =>
@@ -18,7 +21,7 @@ const createEsMessages = ({ formatDate }) => ({
   directDeclined: ({ from, to }) => `${to} rechazó la invitación de ${from}.`,
   directCancelled: ({ from, to }) => `${from} canceló la invitación para ${to}.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>
-    `🏓 Partido creado entre ${player1} y ${player2}\n🔔 30 segundos para prepararse\n⌚️ Inicio - ${formatDate(
+    `🏓 Partido creado entre ${player1} y ${player2}\n🔔 ${readyTimeText} para prepararse\n⌚️ Inicio - ${formatDate(
       startDate
     )}\n🔚 Fin - ${formatDate(endDate)}`,
   matchAlreadyInQueue: () => "Uno de los jugadores ya está jugando",
@@ -26,7 +29,7 @@ const createEsMessages = ({ formatDate }) => ({
   matchPlayerNotSearching: () => "Este jugador no está buscando oponente",
   matchSamePlayer: () => "Puedes jugar contra la pared sin cola :)",
   nextPair: ({ player1, player2 }) =>
-    `La siguiente pareja es ${player1} y ${player2}\n\nTienen 30 segundos para prepararse`,
+    `La siguiente pareja es ${player1} y ${player2}\n\nTienen ${readyTimeText} para prepararse`,
   matchStarted: ({ player1, player2 }) => `${player1} y ${player2} comenzaron a jugar`,
   matchFinished: ({ player1, player2 }) => `¡La partida entre ${player1} y ${player2} terminó!`,
   matchFinishedWithNext: ({ finished, next }) =>

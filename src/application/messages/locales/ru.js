@@ -1,4 +1,7 @@
-import { stripAt } from "./utils.js";
+import { stripAt, formatReadyTime } from "./utils.js";
+import { TIME_READY } from "#application/config/time.js";
+
+const readyTimeText = formatReadyTime(TIME_READY, "ru");
 
 const createRuMessages = ({ formatDate }) => ({
   greet: () =>
@@ -21,7 +24,7 @@ const createRuMessages = ({ formatDate }) => ({
     `${to} отклонил приглашение от ${from}.`,
   directCancelled: ({ from, to }) => `${from} отменил приглашение для ${to}.`,
   matchCreated: ({ player1, player2, startDate, endDate }) =>
-    `🏓 Создан матч между ${player1} и ${player2}\n🔔 Дается 30 секунд на подготовку\n⌚️ Время начала - ${formatDate(
+    `🏓 Создан матч между ${player1} и ${player2}\n🔔 Дается ${readyTimeText} на подготовку\n⌚️ Время начала - ${formatDate(
       startDate
     )}\n🔚 Время окончания - ${formatDate(endDate)}`,
   matchAlreadyInQueue: () => "Один из игроков уже играет прямо сейчас",
@@ -29,7 +32,7 @@ const createRuMessages = ({ formatDate }) => ({
   matchPlayerNotSearching: () => "Этот игрок больше не ищет соперника",
   matchSamePlayer: () => "От стеночки можно поиграть и без очереди :)",
   nextPair: ({ player1, player2 }) =>
-    `Следующая пара игроков - ${player1} и ${player2}\n\nНа подготовку дается 30 секунд`,
+    `Следующая пара игроков - ${player1} и ${player2}\n\nНа подготовку дается ${readyTimeText}`,
   matchStarted: ({ player1, player2 }) => `${player1} и ${player2} начали игру!`,
   matchFinished: ({ player1, player2 }) => `Игра между ${player1} и ${player2} окончена!`,
   matchFinishedWithNext: ({ finished, next }) =>

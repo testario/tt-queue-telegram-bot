@@ -3,6 +3,9 @@ import { createNullLogger } from "#infrastructure/logger/Logger.js";
 /**
  * @typedef {import("#application/types.js").BotMessages} Messages
  * @typedef {import("#application/types.js").Logger} Logger
+ * @typedef {import("#application/types.js").QueueRepository} QueueRepository
+ * @typedef {import("#application/types.js").QueueService} QueueService
+ * @typedef {import("#application/types.js").Clock} Clock
  */
 
 /**
@@ -13,12 +16,18 @@ class CreateDirectMatch {
   /**
    * @param {Object} deps
    * @param {import("./RegisterSearch.js").RegisterSearch} deps.registerSearch
+   * @param {QueueRepository} deps.repository
+   * @param {QueueService} deps.queueService
    * @param {Messages} deps.messages
+   * @param {Clock} [deps.clock]
    * @param {Logger} [deps.logger]
    */
-  constructor({ registerSearch, messages, logger }) {
+  constructor({ registerSearch, repository, queueService, messages, clock, logger }) {
     this.registerSearch = registerSearch;
+    this.repository = repository;
+    this.queueService = queueService;
     this.messages = messages;
+    this.clock = clock || { now: () => new Date() };
     this.logger = logger || createNullLogger();
   }
 
@@ -54,6 +63,23 @@ class CreateDirectMatch {
     if (!opponent) {
       this.logger.warn("Нельзя создать матч: не указан оппонент", { player });
       return { ok: false, reason: "opponent_required", text: this.messages.directOpponentRequired() };
+    }
+
+    const now = this.clock.now();
+    const state = await this.repository.get();
+    const { state: normalizedState } = this.queueService.normalizeState(state, now);
+    await this.repository.save(normalizedState);
+
+    if (normalizedState.isPlayed(opponent)) {
+      this.logger.info("Прямое создание матча прервано: оппонент уже играл", {
+        player,
+        opponent,
+      });
+      return {
+        ok: false,
+        reason: "opponent_played",
+        text: this.messages.directOpponentPlayed(opponent),
+      };
     }
 
     const searchResult = await this.registerSearch.execute(player);

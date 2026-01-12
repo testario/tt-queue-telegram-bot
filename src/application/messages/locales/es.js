@@ -7,12 +7,14 @@ const createEsMessages = ({ formatDate }) => ({
   greet: () =>
     `¡Bot activo y listo para trabajar!`,
   searchAdded: (player) => `${player} quiere jugar. ¿Quién se apunta?`,
+  searchAccepted: (player) => `${player} aceptó la invitación para jugar. Partido creado.`,
   searchAlready: (player) => `El jugador ${player} ya está buscando oponente`,
   searchInQueue: (player) => `El jugador ${player} ya está en la cola`,
   searchPlayed: (player) => `El jugador ${player} ya jugó hoy`,
   searchUnknown: (player) => `¿Cómo llegaste aquí, ${player}?`,
   searchCancelled: () => "El jugador cambió de opinión",
   directOpponentRequired: () => "Indica el usuario del oponente, por ejemplo /play @opponent",
+  directOpponentPlayed: (opponent) => `${opponent} ya jugó en esta mitad del día`,
   usernameRequired: () =>
     "No pudimos detectar tu usuario de Telegram. Configúralo en tu perfil y vuelve a intentarlo.",
   directInvite: ({ from, to }) => `${from} invita a ${to} a jugar. ¿Aceptar partida?`,

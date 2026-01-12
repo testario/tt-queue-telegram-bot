@@ -7,12 +7,14 @@ const createFrMessages = ({ formatDate }) => ({
   greet: () =>
     `Bot actif et prêt à travailler !`,
   searchAdded: (player) => `${player} veut jouer. Qui se joint ?`,
+  searchAccepted: (player) => `${player} a accepté l’invitation à jouer. Match créé.`,
   searchAlready: (player) => `Le joueur ${player} cherche déjà un adversaire`,
   searchInQueue: (player) => `Le joueur ${player} est déjà dans la file`,
   searchPlayed: (player) => `Le joueur ${player} a déjà joué aujourd’hui`,
   searchUnknown: (player) => `Comment es-tu arrivé ici, ${player} ?`,
   searchCancelled: () => "Le joueur a changé d’avis",
   directOpponentRequired: () => "Indique le pseudo de l’adversaire, par ex. /play @opponent",
+  directOpponentPlayed: (opponent) => `${opponent} a déjà joué dans cette demi-journée`,
   usernameRequired: () =>
     "Impossible de détecter ton nom d’utilisateur Telegram. Renseigne-le dans ton profil et réessaie.",
   directInvite: ({ from, to }) => `${from} invite ${to} à jouer. Accepter le match ?`,

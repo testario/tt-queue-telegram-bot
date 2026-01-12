@@ -7,12 +7,14 @@ const createRuMessages = ({ formatDate }) => ({
   greet: () =>
     `Бот активен и готов к работе!`,
   searchAdded: (player) => `${player} хочет поиграть. Кто составит ему компанию?`,
+  searchAccepted: (player) => `${player} принял приглашение на игру. Матч создан.`,
   searchAlready: (player) => `Игрок ${player} попытался попасть в поиск, но он уже в поиске`,
   searchInQueue: (player) => `Игрок ${player} попытался попасть в поиск, но он уже в очереди`,
   searchPlayed: (player) => `Игрок ${player} попытался попасть в поиск, но он уже играл`,
   searchUnknown: (player) => `Ты как сюда попал, ${player}?`,
   searchCancelled: () => "Игрок передумал",
   directOpponentRequired: () => "Укажи ник оппонента, например /play @opponent",
+  directOpponentPlayed: (opponent) => `${opponent} уже играл в этой половине дня`,
   usernameRequired: () =>
     "Не удалось определить твой Telegram username. Установи его в настройках и повтори команду.",
   directInvite: ({ from, to }) =>

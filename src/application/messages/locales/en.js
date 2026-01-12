@@ -7,12 +7,14 @@ const createEnMessages = ({ formatDate }) => ({
   greet: () =>
     `Bot is active and ready to work!`,
   searchAdded: (player) => `${player} wants to play. Who will join?`,
+  searchAccepted: (player) => `${player} accepted the invite to play. Match created.`,
   searchAlready: (player) => `Player ${player} tried to search, but is already searching`,
   searchInQueue: (player) => `Player ${player} tried to search, but is already in queue`,
   searchPlayed: (player) => `Player ${player} tried to search, but has already played today`,
   searchUnknown: (player) => `How did you get here, ${player}?`,
   searchCancelled: () => "Player changed their mind",
   directOpponentRequired: () => "Specify opponent username, e.g. /play @opponent",
+  directOpponentPlayed: (opponent) => `${opponent} already played this half-day`,
   usernameRequired: () =>
     "Could not detect your Telegram username. Set it in your profile and retry.",
   directInvite: ({ from, to }) => `${from} invites ${to} to play. Accept the match?`,

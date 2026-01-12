@@ -364,6 +364,8 @@ const createBot = (token, { logger, locale } = {}) => {
       searchInQueue: (player) => baseMessages.searchInQueue(formatPlayerForMessage(player)),
       searchPlayed: (player) => baseMessages.searchPlayed(formatPlayerForMessage(player)),
       searchUnknown: (player) => baseMessages.searchUnknown(formatPlayerForMessage(player)),
+      directOpponentPlayed: (player) =>
+        baseMessages.directOpponentPlayed(formatPlayerForMessage(player)),
       directInvite: ({ from, to }) =>
         baseMessages.directInvite({
           from: formatPlayerForMessage(from),
@@ -457,6 +459,9 @@ const createBot = (token, { logger, locale } = {}) => {
     });
     const directMatch = new CreateDirectMatch({
       registerSearch,
+      repository,
+      queueService,
+      clock,
       messages,
       logger: log.child(`usecase:CreateDirectMatch:${chatId}`),
     });
@@ -1368,7 +1373,7 @@ const createBot = (token, { logger, locale } = {}) => {
         });
         if (editOptions) {
           bot
-            .editMessageText(addResult.text, editOptions)
+            .editMessageText(messages.searchAdded(player1), editOptions)
             .catch((error) =>
               handleEditMessageError(error, "Не удалось обновить сообщение подтверждения матча")
             );

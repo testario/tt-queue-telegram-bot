@@ -94,6 +94,7 @@
  * @property {(player: string) => string} searchUnknown
  * @property {() => string} searchCancelled
  * @property {() => string} directOpponentRequired
+ * @property {(opponent: string) => string} directOpponentPlayed
  * @property {() => string} usernameRequired
  * @property {(payload: { from: string, to: string }) => string} directInvite
  * @property {(payload: { from: string, to: string }) => string} directAccepted

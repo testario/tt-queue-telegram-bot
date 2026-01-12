@@ -34,6 +34,9 @@ describe("CreateDirectMatch use case", () => {
     });
     directMatch = new CreateDirectMatch({
       registerSearch,
+      repository,
+      queueService,
+      clock,
       messages: templates,
     });
   });
@@ -54,6 +57,16 @@ describe("CreateDirectMatch use case", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("played");
     expect(result.text).toBe(templates.searchPlayed("@p1"));
+  });
+
+  test("останавливается, если оппонент уже играл", async () => {
+    repository.state = new QueueState({ played: ["@p2"] });
+
+    const result = await directMatch.execute("@p1", "@p2");
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("opponent_played");
+    expect(result.text).toBe(templates.directOpponentPlayed("@p2"));
   });
 
   test("создает матч и планирует жизненный цикл при успешном сценарии", async () => {

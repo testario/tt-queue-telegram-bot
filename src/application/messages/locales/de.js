@@ -7,12 +7,14 @@ const createDeMessages = ({ formatDate }) => ({
   greet: () =>
     `Bot ist aktiv und bereit zum Einsatz!`,
   searchAdded: (player) => `${player} möchte spielen. Wer macht mit?`,
+  searchAccepted: (player) => `${player} hat die Einladung zum Spiel akzeptiert. Match erstellt.`,
   searchAlready: (player) => `Spieler ${player} sucht bereits nach einem Gegner`,
   searchInQueue: (player) => `Spieler ${player} steht schon in der Warteschlange`,
   searchPlayed: (player) => `Spieler ${player} hat heute schon gespielt`,
   searchUnknown: (player) => `Wie bist du hierher gekommen, ${player}?`,
   searchCancelled: () => "Der Spieler hat seine Meinung geändert",
   directOpponentRequired: () => "Gib den Benutzernamen des Gegners an, z. B. /play @opponent",
+  directOpponentPlayed: (opponent) => `${opponent} hat in dieser Tageshälfte schon gespielt`,
   usernameRequired: () =>
     "Dein Telegram-Username konnte nicht erkannt werden. Setze ihn in deinem Profil und versuche es erneut.",
   directInvite: ({ from, to }) => `${from} lädt ${to} zum Spiel ein. Einladung annehmen?`,

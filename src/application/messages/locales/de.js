@@ -54,8 +54,7 @@ const createDeMessages = ({ formatDate }) => ({
   cancelCurrent: (player) =>
     `Spieler ${player} hat storniert, nachfolgende Matches werden verschoben`,
   cancelWaiting: (player) => `Spieler ${player} hat die Anmeldung storniert`,
-  botStopped: () =>
-    "Bot gestoppt. Starte den Prozess neu oder sende /start nachdem der Server läuft",
+  botStopped: () => "Bot gestoppt. Starte den Prozess neu, um fortzufahren.",
   adminOnly: () => "Dieser Befehl ist nur für Chat-Administratoren verfügbar.",
   pauseModeEnabled: () =>
     "Pausenmodus aktiviert: Du kannst dich anstellen, Matches starten nach /continue.",
@@ -73,7 +72,6 @@ const pluralizeTestMatches = (count) => (count === 1 ? "Testmatch" : "Testmatche
 
 const createDeUi = () => ({
   commands: {
-    start: "Bot starten und Chat verknüpfen",
     play: "Gegner einladen: /play @username",
     search: "Gegner suchen: /search",
     queue: "Warteschlange anzeigen: /queue",
@@ -90,13 +88,13 @@ const createDeUi = () => ({
     directDecline: "Ablehnen",
     directCancel: "Anfrage abbrechen",
     noChatBinding: {
-      title: "Erst /start im Chat senden",
-      text: "Öffne den Chat mit dem Bot und sende /start, um die Warteschlange zu verknüpfen.",
-      description: "Keine Chat-Verknüpfung, Befehle nicht verfügbar",
+      title: "Bot ist nicht konfiguriert",
+      text: "Die Warteschlange ist nur im Hauptchat verfügbar. Prüfe die Bot-Einstellungen.",
+      description: "Chat nicht konfiguriert, Befehle nicht verfügbar",
     },
     contextNotReady: {
       title: "Chat-Kontext nicht bereit",
-      text: "Kontext nicht gefunden, versuche es erneut oder sende /start.",
+      text: "Chat-Kontext nicht gefunden, bitte erneut versuchen.",
       description: "Nochmal versuchen",
     },
     search: {
@@ -124,8 +122,8 @@ const createDeUi = () => ({
     confirmNoTime: "Keine Zeit zum Spielen!",
   },
   callback: {
-    startDialogRequired: "Starte einen Chat mit dem Bot (/start), um Anfragen zu verarbeiten.",
-    contextMissing: "Chat-Kontext nicht bereit, versuche /start.",
+    startDialogRequired: "Dieser Befehl ist nur im Hauptchat verfügbar.",
+    contextMissing: "Chat-Kontext nicht bereit, bitte später erneut versuchen.",
     contextNotFound: "Chat-Kontext nicht gefunden",
     cancelNotAuthor: "Nur der Autor kann die Anfrage abbrechen",
     cancelAlreadyRemoved: "Die Anfrage wurde bereits entfernt",

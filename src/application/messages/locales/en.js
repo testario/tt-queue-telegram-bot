@@ -54,8 +54,7 @@ const createEnMessages = ({ formatDate }) => ({
   cancelCurrent: (player) =>
     `Player ${player} canceled, next pairs are shifted by the remaining time`,
   cancelWaiting: (player) => `Player ${player} canceled the entry`,
-  botStopped: () =>
-    "Bot stopped. Restart the process or send /start after the server is up",
+  botStopped: () => "Bot stopped. Restart the process to resume.",
   adminOnly: () => "This command is available to chat administrators only.",
   pauseModeEnabled: () =>
     "Pause mode enabled: you can queue up, matches will start after /continue.",
@@ -72,7 +71,6 @@ const pluralizeTestMatches = (count) => (count === 1 ? "test match" : "test matc
 
 const createEnUi = () => ({
   commands: {
-    start: "Start the bot and bind chat",
     play: "Invite an opponent: /play @username",
     search: "Call for an opponent: /search",
     queue: "Show the queue: /queue",
@@ -89,13 +87,13 @@ const createEnUi = () => ({
     directDecline: "Decline",
     directCancel: "Cancel request",
     noChatBinding: {
-      title: "Press /start in chat first",
-      text: "Open the chat with the bot and send /start to bind the queue to the chat.",
-      description: "No chat binding, commands are unavailable",
+      title: "Bot is not configured",
+      text: "Queue is available only in the main chat. Check the bot settings.",
+      description: "Chat is not configured, commands are unavailable",
     },
     contextNotReady: {
       title: "Chat context is not ready",
-      text: "Could not find the chat context, try again or send /start.",
+      text: "Could not find the chat context, try again.",
       description: "Try again",
     },
     search: {
@@ -123,8 +121,8 @@ const createEnUi = () => ({
     confirmNoTime: "No time for games!",
   },
   callback: {
-    startDialogRequired: "Start a chat with the bot (/start) to handle requests.",
-    contextMissing: "Chat context is not ready, try /start again.",
+    startDialogRequired: "This command is available only in the main chat.",
+    contextMissing: "Chat context is not ready, try again later.",
     contextNotFound: "Chat context was not found",
     cancelNotAuthor: "Only the author can cancel the request",
     cancelAlreadyRemoved: "The request was already removed",

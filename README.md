@@ -5,7 +5,8 @@
 ## Запуск
 1. `npm install`
 2. В `.env` задайте `TG_BOT_API_TOKEN`.
-3. `npm start`
+3. В `.env` задайте `TG_CHAT_ID` (id основного чата).
+4. `npm start`
 
 ### Метрики использования
 - Для включения метрик задайте `METRICS_MONGODB_URI` (и при необходимости `METRICS_MONGODB_DB`, `METRICS_MONGODB_COLLECTION`).
@@ -25,7 +26,6 @@
 - Базовые локали: `src/application/messages/locales/ru.js` и `src/application/messages/locales/en.js`. При отсутствии ключа используется fallback.
 
 ## Основные команды
-- `/start` — подключает чат к уведомлениям и выводит приветствие.
 - `/play @username` — отправляет приглашение указанному оппоненту; он может принять или отклонить через кнопки в сообщении.
 - Inline query:
   - «Найти игрока» — ставит игрока в поиск.

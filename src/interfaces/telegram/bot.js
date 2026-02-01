@@ -103,7 +103,7 @@ const createBot = (token, { logger, locale } = {}) => {
   const messages = createMessagesWithDisplay(rawMessages);
   log.info("Инициализация бота", { locale: currentLocale });
   const contexts = new Map();
-  const userChatBindings = new Map();
+  const queueChatId = process.env.TG_CHAT_ID ? String(process.env.TG_CHAT_ID) : null;
   const metricsChatId = process.env.METRICS_CHAT_ID ? String(process.env.METRICS_CHAT_ID) : null;
   const metricsUri = process.env.METRICS_MONGODB_URI || process.env.MONGODB_URI || null;
   const metricsDb = process.env.METRICS_MONGODB_DB || process.env.MONGODB_DB || "tt-queue-bot";
@@ -123,45 +123,51 @@ const createBot = (token, { logger, locale } = {}) => {
     log.warn("Метрики отключены: нет строки подключения к MongoDB");
   }
 
+  if (!queueChatId) {
+    log.warn("TG_CHAT_ID не задан: бот не привязан к чату");
+  }
+
   const usageMetrics = new UsageMetricsService({
     repository: metricsRepository,
     logger: log.child("service:metrics"),
   });
 
   /**
-   * Извлекает chatId из входящего сообщения.
+   * Возвращает chatId настроенного чата или null, если он не задан.
+   * @param {number|string|null} [incomingChatId]
+   * @returns {number|string|null}
+   */
+  const resolveQueueChatId = (incomingChatId = null) => {
+    if (!queueChatId) return null;
+    if (incomingChatId === null || incomingChatId === undefined) return queueChatId;
+    return String(incomingChatId) === queueChatId ? queueChatId : null;
+  };
+
+  /**
+   * Извлекает chatId из входящего сообщения, учитывая заданный чат.
    * @param {import("node-telegram-bot-api").Message} message
    * @returns {number|string|null}
    */
-  const resolveChatIdFromMessage = (message) => message?.chat?.id || null;
+  const resolveChatIdFromMessage = (message) => resolveQueueChatId(message?.chat?.id);
 
   /**
-   * Извлекает chatId из callback-запроса, учитывая возможную привязку пользователя.
+   * Извлекает chatId из callback-запроса (для inline используем настроенный чат).
    * @param {import("node-telegram-bot-api").CallbackQuery} callbackQuery
    * @returns {number|string|null}
    */
-  const resolveChatIdFromCallback = (callbackQuery) =>
-    callbackQuery?.message?.chat?.id || userChatBindings.get(callbackQuery?.from?.id) || null;
+  const resolveChatIdFromCallback = (callbackQuery) => {
+    const messageChatId = callbackQuery?.message?.chat?.id;
+    if (messageChatId !== null && messageChatId !== undefined) {
+      return resolveQueueChatId(messageChatId);
+    }
+    return resolveQueueChatId();
+  };
 
   /**
-   * Возвращает chatId, если пользователь уже привязан к чату.
-   * @param {number|string|null} userId
+   * Возвращает chatId настроенного чата для inline-операций.
    * @returns {number|string|null}
    */
-  const resolveChatIdFromUser = (userId) => (userId ? userChatBindings.get(userId) || null : null);
-
-  /**
-   * Привязывает пользователя к чату для дальнейших inline-операций.
-   * @param {number|string|undefined} userId
-   * @param {number|string|undefined} chatId
-   * @returns {void}
-   */
-  const bindUserToChat = (userId, chatId) => {
-    if (userId && chatId) {
-      userChatBindings.set(userId, chatId);
-      applyChatSlashCommands(chatId);
-    }
-  };
+  const resolveChatIdFromUser = () => resolveQueueChatId();
 
   /**
    * Безопасная запись события метрики (если хранилище настроено).
@@ -254,7 +260,6 @@ const createBot = (token, { logger, locale } = {}) => {
   });
   log.info("Бот запущен в режиме polling");
 
-  const globalSlashCommands = [{ command: "start", description: ui.commands.start }];
   const chatSlashCommands = [
     { command: "play", description: ui.commands.play },
     { command: "search", description: ui.commands.search },
@@ -263,18 +268,6 @@ const createBot = (token, { logger, locale } = {}) => {
     { command: "pause", description: ui.commands.pause },
     { command: "continue", description: ui.commands.continue },
   ];
-
-  const applyGlobalSlashCommands = async () => {
-    try {
-      await bot.setMyCommands(globalSlashCommands, { language_code: currentLocale });
-      log.info("Глобальное меню слэш-команд обновлено", {
-        locale: currentLocale,
-        commands: globalSlashCommands.map(({ command }) => command),
-      });
-    } catch (error) {
-      log.error("Не удалось установить глобальные слэш-команды", { message: error.message });
-    }
-  };
 
   const commandsAppliedForChats = new Set();
   const applyChatSlashCommands = async (chatId) => {
@@ -328,7 +321,6 @@ const createBot = (token, { logger, locale } = {}) => {
     return admin;
   };
 
-  applyGlobalSlashCommands();
   let isStopped = false;
   const MAX_TEST_MATCHES = 10;
   const MAX_CALLBACK_DATA_BYTES = 64;
@@ -701,41 +693,13 @@ const createBot = (token, { logger, locale } = {}) => {
     }
   };
 
-  /**
-   * Перезапускает polling, если бот был остановлен.
-   * @param {number|string} chatId
-   * @param {string|undefined} username
-   * @returns {Promise<void>}
-   */
-  const startBotIfStopped = async (chatId, username) => {
-    if (!isStopped) {
+  bot.onText(/\/stop/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const username = msg.from?.username;
+    if (!chatId) {
+      log.warn("Команда /stop вне основного чата", { username });
       return;
     }
-    log.info("Перезапуск polling по команде /start", { chatId, username });
-    try {
-      await bot.startPolling();
-      isStopped = false;
-      log.info("Polling возобновлен");
-    } catch (error) {
-      log.error("Ошибка возобновления polling", { message: error.message });
-    }
-  };
-
-  bot.onText(/\/start/, async (msg) => {
-    const chatId = resolveChatIdFromMessage(msg);
-    const userId = msg.from?.id;
-    const username = msg.from?.username;
-    rememberUserDisplayName(msg.from);
-    bindUserToChat(userId, chatId);
-    getContext(chatId);
-    await startBotIfStopped(chatId, username);
-    log.info("Получена команда /start", { chatId, username });
-    trackUsage("command:start", { restarted: isStopped });
-    bot.sendMessage(chatId, messages.greet());
-  });
-
-  bot.onText(/\/stop/, async (msg) => {
-    const chatId = msg.chat.id;
     trackUsage("command:stop");
     await stopBot(chatId, username);
   });
@@ -913,8 +877,6 @@ const createBot = (token, { logger, locale } = {}) => {
       return;
     }
 
-    bindUserToChat(userId, chatId);
-
     try {
       const searchResult = await context.registerSearch.execute(player);
       const replyMarkup =
@@ -1014,7 +976,6 @@ const createBot = (token, { logger, locale } = {}) => {
       return;
     }
 
-    bindUserToChat(userId, chatId);
     log.info("Получена команда /play", { chatId, player, opponentRaw });
 
     try {
@@ -1068,7 +1029,7 @@ const createBot = (token, { logger, locale } = {}) => {
     const player = "@" + query.from.username;
     const opponentRaw = (query.query || "").trim();
     const encodedOpponent = opponentRaw ? encodeURIComponent(opponentRaw) : "";
-    const chatId = resolveChatIdFromUser(query.from?.id);
+    const chatId = resolveChatIdFromUser();
     rememberUserDisplayName(query.from);
     log.info("Получен inline запрос", { player, chatId });
     trackUsage("inline:query", { hasOpponent: Boolean(opponentRaw) });
@@ -1208,7 +1169,7 @@ const createBot = (token, { logger, locale } = {}) => {
   bot.on("chosen_inline_result", async (result) => {
     const player = "@" + result.from.username;
     const userId = result.from?.id;
-    const chatId = resolveChatIdFromUser(userId);
+    const chatId = resolveChatIdFromUser();
     rememberUserDisplayName(result.from);
     const context = chatId ? getContext(chatId) : null;
     if (!context) {
@@ -1228,8 +1189,6 @@ const createBot = (token, { logger, locale } = {}) => {
       hasContext: Boolean(context),
     });
     context.inlineMessageId = inlineMessageId || context.inlineMessageId;
-    bindUserToChat(userId, chatId);
-
     if (resultId === "1") {
       try {
         const searchResult = await registerSearch.execute(player);
@@ -1336,7 +1295,6 @@ const createBot = (token, { logger, locale } = {}) => {
     }
 
     context.inlineMessageId = messageId || context.inlineMessageId;
-    bindUserToChat(userId, chatId);
     const { addMatch, cancelSearch, cancelMatch } = context;
     const parsed = parseCallbackData(callbackQuery.data || "");
     log.info("Обработка callback", { type: parsed.type, player: player2, chatId });
@@ -1680,6 +1638,10 @@ const createBot = (token, { logger, locale } = {}) => {
   bot.on("polling_error", (error) => {
     log.error("Ошибка polling", { message: error.message });
   });
+
+  if (queueChatId) {
+    getContext(queueChatId);
+  }
 
   return { bot, getContext };
 };

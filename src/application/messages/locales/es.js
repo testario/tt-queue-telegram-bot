@@ -54,8 +54,7 @@ const createEsMessages = ({ formatDate }) => ({
   cancelCurrent: (player) =>
     `El jugador ${player} canceló, los siguientes partidos se mueven según el tiempo restante`,
   cancelWaiting: (player) => `El jugador ${player} canceló su turno`,
-  botStopped: () =>
-    "Bot detenido. Reinicia el proceso o envía /start después de que el servidor esté activo",
+  botStopped: () => "Bot detenido. Reinicia el proceso para continuar.",
   adminOnly: () => "Este comando está disponible solo para administradores del chat.",
   pauseModeEnabled: () =>
     "Modo de pausa activado: puedes unirte a la cola, los partidos comenzarán después de /continue.",
@@ -73,7 +72,6 @@ const pluralizeTestMatches = (count) => (count === 1 ? "partido de prueba" : "pa
 
 const createEsUi = () => ({
   commands: {
-    start: "Iniciar el bot y vincular el chat",
     play: "Invitar a un oponente: /play @usuario",
     search: "Buscar oponente: /search",
     queue: "Mostrar la cola: /queue",
@@ -90,13 +88,13 @@ const createEsUi = () => ({
     directDecline: "Rechazar",
     directCancel: "Cancelar solicitud",
     noChatBinding: {
-      title: "Primero pulsa /start en el chat",
-      text: "Abre el chat con el bot y envía /start para vincular la cola.",
-      description: "Sin vínculo al chat, comandos no disponibles",
+      title: "El bot no está configurado",
+      text: "La cola solo está disponible en el chat principal. Revisa la configuración del bot.",
+      description: "Chat no configurado, comandos no disponibles",
     },
     contextNotReady: {
       title: "El contexto del chat no está listo",
-      text: "No se pudo encontrar el contexto del chat, intenta de nuevo o envía /start.",
+      text: "No se pudo encontrar el contexto del chat, intenta de nuevo.",
       description: "Intenta otra vez",
     },
     search: {
@@ -124,8 +122,8 @@ const createEsUi = () => ({
     confirmNoTime: "¡Sin tiempo para jugar!",
   },
   callback: {
-    startDialogRequired: "Inicia un chat con el bot (/start) para procesar solicitudes.",
-    contextMissing: "El contexto del chat no está listo, intenta /start.",
+    startDialogRequired: "Este comando solo está disponible en el chat principal.",
+    contextMissing: "El contexto del chat no está listo, intenta más tarde.",
     contextNotFound: "Contexto del chat no encontrado",
     cancelNotAuthor: "Solo el autor puede cancelar la solicitud",
     cancelAlreadyRemoved: "La solicitud ya fue eliminada",

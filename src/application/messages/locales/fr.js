@@ -54,8 +54,7 @@ const createFrMessages = ({ formatDate }) => ({
   cancelCurrent: (player) =>
     `Le joueur ${player} a annulé, les prochains matchs sont décalés selon le temps restant`,
   cancelWaiting: (player) => `Le joueur ${player} a annulé son inscription`,
-  botStopped: () =>
-    "Bot arrêté. Redémarre le processus ou envoie /start après le démarrage du serveur",
+  botStopped: () => "Bot arrêté. Redémarre le processus pour reprendre.",
   adminOnly: () => "Cette commande est réservée aux administrateurs du chat.",
   pauseModeEnabled: () =>
     "Mode pause activé : on peut rejoindre la file, les matchs démarreront après /continue.",
@@ -73,7 +72,6 @@ const pluralizeTestMatches = (count) => (count === 1 ? "match de test" : "matchs
 
 const createFrUi = () => ({
   commands: {
-    start: "Démarrer le bot et lier le chat",
     play: "Inviter un adversaire : /play @pseudo",
     search: "Chercher un adversaire : /search",
     queue: "Afficher la file : /queue",
@@ -90,13 +88,13 @@ const createFrUi = () => ({
     directDecline: "Refuser",
     directCancel: "Annuler la demande",
     noChatBinding: {
-      title: "Commence par /start dans le chat",
-      text: "Ouvre le chat avec le bot et envoie /start pour lier la file.",
-      description: "Pas de liaison au chat, commandes indisponibles",
+      title: "Bot non configuré",
+      text: "La file est disponible uniquement dans le chat principal. Vérifie la configuration du bot.",
+      description: "Chat non configuré, commandes indisponibles",
     },
     contextNotReady: {
       title: "Contexte du chat indisponible",
-      text: "Impossible de trouver le contexte du chat, réessaie ou envoie /start.",
+      text: "Impossible de trouver le contexte du chat, réessaie.",
       description: "Réessaie",
     },
     search: {
@@ -124,8 +122,8 @@ const createFrUi = () => ({
     confirmNoTime: "Pas le temps de jouer !",
   },
   callback: {
-    startDialogRequired: "Commence un chat avec le bot (/start) pour traiter les requêtes.",
-    contextMissing: "Contexte du chat indisponible, réessaie /start.",
+    startDialogRequired: "Cette commande est disponible uniquement dans le chat principal.",
+    contextMissing: "Contexte du chat indisponible, réessaie plus tard.",
     contextNotFound: "Contexte du chat introuvable",
     cancelNotAuthor: "Seul l’auteur peut annuler la requête",
     cancelAlreadyRemoved: "La requête a déjà été supprimée",

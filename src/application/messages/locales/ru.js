@@ -1,7 +1,8 @@
 import { stripAt, formatReadyTime } from "./utils.js";
-import { TIME_READY } from "#application/config/time.js";
+import { TIME_AFTER_EMERGE, TIME_READY } from "#application/config/time.js";
 
 const readyTimeText = formatReadyTime(TIME_READY, "ru");
+const afterEmergeText = formatReadyTime(TIME_AFTER_EMERGE, "ru");
 
 const createRuMessages = ({ formatDate }) => ({
   greet: () =>
@@ -61,16 +62,40 @@ const createRuMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `Игрок ${player} отменил запись`,
   botStopped: () => "Бот остановлен. Для повторного запуска перезапустите процесс.",
   adminOnly: () => "Эта команда доступна только администраторам чата.",
-  pauseModeEnabled: () =>
-    "Режим паузы включен: можно встать в очередь, но матчи начнутся только после /continue.",
+  pauseModeEnabled: ({ action, player1, player2 }) => {
+    const base =
+      "Режим паузы включен: можно встать в очередь. Для продолжения используйте /continue.";
+    if (action === "continue" && player1 && player2) {
+      return `${base}\nТекущая пара ${player1} и ${player2} доигрывает матч.`;
+    }
+    if (action === "stop" && player1 && player2) {
+      return `${base}\nМатч ${player1} и ${player2} остановлен и будет сыгран после /continue.`;
+    }
+    return `${base}\nАктивной пары сейчас нет.`;
+  },
   pauseModeAlreadyEnabled: () =>
-    "Режим паузы уже активен. Введите /continue, чтобы запустить очередь.",
+    "Режим паузы уже активен. Чтобы запустить очередь, используйте /continue.",
+  emergePauseAlreadyEnabled: () =>
+    "Режим паузы уже активен. Для продолжения используйте /continue.",
   pauseModeDisabledNoQueue: () =>
     "Режим паузы снят. Очередь пуста — запускать нечего.",
   pauseModeDisabled: ({ player1, player2, startDate }) =>
     `Режим паузы снят. Первыми играют ${player1} и ${player2}.\nСтарт в ${formatDate(startDate)}.`,
-  pauseModeOnHold: () => "Очередь на паузе: игры начнутся после /continue.",
+  pauseModeDisabledCurrent: ({ player1, player2, endDate }) =>
+    `Режим паузы снят. Матч ${player1} и ${player2} доигрывается, окончание в ${formatDate(
+      endDate
+    )}.`,
+  pauseModeOnHold: () => "Очередь на паузе: для старта используйте /continue.",
   pauseModeNotEnabled: () => "Режим паузы не активен.",
+  emergePaused: ({ player1, player2 }) =>
+    `Экстренная пауза. Остановите время для матча ${player1} и ${player2}.`,
+  emergeResumed: ({ player1, player2, remainingMinutes }) =>
+    `Экстренная пауза завершена. Матч ${player1} и ${player2} продолжается, осталось ${remainingMinutes} мин.`,
+  emergeTooLate: ({ player1, player2 }) =>
+    `Экстренная пауза завершена, но осталось меньше ${afterEmergeText} — матч ${player1} и ${player2} завершаем.`,
+  emergeAlreadyActive: () => "Экстренная пауза уже активна. Для продолжения используйте /continue.",
+  emergeNoMatch: () => "Сейчас нет активного матча для экстренной паузы.",
+  emergeNotActive: () => "Экстренная пауза больше не активна.",
   metricsAccessDenied: () => "Просмотр метрик доступен только из доверенного чата.",
   metricsDisabled: () => "Хранилище метрик не настроено. Добавьте METRICS_MONGODB_URI и перезапустите бота.",
   metricsEmpty: ({ from, to }) => {
@@ -109,6 +134,7 @@ const createRuUi = () => ({
     stop: "Остановить бота (админ)",
     pause: "Поставить очередь на паузу (админ)",
     continue: "Запустить очередь после паузы (админ)",
+    emerge: "Экстренная пауза матча (админ)",
   },
   inline: {
     playWith: "Хочу сыграть с ним!",
@@ -140,6 +166,11 @@ const createRuUi = () => ({
     played: {
       title: "Посмотреть тех, кто уже отыграл",
       description: "Проверить список отыгравших в текущей половине дня",
+    },
+    emerge: {
+      title: "Экстренная пауза",
+      description: "Остановить или продолжить текущий матч",
+      text: "Экстренная пауза: остановите время.",
     },
     test: {
       createTitle: (count) => `Создать ${count} ${pluralizeTestMatches(count)}`,

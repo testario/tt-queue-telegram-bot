@@ -1,4 +1,5 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
+import { Match } from "#domain/entities/Match.js";
 
 /**
  * @typedef {import("#application/types.js").Match} Match
@@ -27,8 +28,19 @@ class MatchOrchestrator {
    * @param {Messages} deps.messages
    * @param {Clock} deps.clock
    * @param {Logger} [deps.logger]
+   * @param {() => boolean} [deps.shouldHoldNextMatch]
    */
-  constructor({ chatId, timer, notifier, repository, queueService, messages, clock, logger }) {
+  constructor({
+    chatId,
+    timer,
+    notifier,
+    repository,
+    queueService,
+    messages,
+    clock,
+    logger,
+    shouldHoldNextMatch,
+  }) {
     this.chatId = chatId;
     this.timer = timer;
     this.notifier = notifier;
@@ -37,6 +49,7 @@ class MatchOrchestrator {
     this.messages = messages;
     this.clock = clock;
     this.logger = logger || createNullLogger();
+    this.shouldHoldNextMatch = shouldHoldNextMatch || (() => false);
   }
 
   /**
@@ -56,7 +69,6 @@ class MatchOrchestrator {
    */
   scheduleLifecycle(match) {
     const startId = this.buildId("start", match);
-    const finishId = this.buildId("finish", match);
     const now = this.clock.now().getTime();
     const startDelay = Math.max(0, match.startDate.getTime() - now);
 
@@ -74,11 +86,19 @@ class MatchOrchestrator {
         type: "match_started",
         match,
       });
-      const finishDelay = Math.max(0, match.endDate.getTime() - this.clock.now().getTime());
-      this.timer.schedule(finishId, finishDelay, () =>
-        this.handleMatchFinished(match)
-      );
+      this.scheduleFinish(match);
     });
+  }
+
+  /**
+   * Планирует завершение матча без уведомления о старте.
+   * @param {Match} match
+   * @returns {void}
+   */
+  scheduleFinish(match) {
+    const finishId = this.buildId("finish", match);
+    const finishDelay = Math.max(0, match.endDate.getTime() - this.clock.now().getTime());
+    this.timer.schedule(finishId, finishDelay, () => this.handleMatchFinished(match));
   }
 
   /**
@@ -121,8 +141,20 @@ class MatchOrchestrator {
       state,
       this.clock.now()
     );
+    const holdNext = Boolean(nextMatch && this.shouldHoldNextMatch());
+    if (holdNext && nextMatch) {
+      nextMatch.status = Match.statuses.waiting;
+    }
     await this.repository.save(nextState);
     if (nextMatch) {
+      if (holdNext) {
+        this.logger.info("Очередь на паузе: следующий матч удержан", {
+          player1: nextMatch.player1,
+          player2: nextMatch.player2,
+        });
+        this.notifier.notify(this.chatId, this.messages.matchFinished(match));
+        return;
+      }
       this.logger.info("Переход к следующей паре", {
         player1: nextMatch.player1,
         player2: nextMatch.player2,

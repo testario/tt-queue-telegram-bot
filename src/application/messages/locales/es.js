@@ -1,7 +1,8 @@
 import { stripAt, formatReadyTime } from "./utils.js";
-import { TIME_READY } from "#application/config/time.js";
+import { TIME_AFTER_EMERGE, TIME_READY } from "#application/config/time.js";
 
 const readyTimeText = formatReadyTime(TIME_READY, "es");
+const afterEmergeText = formatReadyTime(TIME_AFTER_EMERGE, "es");
 
 const createEsMessages = ({ formatDate }) => ({
   greet: () =>
@@ -56,16 +57,39 @@ const createEsMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `El jugador ${player} canceló su turno`,
   botStopped: () => "Bot detenido. Reinicia el proceso para continuar.",
   adminOnly: () => "Este comando está disponible solo para administradores del chat.",
-  pauseModeEnabled: () =>
-    "Modo de pausa activado: puedes unirte a la cola, los partidos comenzarán después de /continue.",
+  pauseModeEnabled: ({ action, player1, player2 }) => {
+    const base = "Modo de pausa activado: puedes unirte a la cola. Continúa con /continue.";
+    if (action === "continue" && player1 && player2) {
+      return `${base}\nEl partido actual ${player1} vs ${player2} se termina.`;
+    }
+    if (action === "stop" && player1 && player2) {
+      return `${base}\nEl partido ${player1} vs ${player2} se detuvo y se reanudará tras /continue.`;
+    }
+    return `${base}\nNo hay un partido activo ahora.`;
+  },
   pauseModeAlreadyEnabled: () =>
-    "El modo de pausa ya está activo. Envía /continue para iniciar la cola.",
+    "El modo de pausa ya está activo. Usa /continue para iniciar la cola.",
+  emergePauseAlreadyEnabled: () =>
+    "El modo de pausa ya está activo. Usa /continue para reanudar.",
   pauseModeDisabledNoQueue: () =>
     "Modo de pausa desactivado. La cola está vacía, no hay nada que iniciar.",
   pauseModeDisabled: ({ player1, player2, startDate }) =>
     `Modo de pausa desactivado. Primer partido: ${player1} vs ${player2}.\nInicio a ${formatDate(startDate)}.`,
-  pauseModeOnHold: () => "La cola está en pausa: los partidos comenzarán después de /continue.",
+  pauseModeDisabledCurrent: ({ player1, player2, endDate }) =>
+    `Modo de pausa desactivado. El partido ${player1} vs ${player2} continúa, termina a ${formatDate(
+      endDate
+    )}.`,
+  pauseModeOnHold: () => "La cola está en pausa. Iníciala con /continue.",
   pauseModeNotEnabled: () => "El modo de pausa no está activo.",
+  emergePaused: ({ player1, player2 }) =>
+    `Pausa de emergencia. Detengan el tiempo para el partido ${player1} vs ${player2}.`,
+  emergeResumed: ({ player1, player2, remainingMinutes }) =>
+    `La pausa de emergencia terminó. El partido ${player1} vs ${player2} continúa, quedan ${remainingMinutes} min.`,
+  emergeTooLate: ({ player1, player2 }) =>
+    `La pausa de emergencia terminó, quedan menos de ${afterEmergeText} — finalizamos ${player1} vs ${player2}.`,
+  emergeAlreadyActive: () => "La pausa de emergencia ya está activa. Usa /continue para reanudar.",
+  emergeNoMatch: () => "No hay un partido activo para la pausa.",
+  emergeNotActive: () => "La pausa de emergencia ya no está activa.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "partido de prueba" : "partidos de prueba");
@@ -80,6 +104,7 @@ const createEsUi = () => ({
     stop: "Detener el bot (admin)",
     pause: "Pausar el movimiento de la cola (admin)",
     continue: "Reanudar la cola tras la pausa (admin)",
+    emerge: "Pausa de emergencia del partido (admin)",
   },
   inline: {
     playWith: "¡Quiero jugar!",
@@ -111,6 +136,11 @@ const createEsUi = () => ({
     played: {
       title: "Ver quién ya jugó",
       description: "Lista de jugadores que ya jugaron este medio día",
+    },
+    emerge: {
+      title: "Pausa de emergencia",
+      description: "Pausar o reanudar el partido actual",
+      text: "Pausa de emergencia: detengan el tiempo.",
     },
     test: {
       createTitle: (count) => `Crear ${count} ${pluralizeTestMatches(count)}`,

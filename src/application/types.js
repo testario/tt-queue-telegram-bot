@@ -81,7 +81,9 @@
 /**
  * @typedef {Object} MatchLifecycle
  * @property {(match: Match) => void} scheduleLifecycle
+ * @property {(match: Match) => void} scheduleFinish
  * @property {(match: Match) => void} cancelForMatch
+ * @property {(match: Match) => Promise<void>} handleMatchFinished
  */
 
 /**
@@ -115,6 +117,21 @@
  * @property {(player: string) => string} cancelCurrent
  * @property {(player: string) => string} cancelWaiting
  * @property {() => string} botStopped
+ * @property {() => string} adminOnly
+ * @property {(payload: { action: "continue" | "stop" | "none", player1?: string, player2?: string }) => string} pauseModeEnabled
+ * @property {() => string} pauseModeAlreadyEnabled
+ * @property {() => string} emergePauseAlreadyEnabled
+ * @property {() => string} pauseModeDisabledNoQueue
+ * @property {(payload: { player1: string, player2: string, startDate: Date }) => string} pauseModeDisabled
+ * @property {(payload: { player1: string, player2: string, endDate: Date }) => string} pauseModeDisabledCurrent
+ * @property {() => string} pauseModeOnHold
+ * @property {() => string} pauseModeNotEnabled
+ * @property {(payload: { player1: string, player2: string }) => string} emergePaused
+ * @property {(payload: { player1: string, player2: string, remainingMinutes: number }) => string} emergeResumed
+ * @property {(payload: { player1: string, player2: string }) => string} emergeTooLate
+ * @property {() => string} emergeAlreadyActive
+ * @property {() => string} emergeNoMatch
+ * @property {() => string} emergeNotActive
  * @property {() => string} metricsAccessDenied
  * @property {() => string} metricsDisabled
  * @property {(payload: { from?: Date|null, to?: Date|null }) => string} metricsEmpty
@@ -132,6 +149,9 @@
  * @property {string} played
  * @property {string} metrics
  * @property {string} stop
+ * @property {string} pause
+ * @property {string} continue
+ * @property {string} emerge
  */
 
 /**
@@ -143,6 +163,7 @@
  * @property {{ title: string, description: string }} search
  * @property {{ title: string, description: string }} queue
  * @property {{ title: string, description: string }} played
+ * @property {{ title: string, description: string, text: string }} emerge
  * @property {{
  *   createTitle: (count: number) => string,
  *   createText: (count: number) => string,

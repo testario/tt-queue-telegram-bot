@@ -1,7 +1,8 @@
 import { stripAt, formatReadyTime } from "./utils.js";
-import { TIME_READY } from "#application/config/time.js";
+import { TIME_AFTER_EMERGE, TIME_READY } from "#application/config/time.js";
 
 const readyTimeText = formatReadyTime(TIME_READY, "fr");
+const afterEmergeText = formatReadyTime(TIME_AFTER_EMERGE, "fr");
 
 const createFrMessages = ({ formatDate }) => ({
   greet: () =>
@@ -56,16 +57,39 @@ const createFrMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `Le joueur ${player} a annulé son inscription`,
   botStopped: () => "Bot arrêté. Redémarre le processus pour reprendre.",
   adminOnly: () => "Cette commande est réservée aux administrateurs du chat.",
-  pauseModeEnabled: () =>
-    "Mode pause activé : on peut rejoindre la file, les matchs démarreront après /continue.",
+  pauseModeEnabled: ({ action, player1, player2 }) => {
+    const base = "Mode pause activé : on peut rejoindre la file. Continuez avec /continue.";
+    if (action === "continue" && player1 && player2) {
+      return `${base}\nLe match en cours ${player1} vs ${player2} se termine.`;
+    }
+    if (action === "stop" && player1 && player2) {
+      return `${base}\nLe match ${player1} vs ${player2} est arrêté et reprendra après /continue.`;
+    }
+    return `${base}\nAucun match actif pour l’instant.`;
+  },
   pauseModeAlreadyEnabled: () =>
-    "Le mode pause est déjà actif. Envoie /continue pour lancer la file.",
+    "Le mode pause est déjà actif. Utilisez /continue pour lancer la file.",
+  emergePauseAlreadyEnabled: () =>
+    "Le mode pause est déjà actif. Utilisez /continue pour reprendre.",
   pauseModeDisabledNoQueue: () =>
     "Mode pause désactivé. La file est vide, rien à lancer.",
   pauseModeDisabled: ({ player1, player2, startDate }) =>
     `Mode pause désactivé. Premier match : ${player1} vs ${player2}.\nDébut à ${formatDate(startDate)}.`,
-  pauseModeOnHold: () => "File en pause : les matchs commenceront après /continue.",
+  pauseModeDisabledCurrent: ({ player1, player2, endDate }) =>
+    `Mode pause désactivé. Le match ${player1} vs ${player2} continue, fin à ${formatDate(
+      endDate
+    )}.`,
+  pauseModeOnHold: () => "File en pause : lancez-la avec /continue.",
   pauseModeNotEnabled: () => "Le mode pause n'est pas actif.",
+  emergePaused: ({ player1, player2 }) =>
+    `Pause d'urgence. Arrêtez le temps pour le match ${player1} vs ${player2}.`,
+  emergeResumed: ({ player1, player2, remainingMinutes }) =>
+    `Pause d'urgence terminée. Le match ${player1} vs ${player2} reprend, il reste ${remainingMinutes} min.`,
+  emergeTooLate: ({ player1, player2 }) =>
+    `Pause d'urgence terminée, il reste moins de ${afterEmergeText} — fin du match ${player1} vs ${player2}.`,
+  emergeAlreadyActive: () => "La pause d'urgence est déjà active. Utilisez /continue pour reprendre.",
+  emergeNoMatch: () => "Aucun match actif à mettre en pause.",
+  emergeNotActive: () => "La pause d'urgence n'est plus active.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "match de test" : "matchs de test");
@@ -80,6 +104,7 @@ const createFrUi = () => ({
     stop: "Arrêter le bot (admin)",
     pause: "Mettre la file en pause (admin)",
     continue: "Relancer la file après pause (admin)",
+    emerge: "Pause d'urgence du match (admin)",
   },
   inline: {
     playWith: "Je veux jouer !",
@@ -111,6 +136,11 @@ const createFrUi = () => ({
     played: {
       title: "Voir qui a déjà joué",
       description: "Liste des joueurs qui ont joué ce demi-jour",
+    },
+    emerge: {
+      title: "Pause d'urgence",
+      description: "Mettre en pause ou reprendre le match",
+      text: "Pause d'urgence : arrêtez le temps.",
     },
     test: {
       createTitle: (count) => `Créer ${count} ${pluralizeTestMatches(count)}`,

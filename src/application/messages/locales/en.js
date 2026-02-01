@@ -1,7 +1,8 @@
 import { stripAt, formatReadyTime } from "./utils.js";
-import { TIME_READY } from "#application/config/time.js";
+import { TIME_AFTER_EMERGE, TIME_READY } from "#application/config/time.js";
 
 const readyTimeText = formatReadyTime(TIME_READY, "en");
+const afterEmergeText = formatReadyTime(TIME_AFTER_EMERGE, "en");
 
 const createEnMessages = ({ formatDate }) => ({
   greet: () =>
@@ -56,15 +57,38 @@ const createEnMessages = ({ formatDate }) => ({
   cancelWaiting: (player) => `Player ${player} canceled the entry`,
   botStopped: () => "Bot stopped. Restart the process to resume.",
   adminOnly: () => "This command is available to chat administrators only.",
-  pauseModeEnabled: () =>
-    "Pause mode enabled: you can queue up, matches will start after /continue.",
+  pauseModeEnabled: ({ action, player1, player2 }) => {
+    const base = "Pause mode enabled: you can queue up. Continue with /continue.";
+    if (action === "continue" && player1 && player2) {
+      return `${base}\nCurrent match ${player1} vs ${player2} will finish.`;
+    }
+    if (action === "stop" && player1 && player2) {
+      return `${base}\nMatch ${player1} vs ${player2} is paused and will restart after /continue.`;
+    }
+    return `${base}\nNo active match right now.`;
+  },
   pauseModeAlreadyEnabled: () =>
-    "Pause mode is already active. Send /continue to start the queue.",
+    "Pause mode is already active. Use /continue to start the queue.",
+  emergePauseAlreadyEnabled: () =>
+    "Pause mode is already active. Use /continue to resume.",
   pauseModeDisabledNoQueue: () => "Pause mode disabled. Queue is empty, nothing to start.",
   pauseModeDisabled: ({ player1, player2, startDate }) =>
     `Pause mode disabled. First match: ${player1} vs ${player2}.\nStart at ${formatDate(startDate)}.`,
-  pauseModeOnHold: () => "Queue is on hold: matches will start after /continue.",
+  pauseModeDisabledCurrent: ({ player1, player2, endDate }) =>
+    `Pause mode disabled. Match ${player1} vs ${player2} continues, ends at ${formatDate(
+      endDate
+    )}.`,
+  pauseModeOnHold: () => "Queue is on hold. Start it with /continue.",
   pauseModeNotEnabled: () => "Pause mode is not active.",
+  emergePaused: ({ player1, player2 }) =>
+    `Emergency pause. Stop the timer for match ${player1} vs ${player2}.`,
+  emergeResumed: ({ player1, player2, remainingMinutes }) =>
+    `Emergency pause ended. Match ${player1} vs ${player2} continues, ${remainingMinutes} min left.`,
+  emergeTooLate: ({ player1, player2 }) =>
+    `Emergency pause ended, but less than ${afterEmergeText} remain — ending match ${player1} vs ${player2}.`,
+  emergeAlreadyActive: () => "Emergency pause is already active. Use /continue to resume.",
+  emergeNoMatch: () => "There is no active match to pause.",
+  emergeNotActive: () => "Emergency pause is no longer active.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "test match" : "test matches");
@@ -79,6 +103,7 @@ const createEnUi = () => ({
     stop: "Stop the bot (admin)",
     pause: "Pause queue movement (admin)",
     continue: "Resume queue after pause (admin)",
+    emerge: "Emergency match pause (admin)",
   },
   inline: {
     playWith: "I want to play!",
@@ -110,6 +135,11 @@ const createEnUi = () => ({
     played: {
       title: "See who already played",
       description: "Check the list of players who played this half-day",
+    },
+    emerge: {
+      title: "Emergency pause",
+      description: "Pause or resume the current match",
+      text: "Emergency pause: stop the timer.",
     },
     test: {
       createTitle: (count) => `Create ${count} ${pluralizeTestMatches(count)}`,

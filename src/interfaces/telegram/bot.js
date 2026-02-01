@@ -1,6 +1,7 @@
 import TelegramApi from "node-telegram-bot-api";
 import {
   DEFAULT_GAME_TIME,
+  TIME_AFTER_EMERGE,
   TIME_READY,
   WORK_SCHEDULE,
 } from "#application/config/time.js";
@@ -200,6 +201,19 @@ const createBot = (token, { logger, locale } = {}) => {
     }
   };
 
+  const PAUSE_CANCEL_MATCH_MS = 5 * 60 * 1000;
+  const EMERGE_RESUME_MIN_MS = TIME_AFTER_EMERGE;
+  const emergeStateByChat = new Map();
+
+  const buildMatchKey = (match) =>
+    match ? `${match.player1}:${match.player2}:${match.startDate.getTime()}` : null;
+
+  const shouldKeepMatchOnPause = (match, now) => {
+    if (!match || match.status !== Match.statuses.playing) return false;
+    const elapsedMs = now.getTime() - match.startDate.getTime();
+    return elapsedMs >= PAUSE_CANCEL_MATCH_MS;
+  };
+
   /**
    * Парсит период для метрик из строки вида "24h", "7d", "2w".
    * @param {string} rawRange
@@ -243,6 +257,7 @@ const createBot = (token, { logger, locale } = {}) => {
     if (resultId.startsWith("direct:")) {
       return { category: "direct", variant: "direct" };
     }
+    if (resultId === "emerge") return { category: "admin", variant: "emerge" };
     if (resultId === "1") return { category: "preset", variant: "search" };
     if (resultId === "2") return { category: "preset", variant: "queue" };
     if (resultId === "3") return { category: "preset", variant: "played" };
@@ -267,6 +282,7 @@ const createBot = (token, { logger, locale } = {}) => {
     { command: "played", description: ui.commands.played },
     { command: "pause", description: ui.commands.pause },
     { command: "continue", description: ui.commands.continue },
+    { command: "emerge", description: ui.commands.emerge },
   ];
 
   const commandsAppliedForChats = new Set();
@@ -391,11 +407,39 @@ const createBot = (token, { logger, locale } = {}) => {
       playedList: (played) => baseMessages.playedList(played.map(formatPlayerForMessage)),
       cancelCurrent: (player) => baseMessages.cancelCurrent(formatPlayerForMessage(player)),
       cancelWaiting: (player) => baseMessages.cancelWaiting(formatPlayerForMessage(player)),
+      pauseModeEnabled: ({ player1, player2, action }) =>
+        baseMessages.pauseModeEnabled({
+          player1: player1 ? formatPlayerForMessage(player1) : player1,
+          player2: player2 ? formatPlayerForMessage(player2) : player2,
+          action,
+        }),
       pauseModeDisabled: ({ player1, player2, startDate }) =>
         baseMessages.pauseModeDisabled({
           player1: formatPlayerForMessage(player1),
           player2: formatPlayerForMessage(player2),
           startDate,
+        }),
+      pauseModeDisabledCurrent: ({ player1, player2, endDate }) =>
+        baseMessages.pauseModeDisabledCurrent({
+          player1: formatPlayerForMessage(player1),
+          player2: formatPlayerForMessage(player2),
+          endDate,
+        }),
+      emergePaused: ({ player1, player2 }) =>
+        baseMessages.emergePaused({
+          player1: formatPlayerForMessage(player1),
+          player2: formatPlayerForMessage(player2),
+        }),
+      emergeResumed: ({ player1, player2, remainingMinutes }) =>
+        baseMessages.emergeResumed({
+          player1: formatPlayerForMessage(player1),
+          player2: formatPlayerForMessage(player2),
+          remainingMinutes,
+        }),
+      emergeTooLate: ({ player1, player2 }) =>
+        baseMessages.emergeTooLate({
+          player1: formatPlayerForMessage(player1),
+          player2: formatPlayerForMessage(player2),
         }),
     };
   }
@@ -429,6 +473,7 @@ const createBot = (token, { logger, locale } = {}) => {
       queueService,
       messages,
       clock,
+      shouldHoldNextMatch: () => isPauseModeEnabled(chatId),
       logger: log.child(`service:orchestrator:${chatId}`),
     });
 
@@ -574,17 +619,74 @@ const createBot = (token, { logger, locale } = {}) => {
 
   const freezeQueueForPause = async (context) => {
     if (!context) return { hasQueue: false };
-    context.orchestrator.cancelAll();
     const state = await context.repository.get();
     if (!state.queue.length) {
       return { hasQueue: false };
     }
-    state.queue.forEach((item) => {
-      item.status = Match.statuses.waiting;
-    });
+
+    const now = context.clock.now();
+    const currentMatch = state.queue[0];
+    const shouldKeepCurrent = shouldKeepMatchOnPause(currentMatch, now);
+
+    if (!shouldKeepCurrent) {
+      context.orchestrator.cancelAll();
+      state.queue.forEach((item) => {
+        item.status = Match.statuses.waiting;
+      });
+    } else {
+      state.queue.forEach((item, index) => {
+        if (index > 0) {
+          item.status = Match.statuses.waiting;
+        }
+      });
+    }
+
     context.queueService.recalculateWaiting(state);
     await context.repository.save(state);
-    return { hasQueue: true, nextMatch: state.queue[0] };
+    return {
+      hasQueue: true,
+      nextMatch: state.queue[0],
+      currentMatch,
+      currentMatchContinues: shouldKeepCurrent,
+    };
+  };
+
+  const buildPauseModeEnabledMessage = (freezeResult) => {
+    const hasCurrent = freezeResult?.currentMatch;
+    if (hasCurrent && freezeResult.currentMatch.player1 && freezeResult.currentMatch.player2) {
+      return messages.pauseModeEnabled({
+        player1: freezeResult.currentMatch.player1,
+        player2: freezeResult.currentMatch.player2,
+        action: freezeResult.currentMatchContinues ? "continue" : "stop",
+      });
+    }
+    return messages.pauseModeEnabled({ action: "none" });
+  };
+
+  const applyPauseMode = async ({
+    chatId,
+    context,
+    username,
+    replyToMessageId = undefined,
+    inlineMessageId = undefined,
+    source = "pause",
+  }) => {
+    setPauseMode(chatId, true);
+    const freezeResult = await freezeQueueForPause(context);
+    log.info("Режим паузы включен", {
+      chatId,
+      username,
+      source,
+      queueFrozen: freezeResult.hasQueue,
+      currentMatchContinues: freezeResult.currentMatchContinues,
+    });
+    const pauseMessage = buildPauseModeEnabledMessage(freezeResult);
+    await respondEmergeMessage({
+      chatId,
+      text: pauseMessage,
+      replyToMessageId,
+      inlineMessageId,
+    });
   };
 
   const resumeQueueAfterPause = async (context) => {
@@ -595,6 +697,11 @@ const createBot = (token, { logger, locale } = {}) => {
     }
     const now = context.clock.now();
     const nextMatch = state.queue[0];
+    const isCurrentPlaying =
+      nextMatch.status === Match.statuses.playing && now >= nextMatch.startDate;
+    if (isCurrentPlaying) {
+      return { hasQueue: true, currentMatchContinues: true, currentMatch: nextMatch };
+    }
     nextMatch.status = Match.statuses.playing;
     nextMatch.startDate = new Date(now.getTime() + context.queueService.readyMs);
     nextMatch.endDate = new Date(nextMatch.startDate.getTime() + context.queueService.gameMs);
@@ -611,6 +718,161 @@ const createBot = (token, { logger, locale } = {}) => {
       messages.pauseModeOnHold(),
       replyToMessageId ? { reply_to_message_id: replyToMessageId } : undefined
     );
+  };
+
+  const respondEmergeMessage = async ({
+    chatId,
+    text,
+    replyToMessageId = undefined,
+    inlineMessageId = undefined,
+  }) => {
+    if (inlineMessageId) {
+      bot
+        .editMessageText(text, { inline_message_id: inlineMessageId })
+        .catch((error) =>
+          handleEditMessageError(error, "Не удалось обновить inline сообщение /emerge")
+        );
+      return;
+    }
+    await bot.sendMessage(
+      chatId,
+      text,
+      replyToMessageId ? { reply_to_message_id: replyToMessageId } : undefined
+    );
+  };
+
+  const handleEmerge = async ({
+    chatId,
+    context,
+    userId,
+    replyToMessageId = undefined,
+    inlineMessageId = undefined,
+  }) => {
+    if (!chatId || !context) return;
+    const chatKey = normalizeChatKey(chatId);
+    if (!chatKey) return;
+
+    const isAdmin = await isUserAdmin(chatId, userId);
+    if (!isAdmin) {
+      await respondEmergeMessage({
+        chatId,
+        text: messages.adminOnly(),
+        replyToMessageId,
+        inlineMessageId,
+      });
+      return;
+    }
+
+    if (emergeStateByChat.has(chatKey)) {
+      await respondEmergeMessage({
+        chatId,
+        text: messages.emergeAlreadyActive(),
+        replyToMessageId,
+        inlineMessageId,
+      });
+      return;
+    }
+
+    const state = await context.repository.get();
+    const currentMatch = state.queue[0];
+    const now = context.clock.now();
+    const isMatchRunning =
+      currentMatch &&
+      currentMatch.status === Match.statuses.playing &&
+      now >= currentMatch.startDate &&
+      now < currentMatch.endDate;
+
+    if (!isMatchRunning) {
+      if (isPauseModeEnabled(chatId)) {
+        await respondEmergeMessage({
+          chatId,
+          text: messages.emergePauseAlreadyEnabled(),
+          replyToMessageId,
+          inlineMessageId,
+        });
+        return;
+      }
+      await applyPauseMode({
+        chatId,
+        context,
+        replyToMessageId,
+        inlineMessageId,
+        source: "emerge_as_pause",
+      });
+      return;
+    }
+
+    const remainingMs = Math.max(0, currentMatch.endDate.getTime() - now.getTime());
+
+    context.orchestrator.cancelForMatch(currentMatch);
+    emergeStateByChat.set(chatKey, {
+      matchKey: buildMatchKey(currentMatch),
+      remainingMs,
+    });
+    await respondEmergeMessage({
+      chatId,
+      text: messages.emergePaused({
+        player1: currentMatch.player1,
+        player2: currentMatch.player2,
+      }),
+      replyToMessageId,
+      inlineMessageId,
+    });
+  };
+
+  const resumeEmergeAfterContinue = async ({ chatId, context, replyToMessageId }) => {
+    if (!chatId || !context) return { handled: false };
+    const chatKey = normalizeChatKey(chatId);
+    if (!chatKey) return { handled: false };
+
+    const storedEmerge = emergeStateByChat.get(chatKey);
+    if (!storedEmerge) return { handled: false };
+
+    const state = await context.repository.get();
+    const currentMatch = state.queue[0];
+
+    if (!currentMatch || buildMatchKey(currentMatch) !== storedEmerge.matchKey) {
+      emergeStateByChat.delete(chatKey);
+      await respondEmergeMessage({
+        chatId,
+        text: messages.emergeNotActive(),
+        replyToMessageId,
+      });
+      return { handled: true };
+    }
+
+    emergeStateByChat.delete(chatKey);
+
+    if (storedEmerge.remainingMs <= EMERGE_RESUME_MIN_MS) {
+      await respondEmergeMessage({
+        chatId,
+        text: messages.emergeTooLate({
+          player1: currentMatch.player1,
+          player2: currentMatch.player2,
+        }),
+        replyToMessageId,
+      });
+      await context.orchestrator.handleMatchFinished(currentMatch);
+      return { handled: true };
+    }
+
+    const now = context.clock.now();
+    currentMatch.status = Match.statuses.playing;
+    currentMatch.startDate = now;
+    currentMatch.endDate = new Date(now.getTime() + storedEmerge.remainingMs);
+    await context.repository.save(state);
+    context.orchestrator.scheduleFinish(currentMatch);
+
+    await respondEmergeMessage({
+      chatId,
+      text: messages.emergeResumed({
+        player1: currentMatch.player1,
+        player2: currentMatch.player2,
+        remainingMinutes: Math.ceil(storedEmerge.remainingMs / (60 * 1000)),
+      }),
+      replyToMessageId,
+    });
+    return { handled: true };
   };
 
   /**
@@ -738,12 +1000,12 @@ const createBot = (token, { logger, locale } = {}) => {
       return;
     }
 
-    setPauseMode(chatId, true);
-    const freezeResult = await freezeQueueForPause(context);
-    log.info("Режим паузы включен", { chatId, username, queueFrozen: freezeResult.hasQueue });
-
-    await bot.sendMessage(chatId, messages.pauseModeEnabled(), {
-      reply_to_message_id: msg.message_id,
+    await applyPauseMode({
+      chatId,
+      context,
+      username,
+      replyToMessageId: msg.message_id,
+      source: "pause_command",
     });
   });
 
@@ -774,21 +1036,56 @@ const createBot = (token, { logger, locale } = {}) => {
     });
     if (!isAdmin) return;
 
-    if (!isPauseModeEnabled(chatId)) {
+    const emergeResult = await resumeEmergeAfterContinue({
+      chatId,
+      context,
+      replyToMessageId: msg.message_id,
+    });
+    const pauseEnabled = isPauseModeEnabled(chatId);
+
+    if (!pauseEnabled && !emergeResult.handled) {
       await bot.sendMessage(chatId, messages.pauseModeNotEnabled(), {
         reply_to_message_id: msg.message_id,
       });
       return;
     }
 
+    if (emergeResult.handled) {
+      const queueText = await context.getQueue.execute();
+      await bot.sendMessage(chatId, queueText, { reply_to_message_id: msg.message_id });
+    }
+
+    if (!pauseEnabled) {
+      return;
+    }
+
     setPauseMode(chatId, false);
     const resumeResult = await resumeQueueAfterPause(context);
-    log.info("Режим паузы выключен", { chatId, username, queueStarted: resumeResult.hasQueue });
+    log.info("Режим паузы выключен", {
+      chatId,
+      username,
+      queueStarted: resumeResult.hasQueue,
+      currentMatchContinues: resumeResult.currentMatchContinues,
+    });
 
     if (!resumeResult.hasQueue) {
       await bot.sendMessage(chatId, messages.pauseModeDisabledNoQueue(), {
         reply_to_message_id: msg.message_id,
       });
+      return;
+    }
+
+    if (resumeResult.currentMatchContinues) {
+      const { currentMatch } = resumeResult;
+      await bot.sendMessage(
+        chatId,
+        messages.pauseModeDisabledCurrent({
+          player1: currentMatch.player1,
+          player2: currentMatch.player2,
+          endDate: currentMatch.endDate,
+        }),
+        { reply_to_message_id: msg.message_id }
+      );
       return;
     }
 
@@ -802,6 +1099,34 @@ const createBot = (token, { logger, locale } = {}) => {
       }),
       { reply_to_message_id: msg.message_id }
     );
+  });
+
+  bot.onText(/\/emerge(?:@[\w_]+)?/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    const username = msg.from?.username;
+    rememberUserDisplayName(msg.from);
+
+    trackUsage("command:emerge");
+
+    if (!chatId) {
+      log.warn("Команда /emerge без chatId", { userId, username });
+      return;
+    }
+
+    const context = getContext(chatId);
+    if (!context) {
+      await bot.sendMessage(chatId, ui.callback.contextMissing);
+      log.warn("Контекст не найден для команды /emerge", { chatId });
+      return;
+    }
+
+    await handleEmerge({
+      chatId,
+      context,
+      userId,
+      replyToMessageId: msg.message_id,
+    });
   });
 
   bot.onText(/\/metrics(?:@[\w_]+)?(?:\s+(.+))?/, async (msg, match) => {
@@ -1108,6 +1433,15 @@ const createBot = (token, { logger, locale } = {}) => {
         },
         description: ui.inline.played.description,
       },
+      {
+        type: "article",
+        id: "emerge",
+        title: ui.inline.emerge.title,
+        input_message_content: {
+          message_text: ui.inline.emerge.text,
+        },
+        description: ui.inline.emerge.description,
+      },
     ];
 
     if (opponentRaw) {
@@ -1205,6 +1539,9 @@ const createBot = (token, { logger, locale } = {}) => {
       } catch (error) {
         log.error("Ошибка регистрации поиска после выбора inline", { player, message: error.message });
       }
+    } else if (resultId === "emerge") {
+      trackUsage("inline:emerge");
+      await handleEmerge({ chatId, context, userId, inlineMessageId });
     } else if (resultId?.startsWith("direct:")) {
       const opponentRaw = decodeURIComponent(resultId.replace("direct:", ""));
       const directResult = await context.directMatch.execute(player, opponentRaw);

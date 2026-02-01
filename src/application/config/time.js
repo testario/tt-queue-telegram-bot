@@ -16,6 +16,7 @@ export const TIME_OPTIONS = {
 };
 export const DEFAULT_GAME_TIME = getEnvInt("DEFAULT_GAME_TIME", 15) * 60 * 1000;
 export const TIME_READY = getEnvInt("TIME_READY", 30) * 1000;
+export const TIME_AFTER_EMERGE = getEnvInt("TIME_AFTER_EMERGE", 3) * 60 * 1000;
 
 export const WORK_SCHEDULE = {
   workStart: {

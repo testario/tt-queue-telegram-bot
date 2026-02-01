@@ -1,7 +1,8 @@
 import { stripAt, formatReadyTime } from "./utils.js";
-import { TIME_READY } from "#application/config/time.js";
+import { TIME_AFTER_EMERGE, TIME_READY } from "#application/config/time.js";
 
 const readyTimeText = formatReadyTime(TIME_READY, "de");
+const afterEmergeText = formatReadyTime(TIME_AFTER_EMERGE, "de");
 
 const createDeMessages = ({ formatDate }) => ({
   greet: () =>
@@ -54,26 +55,48 @@ const createDeMessages = ({ formatDate }) => ({
   cancelCurrent: (player) =>
     `Spieler ${player} hat storniert, nachfolgende Matches werden verschoben`,
   cancelWaiting: (player) => `Spieler ${player} hat die Anmeldung storniert`,
-  botStopped: () =>
-    "Bot gestoppt. Starte den Prozess neu oder sende /start nachdem der Server läuft",
+  botStopped: () => "Bot gestoppt. Starte den Prozess neu, um fortzufahren.",
   adminOnly: () => "Dieser Befehl ist nur für Chat-Administratoren verfügbar.",
-  pauseModeEnabled: () =>
-    "Pausenmodus aktiviert: Du kannst dich anstellen, Matches starten nach /continue.",
+  pauseModeEnabled: ({ action, player1, player2 }) => {
+    const base =
+      "Pausenmodus aktiviert: Du kannst dich anstellen. Weiter mit /continue.";
+    if (action === "continue" && player1 && player2) {
+      return `${base}\nDas aktuelle Match ${player1} vs ${player2} wird zu Ende gespielt.`;
+    }
+    if (action === "stop" && player1 && player2) {
+      return `${base}\nMatch ${player1} vs ${player2} wurde gestoppt und startet nach /continue erneut.`;
+    }
+    return `${base}\nGerade kein aktives Match.`;
+  },
   pauseModeAlreadyEnabled: () =>
-    "Pausenmodus ist bereits aktiv. Sende /continue, um die Warteschlange zu starten.",
+    "Pausenmodus ist bereits aktiv. Starte die Warteschlange mit /continue.",
+  emergePauseAlreadyEnabled: () =>
+    "Pausenmodus ist bereits aktiv. Mit /continue fortsetzen.",
   pauseModeDisabledNoQueue: () =>
     "Pausenmodus deaktiviert. Die Warteschlange ist leer – nichts zu starten.",
   pauseModeDisabled: ({ player1, player2, startDate }) =>
     `Pausenmodus deaktiviert. Erstes Match: ${player1} vs ${player2}.\nStart um ${formatDate(startDate)}.`,
-  pauseModeOnHold: () => "Warteschlange pausiert: Matches starten nach /continue.",
+  pauseModeDisabledCurrent: ({ player1, player2, endDate }) =>
+    `Pausenmodus deaktiviert. Match ${player1} vs ${player2} läuft weiter, Ende um ${formatDate(
+      endDate
+    )}.`,
+  pauseModeOnHold: () => "Warteschlange pausiert: Starte sie mit /continue.",
   pauseModeNotEnabled: () => "Pausenmodus ist nicht aktiv.",
+  emergePaused: ({ player1, player2 }) =>
+    `Notfallpause. Zeit für das Match ${player1} vs ${player2} stoppen.`,
+  emergeResumed: ({ player1, player2, remainingMinutes }) =>
+    `Notfallpause beendet. Match ${player1} vs ${player2} geht weiter, ${remainingMinutes} Min. verbleiben.`,
+  emergeTooLate: ({ player1, player2 }) =>
+    `Notfallpause beendet, weniger als ${afterEmergeText} übrig — Match ${player1} vs ${player2} endet.`,
+  emergeAlreadyActive: () => "Notfallpause ist bereits aktiv. Mit /continue fortsetzen.",
+  emergeNoMatch: () => "Kein aktives Match für eine Pause.",
+  emergeNotActive: () => "Notfallpause ist nicht mehr aktiv.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "Testmatch" : "Testmatches");
 
 const createDeUi = () => ({
   commands: {
-    start: "Bot starten und Chat verknüpfen",
     play: "Gegner einladen: /play @username",
     search: "Gegner suchen: /search",
     queue: "Warteschlange anzeigen: /queue",
@@ -82,6 +105,7 @@ const createDeUi = () => ({
     stop: "Bot stoppen (Admin)",
     pause: "Warteschlange pausieren (Admin)",
     continue: "Warteschlange nach Pause starten (Admin)",
+    emerge: "Notfallpause des Matches (Admin)",
   },
   inline: {
     playWith: "Ich will spielen!",
@@ -90,13 +114,13 @@ const createDeUi = () => ({
     directDecline: "Ablehnen",
     directCancel: "Anfrage abbrechen",
     noChatBinding: {
-      title: "Erst /start im Chat senden",
-      text: "Öffne den Chat mit dem Bot und sende /start, um die Warteschlange zu verknüpfen.",
-      description: "Keine Chat-Verknüpfung, Befehle nicht verfügbar",
+      title: "Bot ist nicht konfiguriert",
+      text: "Die Warteschlange ist nur im Hauptchat verfügbar. Prüfe die Bot-Einstellungen.",
+      description: "Chat nicht konfiguriert, Befehle nicht verfügbar",
     },
     contextNotReady: {
       title: "Chat-Kontext nicht bereit",
-      text: "Kontext nicht gefunden, versuche es erneut oder sende /start.",
+      text: "Chat-Kontext nicht gefunden, bitte erneut versuchen.",
       description: "Nochmal versuchen",
     },
     search: {
@@ -114,6 +138,11 @@ const createDeUi = () => ({
       title: "Wer hat schon gespielt",
       description: "Liste der Spieler, die in diesem Halbtag gespielt haben",
     },
+    emerge: {
+      title: "Notfallpause",
+      description: "Aktuelles Match pausieren oder fortsetzen",
+      text: "Notfallpause: Zeit stoppen.",
+    },
     test: {
       createTitle: (count) => `${count} ${pluralizeTestMatches(count)} erstellen`,
       createText: (count) => `Erstelle ${count} ${pluralizeTestMatches(count)}`,
@@ -124,8 +153,8 @@ const createDeUi = () => ({
     confirmNoTime: "Keine Zeit zum Spielen!",
   },
   callback: {
-    startDialogRequired: "Starte einen Chat mit dem Bot (/start), um Anfragen zu verarbeiten.",
-    contextMissing: "Chat-Kontext nicht bereit, versuche /start.",
+    startDialogRequired: "Dieser Befehl ist nur im Hauptchat verfügbar.",
+    contextMissing: "Chat-Kontext nicht bereit, bitte später erneut versuchen.",
     contextNotFound: "Chat-Kontext nicht gefunden",
     cancelNotAuthor: "Nur der Autor kann die Anfrage abbrechen",
     cancelAlreadyRemoved: "Die Anfrage wurde bereits entfernt",

@@ -13,14 +13,12 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           key_raw="${{ secrets.VPS_SSH_KEY }}"
-          # Восстанавливаем переводы строк, убираем CR и возможные обёртки в кавычки/бэктики
           key_fmt="$(printf '%s' "$key_raw" | perl -0777 -pe 's/^\\s+|\\s+$//g; s/^["'\''`]//; s/["'\''`]$//; s/\\n/\n/g' | tr -d '\r')"
 
           tmp_key=$(mktemp)
           printf '%s\n' "$key_fmt" > "$tmp_key"
           chmod 600 "$tmp_key"
 
-          # Если формат не читается, пробуем base64-декод
           if ! ssh-keygen -y -f "$tmp_key" >/dev/null 2>&1; then
             decoded="$(printf '%s' "$key_fmt" | base64 -d 2>/dev/null || true)"
             if [ -n "$decoded" ]; then
@@ -29,7 +27,6 @@ jobs:
             fi
           fi
 
-          # Финальная проверка с выводом ошибки
           if ! ssh-keygen -y -f "$tmp_key" >/dev/null 2>sshkey.err; then
             echo "Invalid VPS_SSH_KEY format"
             cat sshkey.err
@@ -47,27 +44,15 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" << 'EOF'
-          set -echo
-        
-          cd ${{ secrets.VPS_APP_PATH }}
+          set -e
 
-          echo "PWD after cd: $(pwd)"
-          ls -la
-          if [ ! -d .git ]; then
-            echo "Repo not initialized in $(pwd) (.git missing)"
-            exit 1
-          fi
+          cd "${{ secrets.VPS_APP_PATH }}"
 
           git fetch origin master
           git checkout master
           git pull --ff-only
+          
+          cd ..
 
-          npm ci
-          npm test
-
-          command -v pm2 >/dev/null 2>&1 || npm i -g pm2
-
-          pm2 stop tt-queue-bot || true
-
-          NODE_ENV=production pm2 start -a -l pm2.log -o out.log -e err.log --name tt-queue-bot src/index.js
+          docker compose up -d --build
           EOF

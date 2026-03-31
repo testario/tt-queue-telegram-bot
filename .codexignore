@@ -1,0 +1,8 @@
+.env
+.env.local
+.env.*.local
+
+wireguard/*.conf
+wireguard/*.key
+wireguard/*.pem
+wireguard/*.json

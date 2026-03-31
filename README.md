@@ -10,6 +10,7 @@
 
 ### Метрики использования
 - Для включения метрик задайте `METRICS_MONGODB_URI` (и при необходимости `METRICS_MONGODB_DB`, `METRICS_MONGODB_COLLECTION`).
+- Для запуска через `docker compose` можно не задавать URI вручную: контейнер соберёт его из `tt-queue-bot/.env.mongo.local` (`MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MONGO_INITDB_DATABASE`, `MONGODB_HOST`, `MONGODB_PORT`, `MONGODB_AUTH_SOURCE`).
 - Ограничьте чат для выдачи статистики: `METRICS_CHAT_ID` (числовой id).
 - Команда `/metrics 24h` (или `/metrics 7d`, по умолчанию 24h) показывает сводку использования только в доверенном чате.
 
@@ -31,4 +32,3 @@
   - «Найти игрока» — ставит игрока в поиск.
   - «Проверить очередь» — выводит очередь матчей.
   - «Посмотреть тех, кто уже отыграл» — список сыгравших.
-

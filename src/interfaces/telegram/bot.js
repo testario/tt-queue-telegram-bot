@@ -265,15 +265,39 @@ const createBot = (token, { logger, locale } = {}) => {
     return { category: "other", variant: "other" };
   };
 
-  const bot = new TelegramApi(token, {
-    polling: {
-      params: {
-        // Явно указываем нужные апдейты, чтобы получать chosen_inline_result
-        allowed_updates: ["inline_query", "chosen_inline_result", "callback_query", "message"],
-      },
+  const pollingOptions = {
+    autoStart: false,
+    interval: 300,
+    params: {
+      timeout: 30,
+      // Явно указываем нужные апдейты, чтобы получать chosen_inline_result
+      allowed_updates: ["inline_query", "chosen_inline_result", "callback_query", "message"],
     },
+  };
+
+  const bot = new TelegramApi(token, {
+    polling: pollingOptions,
   });
-  log.info("Бот запущен в режиме polling");
+
+  const startLongPolling = async () => {
+    try {
+      await bot.deleteWebHook();
+      log.info("Webhook отключен перед запуском long polling");
+    } catch (error) {
+      log.error("Не удалось отключить webhook перед запуском long polling", {
+        message: error.message,
+      });
+    }
+
+    try {
+      await bot.startPolling();
+      log.info("Бот запущен в режиме long polling", {
+        timeoutSeconds: pollingOptions.params.timeout,
+      });
+    } catch (error) {
+      log.error("Не удалось запустить long polling", { message: error.message });
+    }
+  };
 
   const chatSlashCommands = [
     { command: "play", description: ui.commands.play },
@@ -1980,8 +2004,9 @@ const createBot = (token, { logger, locale } = {}) => {
     getContext(queueChatId);
   }
 
+  void startLongPolling();
+
   return { bot, getContext };
 };
 
 export { createBot };
-

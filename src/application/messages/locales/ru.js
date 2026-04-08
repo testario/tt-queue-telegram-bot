@@ -97,7 +97,8 @@ const createRuMessages = ({ formatDate }) => ({
   emergeNoMatch: () => "Сейчас нет активного матча для экстренной паузы.",
   emergeNotActive: () => "Экстренная пауза больше не активна.",
   metricsAccessDenied: () => "Просмотр метрик доступен только из доверенного чата.",
-  metricsDisabled: () => "Хранилище метрик не настроено. Добавьте METRICS_MONGODB_URI и перезапустите бота.",
+  metricsDisabled: () =>
+    "Сбор метрик отключен. Запустите бота с флагом --metrics (-m) и задайте METRICS_MONGODB_URI.",
   metricsEmpty: ({ from, to }) => {
     const fromText = from ? formatDate(from) : "не задан";
     const toText = to ? formatDate(to) : "не задан";
@@ -213,4 +214,3 @@ const ru = {
 };
 
 export { ru };
-

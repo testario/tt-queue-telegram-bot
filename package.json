@@ -6,6 +6,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "nodemon src/index",
+    "start:metrics": "nodemon --exec \"node src/index.js --metrics\"",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest"
   },
   "author": "",

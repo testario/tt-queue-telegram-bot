@@ -59,10 +59,10 @@ import { Match } from "#domain";
 /**
  * Создает и настраивает Telegram-бота с контекстами чатов.
  * @param {string} token
- * @param {{ logger?: Logger, locale?: string }} [options]
+ * @param {{ logger?: Logger, locale?: string, metricsEnabled?: boolean }} [options]
  * @returns {TelegramApi}
  */
-const createBot = (token, { logger, locale } = {}) => {
+const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
   const { messages: rawMessages, ui, locale: currentLocale } = createLocalization({
     ...I18N_CONFIG,
     locale: locale || I18N_CONFIG.locale,
@@ -106,8 +106,10 @@ const createBot = (token, { logger, locale } = {}) => {
   const contexts = new Map();
   const queueChatId = process.env.TG_CHAT_ID ? String(process.env.TG_CHAT_ID) : null;
   const metricsChatId = process.env.METRICS_CHAT_ID ? String(process.env.METRICS_CHAT_ID) : null;
-  const metricsUri = process.env.METRICS_MONGODB_URI || process.env.MONGODB_URI || null;
-  const metricsDb = process.env.METRICS_MONGODB_DB || process.env.MONGODB_DB || "tt-queue-bot";
+  const metricsUri = metricsEnabled ? process.env.METRICS_MONGODB_URI || process.env.MONGODB_URI || null : null;
+  const metricsDb = metricsEnabled
+    ? process.env.METRICS_MONGODB_DB || process.env.MONGODB_DB || "tt-queue-bot"
+    : null;
   const metricsCollection = process.env.METRICS_MONGODB_COLLECTION || "usage_metrics";
 
   const metricsRepository =
@@ -120,7 +122,9 @@ const createBot = (token, { logger, locale } = {}) => {
         })
       : null;
 
-  if (!metricsRepository) {
+  if (!metricsEnabled) {
+    log.info("Метрики отключены: режим не включен", { flag: "--metrics" });
+  } else if (!metricsRepository) {
     log.warn("Метрики отключены: нет строки подключения к MongoDB");
   }
 

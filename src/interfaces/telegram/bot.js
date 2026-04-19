@@ -1,5 +1,10 @@
 import TelegramApi from "node-telegram-bot-api";
 import {
+  buildSearchInlineKeyboard as buildSearchKeyboardFn,
+  buildMatchCancelKeyboard as buildMatchCancelKeyboardFn,
+  buildDirectInviteKeyboard as buildDirectInviteKeyboardFn,
+} from "#interfaces/telegram/keyboards.js";
+import {
   DEFAULT_GAME_TIME,
   TIME_AFTER_EMERGE,
   TIME_READY,
@@ -62,7 +67,7 @@ import { Match } from "#domain";
  * @param {{ logger?: Logger, locale?: string, metricsEnabled?: boolean }} [options]
  * @returns {TelegramApi}
  */
-const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
+const createBot = (token, { logger, locale, metricsEnabled = false, playersRepository = null } = {}) => {
   const { messages: rawMessages, ui, locale: currentLocale } = createLocalization({
     ...I18N_CONFIG,
     locale: locale || I18N_CONFIG.locale,
@@ -87,6 +92,16 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     });
     const key = `@${username}`;
     playerDisplayNames.set(key, displayName);
+    if (playersRepository) {
+      playersRepository
+        .upsert({
+          username: key,
+          userId: user.id,
+          firstName: user.first_name,
+          lastName: user.last_name,
+        })
+        .catch(() => {});
+    }
     return displayName;
   };
 
@@ -601,49 +616,10 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     return context;
   };
 
-  /**
-   * Формирует клавиатуру для inline-заявки на поиск соперника.
-   * @param {string} player
-   * @returns {{ inline_keyboard: Array<Array<{ text: string, callback_data: string }>> }}
-   */
-  const buildSearchInlineKeyboard = (player) => ({
-    inline_keyboard: [
-      [
-        {
-          text: ui.inline.playWith,
-          callback_data: "i_want_to_play_with_:" + player,
-        },
-        {
-          text: ui.inline.cancelOwn,
-          callback_data: "i_want_to_cancel:" + player,
-        },
-      ],
-    ],
-  });
-
-  /**
-   * Формирует клавиатуру для отмены созданного матча участниками.
-   * @param {{ player1: string, player2: string }} match
-   * @returns {{ inline_keyboard: Array<Array<{ text: string, callback_data: string }>> }}
-   */
-  const buildMatchCancelKeyboard = (match) => {
-    if (!match) return undefined;
-
-    const callbackData = `i_want_to_out:${match.player1},${match.player2}`;
-    const payloadBytes = Buffer.byteLength(callbackData, "utf8");
-    if (payloadBytes > MAX_CALLBACK_DATA_BYTES) {
-      log.warn("Пропускаем клавиатуру отмены: callback_data слишком длинная", {
-        player1: match.player1,
-        player2: match.player2,
-        payloadBytes,
-      });
-      return undefined;
-    }
-
-    return {
-      inline_keyboard: [[{ text: ui.inline.confirmNoTime, callback_data: callbackData }]],
-    };
-  };
+  // Локальные обёртки вокруг импортированных builders — захватывают ui и log из замыкания
+  const buildSearchInlineKeyboard = (player) => buildSearchKeyboardFn(player, ui);
+  const buildMatchCancelKeyboard = (match) => buildMatchCancelKeyboardFn(match, ui, log);
+  const buildDirectInviteKeyboard = (invite) => buildDirectInviteKeyboardFn(invite, ui);
 
   const freezeQueueForPause = async (context) => {
     if (!context) return { hasQueue: false };
@@ -1344,26 +1320,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
       const { invite } = result;
       await bot.sendMessage(chatId, result.text, {
         reply_to_message_id: msg.message_id,
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: ui.inline.directAccept,
-                callback_data: `direct_accept:${invite.player},${invite.opponent}`,
-              },
-              {
-                text: ui.inline.directDecline,
-                callback_data: `direct_decline:${invite.player},${invite.opponent}`,
-              },
-            ],
-            [
-              {
-                text: ui.inline.directCancel,
-                callback_data: `direct_cancel:${invite.player},${invite.opponent}`,
-              },
-            ],
-          ],
-        },
+        reply_markup: buildDirectInviteKeyboard(invite),
       });
     } catch (error) {
       log.error("Ошибка при прямом создании матча через /play", {
@@ -1579,26 +1536,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
         bot.sendMessage(chatId, text, {
           reply_markup:
             invite && invite.player && invite.opponent
-              ? {
-                  inline_keyboard: [
-                    [
-                      {
-                        text: ui.inline.directAccept,
-                        callback_data: `direct_accept:${invite.player},${invite.opponent}`,
-                      },
-                      {
-                        text: ui.inline.directDecline,
-                        callback_data: `direct_decline:${invite.player},${invite.opponent}`,
-                      },
-                    ],
-                    [
-                      {
-                        text: ui.inline.directCancel,
-                        callback_data: `direct_cancel:${invite.player},${invite.opponent}`,
-                      },
-                    ],
-                  ],
-                }
+              ? buildDirectInviteKeyboard(invite)
               : undefined,
         });
 
@@ -2010,7 +1948,21 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
 
   void startLongPolling();
 
-  return { bot, getContext };
+  return {
+    bot,
+    getContext,
+    queueChatId,
+    isPauseModeEnabled,
+    setPauseMode,
+    emergeStateByChat,
+    applyPauseMode,
+    resumeEmergeAfterContinue,
+    resumeQueueAfterPause,
+    handleEmerge,
+    messages,
+    ui,
+    log,
+  };
 };
 
 export { createBot };

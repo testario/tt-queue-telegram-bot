@@ -672,26 +672,26 @@ PLAYERS_MONGODB_COLLECTION=players
 ## Критерии готовности этапа
 
 **API и авторизация:**
-- [ ] `GET /api/state` возвращает корректный JSON без авторизации (для отладки)
-- [ ] `POST /api/search` с валидным `initData` добавляет игрока в поиск
-- [ ] Невалидный `initData` возвращает `401`
-- [ ] Отсутствие username возвращает `400`
-- [ ] Запрос с правами не-администратора на `/api/admin/*` возвращает `403`
+- [x] `GET /api/state` возвращает корректный JSON без авторизации (для отладки)
+- [x] `POST /api/search` с валидным `initData` добавляет игрока в поиск
+- [x] Невалидный `initData` возвращает `401`
+- [x] Отсутствие username возвращает `400`
+- [x] Запрос с правами не-администратора на `/api/admin/*` возвращает `403`
 
 **Синхронизация бот → Mini App:**
-- [ ] SSE-соединение получает `state_update` после команды `/search` в Telegram чате
-- [ ] SSE-соединение получает `state_update` при срабатывании таймера оркестратора (матч начался/завершился)
-- [ ] При подключении нового SSE-клиента он немедленно получает текущее состояние
+- [x] SSE-соединение получает `state_update` после команды `/search` в Telegram чате
+- [x] SSE-соединение получает `state_update` при срабатывании таймера оркестратора (матч начался/завершился)
+- [x] При подключении нового SSE-клиента он немедленно получает текущее состояние
 
 **Синхронизация Mini App → Telegram чат:**
-- [ ] `POST /api/search` (status=added) отправляет сообщение в Telegram чат с кнопками
-- [ ] `DELETE /api/search` отправляет сообщение об отмене поиска в Telegram чат
-- [ ] `POST /api/direct` отправляет сообщение с приглашением и кнопками в Telegram чат
-- [ ] `POST /api/admin/pause` отправляет сообщение о паузе в Telegram чат
+- [x] `POST /api/search` (status=added) отправляет сообщение в Telegram чат с кнопками
+- [x] `DELETE /api/search` отправляет сообщение об отмене поиска в Telegram чат
+- [x] `POST /api/direct` отправляет сообщение с приглашением и кнопками в Telegram чат
+- [x] `POST /api/admin/pause` отправляет сообщение о паузе в Telegram чат
 
 **Known players:**
-- [ ] При каждой команде бота `playersRepository.upsert()` вызывается и сохраняет игрока
-- [ ] `GET /api/players` возвращает список без поля `userId`
-- [ ] `GET /api/players/:username/avatar` возвращает редирект на аватар или 404
-- [ ] `DELETE /api/players/:username` доступен только администраторам и удаляет запись
-- [ ] При отсутствии `PLAYERS_MONGODB_URI` используется `InMemoryPlayersRepository` без ошибок
+- [x] При каждой команде бота `playersRepository.upsert()` вызывается и сохраняет игрока
+- [x] `GET /api/players` возвращает список без поля `userId`
+- [x] `GET /api/players/:username/avatar` возвращает редирект на аватар или 404
+- [x] `DELETE /api/players/:username` доступен только администраторам и удаляет запись
+- [x] При отсутствии `PLAYERS_MONGODB_URI` используется `InMemoryPlayersRepository` без ошибок

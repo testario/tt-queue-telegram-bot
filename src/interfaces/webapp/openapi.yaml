@@ -1,0 +1,654 @@
+openapi: 3.1.0
+info:
+  title: TT Queue Bot — Mini App API
+  version: 1.0.0
+  description: HTTP API для Telegram Mini App бота управления очередью настольного тенниса.
+
+servers:
+  - url: http://localhost:3000
+    description: Локальный сервер
+
+components:
+  securitySchemes:
+    TelegramInitData:
+      type: apiKey
+      in: header
+      name: X-Telegram-Init-Data
+      description: Строка `initData` из `Telegram.WebApp.initData`. Верифицируется через HMAC-SHA256.
+
+  schemas:
+    Match:
+      type: object
+      required: [player1, player2, startDate, endDate, status]
+      properties:
+        player1:
+          type: string
+          example: "@ivan"
+        player2:
+          type: string
+          example: "@petr"
+        startDate:
+          type: string
+          format: date-time
+          example: "2026-04-19T14:00:00.000Z"
+        endDate:
+          type: string
+          format: date-time
+          example: "2026-04-19T14:30:00.000Z"
+        status:
+          type: string
+          enum: [playing, waiting]
+
+    QueueState:
+      type: object
+      required: [queue, searching, played, paused, emergeActive, serverTime]
+      properties:
+        queue:
+          type: array
+          items:
+            $ref: "#/components/schemas/Match"
+        searching:
+          type: array
+          items:
+            type: string
+            example: "@ivan"
+          description: Игроки в поиске соперника.
+        played:
+          type: array
+          items:
+            type: string
+            example: "@petr"
+          description: Игроки, уже сыгравшие в этой половине дня.
+        paused:
+          type: boolean
+          description: Включён ли режим паузы.
+        emergeActive:
+          type: boolean
+          description: Активна ли экстренная пауза матча.
+        serverTime:
+          type: string
+          format: date-time
+
+    Player:
+      type: object
+      required: [username, displayName]
+      properties:
+        username:
+          type: string
+          example: "@ivan"
+        displayName:
+          type: string
+          example: "Иван Петров"
+        firstName:
+          type: string
+          example: "Иван"
+        lastName:
+          type: string
+          example: "Петров"
+        lastSeenAt:
+          type: string
+          format: date-time
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: invalid_hash
+
+  responses:
+    Unauthorized:
+      description: Невалидный или отсутствующий `X-Telegram-Init-Data`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            missing:
+              value: { error: missing_init_data }
+            invalid:
+              value: { error: invalid_hash }
+
+    UsernameRequired:
+      description: У пользователя не задан Telegram username.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            value: { error: username_required }
+
+    Forbidden:
+      description: Требуются права администратора чата.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            not_admin:
+              value: { error: admin_required }
+            check_failed:
+              value: { error: admin_check_failed }
+
+    NotFound:
+      description: Ресурс не найден.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+security: []
+
+paths:
+  /api/state:
+    get:
+      summary: Текущее состояние очереди
+      description: Возвращает полное состояние очереди. Авторизация не требуется.
+      operationId: getState
+      tags: [State]
+      responses:
+        "200":
+          description: Текущее состояние.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueState"
+
+  /api/events:
+    get:
+      summary: SSE — поток событий в реальном времени
+      description: |
+        Server-Sent Events. При подключении сразу отправляет текущее состояние.
+        Далее присылает `state_update` при любом изменении очереди (команда бота, таймер оркестратора, действие через API).
+
+        **Формат события:**
+        ```
+        event: state_update
+        data: {"queue":[...],"searching":[...],"played":[...],"paused":false,"emergeActive":false,"serverTime":"..."}
+        ```
+      operationId: getEvents
+      tags: [State]
+      responses:
+        "200":
+          description: Поток SSE-событий.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: "event: state_update\ndata: {\"queue\":[]}\n\n"
+
+  /api/admin/check:
+    get:
+      summary: Проверить права администратора
+      operationId: checkAdmin
+      tags: [Admin]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Результат проверки.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [isAdmin]
+                properties:
+                  isAdmin:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+  /api/players:
+    get:
+      summary: Список известных игроков
+      description: Возвращает всех игроков, когда-либо взаимодействовавших с ботом. Поле `userId` не возвращается.
+      operationId: getPlayers
+      tags: [Players]
+      responses:
+        "200":
+          description: Список игроков.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [players]
+                properties:
+                  players:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Player"
+
+  /api/players/{username}/avatar:
+    get:
+      summary: Аватар игрока
+      description: Редирект (302) на Telegram CDN с фото профиля. Возвращает 404, если у игрока нет фото или он неизвестен боту.
+      operationId: getPlayerAvatar
+      tags: [Players]
+      parameters:
+        - name: username
+          in: path
+          required: true
+          description: Username без символа `@`.
+          schema:
+            type: string
+            example: ivan
+      responses:
+        "302":
+          description: Редирект на Telegram CDN.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        "404":
+          description: Игрок не найден или у него нет фото профиля.
+
+  /api/players/{username}:
+    delete:
+      summary: Удалить игрока из реестра
+      description: Удаляет запись об игроке из хранилища. Требует прав администратора.
+      operationId: deletePlayer
+      tags: [Players]
+      security:
+        - TelegramInitData: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          description: Username без символа `@`.
+          schema:
+            type: string
+            example: ivan
+      responses:
+        "200":
+          description: Игрок удалён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/search:
+    post:
+      summary: Встать в поиск соперника
+      operationId: registerSearch
+      tags: [Queue]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Статус регистрации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, status]
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  status:
+                    type: string
+                    enum: [added, already_searching, in_queue, played]
+                    description: |
+                      - `added` — игрок добавлен в поиск
+                      - `already_searching` — уже в поиске
+                      - `in_queue` — уже стоит в очереди на матч
+                      - `played` — уже сыграл в этой половине дня
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+    delete:
+      summary: Отменить поиск соперника
+      operationId: cancelSearch
+      tags: [Queue]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Статус отмены.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, status]
+                properties:
+                  ok:
+                    type: boolean
+                  status:
+                    type: string
+                    enum: [removed, not_found]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+  /api/match:
+    post:
+      summary: Принять соперника в матч (play with)
+      description: |
+        Создаёт матч между `opponent` (уже стоящим в поиске) и авторизованным игроком.
+        Уведомление в Telegram чат отправляется автоматически через `MatchOrchestrator`.
+      operationId: addMatch
+      tags: [Queue]
+      security:
+        - TelegramInitData: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [opponent]
+              properties:
+                opponent:
+                  type: string
+                  description: Username соперника (с `@`).
+                  example: "@ivan"
+      responses:
+        "200":
+          description: Результат создания матча.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  reason:
+                    type: string
+                    enum: [already_in_queue, already_played, not_searching, same_player]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+    delete:
+      summary: Отменить матч (нет времени)
+      description: |
+        Отменяет матч, в котором участвует авторизованный игрок.
+        Уведомление в Telegram чат отправляется автоматически через `MatchOrchestrator`.
+      operationId: cancelMatch
+      tags: [Queue]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Результат отмены.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  status:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+  /api/direct:
+    post:
+      summary: Прямое приглашение соперника
+      description: Ставит авторизованного игрока в поиск с пометкой конкретного соперника. Отправляет сообщение с кнопками в Telegram чат.
+      operationId: directInvite
+      tags: [Direct]
+      security:
+        - TelegramInitData: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [opponent]
+              properties:
+                opponent:
+                  type: string
+                  description: Username приглашаемого (с `@`).
+                  example: "@petr"
+      responses:
+        "200":
+          description: Результат приглашения.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  reason:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+  /api/direct/accept:
+    post:
+      summary: Принять прямое приглашение
+      description: Авторизованный игрок принимает приглашение от `player`. Отправляет уведомление в Telegram чат.
+      operationId: directAccept
+      tags: [Direct]
+      security:
+        - TelegramInitData: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [player]
+              properties:
+                player:
+                  type: string
+                  description: Username пригласившего игрока (с `@`).
+                  example: "@ivan"
+      responses:
+        "200":
+          description: Результат принятия.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  reason:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+  /api/direct/decline:
+    post:
+      summary: Отклонить прямое приглашение
+      description: Авторизованный игрок отклоняет приглашение от `player`. Отправляет уведомление в Telegram чат.
+      operationId: directDecline
+      tags: [Direct]
+      security:
+        - TelegramInitData: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [player]
+              properties:
+                player:
+                  type: string
+                  description: Username пригласившего игрока (с `@`).
+                  example: "@ivan"
+      responses:
+        "200":
+          description: Приглашение отклонено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+  /api/direct/cancel:
+    post:
+      summary: Отменить своё прямое приглашение
+      description: Авторизованный игрок отзывает своё приглашение для `opponent`. Отправляет уведомление в Telegram чат.
+      operationId: directCancel
+      tags: [Direct]
+      security:
+        - TelegramInitData: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [opponent]
+              properties:
+                opponent:
+                  type: string
+                  description: Username приглашённого игрока (с `@`).
+                  example: "@petr"
+      responses:
+        "200":
+          description: Приглашение отменено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+
+  /api/admin/pause:
+    post:
+      summary: Включить режим паузы
+      description: |
+        Замораживает очередь. Текущий матч, начавшийся более 5 минут назад, продолжается;
+        остальные переводятся в статус `waiting`. Отправляет сообщение в Telegram чат.
+      operationId: adminPause
+      tags: [Admin]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Результат.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  reason:
+                    type: string
+                    enum: [already_paused]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/continue:
+    post:
+      summary: Снять режим паузы
+      description: |
+        Снимает режим паузы или завершает экстренную паузу (emerge).
+        Запускает следующий матч в очереди. Отправляет уведомление в Telegram чат.
+      operationId: adminContinue
+      tags: [Admin]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Результат.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  reason:
+                    type: string
+                    enum: [not_paused]
+                  resumed:
+                    type: object
+                    description: Информация о возобновлённом матче (если очередь непуста).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/emerge:
+    post:
+      summary: Экстренная пауза матча
+      description: |
+        Ставит текущий матч на паузу с сохранением оставшегося времени.
+        После `/continue` матч возобновится с того же момента.
+        Если матч не запущен — работает как обычная пауза.
+        Отправляет сообщение в Telegram чат.
+      operationId: adminEmerge
+      tags: [Admin]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Экстренная пауза активирована.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+tags:
+  - name: State
+    description: Состояние очереди и SSE
+  - name: Queue
+    description: Поиск и управление матчами
+  - name: Direct
+    description: Прямые приглашения
+  - name: Players
+    description: Реестр известных игроков
+  - name: Admin
+    description: Административные операции (требуют прав администратора чата)

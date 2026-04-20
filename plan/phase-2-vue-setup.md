@@ -519,6 +519,6 @@ export const formatCountdown = (ms) => {
 - [ ] `useQueue().state` наполняется данными с `/api/state`
 - [ ] SSE-соединение открывается и не падает с CORS-ошибкой
 - [ ] Тема приложения соответствует теме Telegram (светлая/тёмная)
-- [ ] `npm run build` создаёт корректный `mini-app/dist/`
+- [x] `npm run build` создаёт корректный `mini-app/dist/`
 - [ ] `usePlayers().load()` загружает список игроков с `/api/players`
 - [ ] `PlayerAvatar` показывает аватар при наличии и инициал при 404/ошибке

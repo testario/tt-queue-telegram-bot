@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { formatCountdown } from '@/shared/lib/formatTime.js'
 
 const props = defineProps({
@@ -10,22 +10,23 @@ const props = defineProps({
 })
 
 const remaining = ref('')
+let timer = null
 
 const tick = () => {
   const ms = props.endDate.getTime() - Date.now()
   remaining.value = formatCountdown(ms)
+  if (ms <= 0) clearInterval(timer)
 }
 
-let timer = null
-
-onMounted(() => {
+const startTimer = () => {
+  clearInterval(timer)
   tick()
   timer = setInterval(tick, 1000)
-})
+}
 
-onUnmounted(() => {
-  clearInterval(timer)
-})
+onMounted(startTimer)
+onUnmounted(() => clearInterval(timer))
+watch(() => props.endDate, startTimer)
 </script>
 
 <template>

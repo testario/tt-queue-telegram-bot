@@ -96,6 +96,10 @@ Telegram Mini App для бота управления очередью наст
 | 4 | [phase-4-player-actions.md](./phase-4-player-actions.md) | Действия игрока |
 | 5 | [phase-5-admin-panel.md](./phase-5-admin-panel.md) | Панель администратора |
 | 6 | [phase-6-deploy.md](./phase-6-deploy.md) | Деплой и регистрация Mini App |
+| 7 | [phase-7-redis-queue.md](./phase-7-redis-queue.md) | RedisQueueRepository + восстановление таймеров |
+| 8 | [phase-8-redis-pubsub.md](./phase-8-redis-pubsub.md) | Redis Pub/Sub — кросс-процессный EventBus |
+| 9 | [phase-9-process-split.md](./phase-9-process-split.md) | Разделение на index-bot.js / index-backend.js |
+| 10 | [phase-10-docker.md](./phase-10-docker.md) | Docker Compose — 5 сервисов (mongo, redis, bot, backend, frontend) |
 
 ## API endpoints (сводка)
 

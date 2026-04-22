@@ -1,60 +1,25 @@
 import { ref } from 'vue'
 import { useApi } from './useApi.js'
 
+const isAdmin = ref(null)  // null = ещё не проверяли, true/false = результат
+
 export function useAdmin() {
-  const { get, post } = useApi()
-  const isAdmin = ref(false)
-  const checking = ref(false)
-  const loading = ref(false)
-  const error = ref(null)
+  const api = useApi()
 
   const checkAdmin = async () => {
-    checking.value = true
+    if (isAdmin.value !== null) return  // уже проверяли
+
     try {
-      const data = await get('/admin/check')
-      isAdmin.value = data.isAdmin ?? false
+      const result = await api.get('/admin/check')
+      isAdmin.value = result.isAdmin
     } catch {
       isAdmin.value = false
-    } finally {
-      checking.value = false
     }
   }
 
-  const pause = async () => {
-    loading.value = true
-    error.value = null
-    try {
-      return await post('/admin/pause')
-    } catch (e) {
-      error.value = e.message
-    } finally {
-      loading.value = false
-    }
-  }
+  const pause = () => api.post('/admin/pause')
+  const resume = () => api.post('/admin/continue')
+  const emerge = () => api.post('/admin/emerge')
 
-  const resume = async () => {
-    loading.value = true
-    error.value = null
-    try {
-      return await post('/admin/continue')
-    } catch (e) {
-      error.value = e.message
-    } finally {
-      loading.value = false
-    }
-  }
-
-  const emerge = async () => {
-    loading.value = true
-    error.value = null
-    try {
-      return await post('/admin/emerge')
-    } catch (e) {
-      error.value = e.message
-    } finally {
-      loading.value = false
-    }
-  }
-
-  return { isAdmin, checking, loading, error, checkAdmin, pause, resume, emerge }
+  return { isAdmin, checkAdmin, pause, resume, emerge }
 }

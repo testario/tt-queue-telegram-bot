@@ -67,7 +67,7 @@ import { Match } from "#domain";
  * @param {{ logger?: Logger, locale?: string, metricsEnabled?: boolean }} [options]
  * @returns {TelegramApi}
  */
-const createBot = (token, { logger, locale, metricsEnabled = false, playersRepository = null } = {}) => {
+const createBot = (token, { logger, locale, metricsEnabled = false, playersRepository = null, queueRepository = null, eventBus = null } = {}) => {
   const { messages: rawMessages, ui, locale: currentLocale } = createLocalization({
     ...I18N_CONFIG,
     locale: locale || I18N_CONFIG.locale,
@@ -503,8 +503,12 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       gameMs: DEFAULT_GAME_TIME,
       workSchedule: WORK_SCHEDULE,
     });
-    const repository = new InMemoryQueueRepository(queueService.createInitialState());
-    const notifier = new EventNotifier();
+    const repository = (queueRepository && String(chatId) === String(queueChatId))
+      ? queueRepository
+      : new InMemoryQueueRepository(queueService.createInitialState());
+    const notifier = new EventNotifier({
+      eventBus: (eventBus && String(chatId) === String(queueChatId)) ? eventBus : null,
+    });
     const timer = new NodeTimer();
     const clock = new SystemClock();
 

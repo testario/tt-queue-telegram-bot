@@ -34,4 +34,21 @@ export class SseManager {
       }
     })
   }
+
+  /**
+   * Подписывается на Redis Pub/Sub канал для получения событий из bot-процесса.
+   * Используется когда бот и бэкенд — разные процессы.
+   * @param {import('#infrastructure/events/RedisEventBus.js').RedisEventBus} eventBus
+   * @param {() => Promise<object>} buildPayload
+   */
+  async subscribeToRedis(eventBus, buildPayload) {
+    await eventBus.subscribe(async () => {
+      try {
+        const payload = await buildPayload()
+        this.broadcast('state_update', payload)
+      } catch (err) {
+        console.error('SseManager: ошибка при обработке Redis-события', err.message)
+      }
+    })
+  }
 }

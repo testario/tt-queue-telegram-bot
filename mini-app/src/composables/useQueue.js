@@ -8,6 +8,7 @@ const state = reactive({
   paused: false,
   emergeActive: false,
   serverTime: null,
+  pendingInvites: [],
   loading: true,
   error: null,
 })
@@ -25,6 +26,7 @@ const applyState = (data) => {
   state.paused = data.paused || false
   state.emergeActive = data.emergeActive || false
   state.serverTime = data.serverTime ? new Date(data.serverTime) : null
+  state.pendingInvites = data.pendingInvites || []
 }
 
 const connectSse = () => {

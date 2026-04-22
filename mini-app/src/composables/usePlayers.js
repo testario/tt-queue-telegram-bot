@@ -25,5 +25,11 @@ export function usePlayers() {
   const avatarUrl = (username) =>
     `/api/players/${username.replace('@', '')}/avatar`
 
-  return { state: readonly(state), load, avatarUrl }
+  // Удалить из локального кеша без повторного запроса (вызывается из PlayerManager)
+  const remove = (username) => {
+    const idx = state.players.findIndex((p) => p.username === username)
+    if (idx !== -1) state.players.splice(idx, 1)
+  }
+
+  return { state: readonly(state), load, avatarUrl, remove }
 }

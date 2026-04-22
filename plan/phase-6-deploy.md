@@ -161,11 +161,11 @@ add_header Content-Security-Policy "
 ### Инфраструктура
 - [ ] SSL-сертификат установлен и работает (Let's Encrypt / другой)
 - [ ] Nginx настроен с поддержкой SSE (`proxy_buffering off`)
-- [ ] `WEBAPP_PORT` задан в `.env`
-- [ ] `WEBAPP_URL` задан в `.env` (для кнопки в боте)
+- [x] `WEBAPP_PORT` задан в `.env`
+- [x] `WEBAPP_URL` задан в `.env` (для кнопки в боте)
 
 ### Сборка
-- [ ] `cd mini-app && npm install && npm run build` выполняется без ошибок
+- [x] `cd mini-app && npm install && npm run build` выполняется без ошибок
 - [ ] `mini-app/dist/` скопирован/доступен Nginx
 
 ### Регистрация

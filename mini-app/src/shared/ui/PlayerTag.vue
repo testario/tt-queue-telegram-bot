@@ -1,6 +1,6 @@
 <script setup>
 defineProps({
-  username: {
+  name: {
     type: String,
     required: true,
   },
@@ -8,7 +8,7 @@ defineProps({
 </script>
 
 <template>
-  <span class="player-tag">{{ username }}</span>
+  <span class="player-tag">{{ name }}</span>
 </template>
 
 <style lang="scss" scoped>

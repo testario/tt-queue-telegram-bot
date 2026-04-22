@@ -24,6 +24,7 @@ export const registerRoutes = async (app, deps) => {
     ui,
     log,
     playersRepository,
+    invitesStore,
   } = deps
 
   const context = getContext(queueChatId)
@@ -37,6 +38,7 @@ export const registerRoutes = async (app, deps) => {
       paused: isPauseModeEnabled(queueChatId),
       emergeActive: emergeStateByChat.has(String(queueChatId)),
       serverTime: context.clock.now().toISOString(),
+      pendingInvites: await invitesStore.getAll(),
     }
   }
 
@@ -47,8 +49,18 @@ export const registerRoutes = async (app, deps) => {
 
   // --- preHandlers ---
 
+  const isDev = process.env.NODE_ENV !== 'production'
+
   const auth = async (req, reply) => {
     const initData = req.headers['x-telegram-init-data']
+
+    // В dev-режиме пропускаем без initData (для тестирования через браузер)
+    if (isDev && !initData) {
+      req.tgUser = { id: 123456, username: 'dev_user', firstName: 'Dev', lastName: '' }
+      req.player = '@dev_user'
+      return
+    }
+
     const result = verifyInitData(initData, process.env.TG_BOT_API_TOKEN)
     if (!result.ok) return reply.code(401).send({ error: result.reason })
     if (!result.user.username) return reply.code(400).send({ error: 'username_required' })
@@ -175,6 +187,7 @@ export const registerRoutes = async (app, deps) => {
     const result = await context.directMatch.execute(req.player, opponent)
     if (result.ok) {
       const { invite } = result
+      await invitesStore.set(req.player, { player: req.player, opponent, createdAt: Date.now() })
       notifyChat(
         messages.directInvite({ from: invite.player, to: invite.opponent }),
         buildDirectInviteKeyboard(invite, ui)
@@ -191,6 +204,7 @@ export const registerRoutes = async (app, deps) => {
       scheduleLifecycle: !isPauseModeEnabled(queueChatId),
     })
     if (result.ok) {
+      await invitesStore.delete(player)
       notifyChat(messages.directAccepted({ from: player, to: req.player }))
       sseManager.broadcast('state_update', await buildStatePayload())
     }
@@ -200,6 +214,7 @@ export const registerRoutes = async (app, deps) => {
   // POST /api/direct/decline — отклонить прямое приглашение
   app.post('/api/direct/decline', { preHandler: [auth] }, async (req) => {
     const { player } = req.body
+    await invitesStore.delete(player)
     await context.cancelSearch.execute(player)
     notifyChat(messages.directDeclined({ from: player, to: req.player }))
     sseManager.broadcast('state_update', await buildStatePayload())
@@ -209,6 +224,7 @@ export const registerRoutes = async (app, deps) => {
   // POST /api/direct/cancel — отменить своё прямое приглашение
   app.post('/api/direct/cancel', { preHandler: [auth] }, async (req) => {
     const { opponent } = req.body
+    await invitesStore.delete(req.player)
     await context.cancelSearch.execute(req.player)
     notifyChat(messages.directCancelled({ from: req.player, to: opponent }))
     sseManager.broadcast('state_update', await buildStatePayload())

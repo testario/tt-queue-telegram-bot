@@ -67,12 +67,17 @@
 **Что сделано:** Созданы `formatTime` и `formatCountdown`. Дополнительно: `PlayerTag.vue` (username-таблетка), `CountdownTimer.vue` (тикающий таймер с setInterval, очищается в onUnmounted), `useAdmin.js` (checkAdmin + pause/resume/emerge с обработкой ошибок).
 **Файлы:** `mini-app/src/shared/lib/formatTime.js`, `mini-app/src/shared/ui/PlayerTag.vue`, `mini-app/src/shared/ui/CountdownTimer.vue`, `mini-app/src/composables/useAdmin.js`
 
+### Верификация npm run dev (2026-04-22)
+
+**Что сделано:** Запущен `npm run dev` — Vite v6.4.2 стартует за 219ms, сервер доступен на http://localhost:5173/. Ошибок компиляции нет, 41 модуль (совпадает с `npm run build`).
+**Файлы:** —
+**Решения:** `timeout` не доступен в zsh; запуск через `&` + sleep + kill. Сервер успешно стартовал и остановлен.
+
 ## Итог
 
 **Статус:** Частично завершена
-**Выполнено критериев:** 1 из 8
+**Выполнено критериев:** 2 из 8
 **Невыполненные критерии:**
-- `npm run dev` — требует живого браузера, проверяется вручную
 - `useTelegram().player` — требует запуска внутри Telegram, не верифицируется статически
 - `useQueue().state` — требует запущенного backend
 - SSE без CORS-ошибок — требует запущенного backend
@@ -80,7 +85,7 @@
 - `usePlayers().load()` — требует запущенного backend
 - `PlayerAvatar` — требует запуска в браузере
 
-Критерий `npm run build` выполнен и проверен (16 модулей, dist создан, 0 ошибок).
-Остальные 7 критериев требуют запуска приложения в браузере/Telegram — верификация при деплое (фаза 6).
+Критерии `npm run build` и `npm run dev` выполнены и проверены.
+Оставшиеся 6 критериев требуют запуска приложения в Telegram и наличия backend — верификация при деплое (фаза 6).
 
-**Следующая фаза:** phase-3-queue-view
+**Следующая фаза:** phase-10-docker

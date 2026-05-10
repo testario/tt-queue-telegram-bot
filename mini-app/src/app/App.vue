@@ -4,11 +4,20 @@ import { useTelegram } from '@/composables/useTelegram.js'
 import { useQueue } from '@/composables/useQueue.js'
 import QueueView from '@/features/queue/QueueView.vue'
 import AdminPanel from '@/features/admin/AdminPanel.vue'
+import MockToolbar from '@/features/mock/MockToolbar.vue'
 
 const { ready, expand } = useTelegram()
 const { init } = useQueue()
+const isMockMode =
+  import.meta.env.DEV &&
+  (import.meta.env.MODE === 'mock' || import.meta.env.VITE_USE_MOCKS === 'true')
 
 onMounted(async () => {
+  // Доступ только из Telegram WebApp; прямые переходы получают лендинг
+  if (!isMockMode && !window.Telegram?.WebApp?.initData) {
+    window.location.replace('/')
+    return
+  }
   expand()
   ready()
   await init()
@@ -17,6 +26,7 @@ onMounted(async () => {
 
 <template>
   <div class="app">
+    <MockToolbar v-if="isMockMode" />
     <QueueView />
     <AdminPanel />
   </div>

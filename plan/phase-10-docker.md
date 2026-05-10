@@ -333,7 +333,7 @@ writeFileSync('/tmp/bot-alive', Date.now().toString())
 
 - [ ] `docker compose up -d --build` поднимает все 5 сервисов без ошибок
 - [ ] `frontend` отдаёт Mini App, `/api/` проксируется к `backend`
-- [ ] `bot` и `backend` не могут стартовать раньше `redis` (depends_on + healthcheck)
-- [ ] `backend` не может стартовать раньше `mongodb`
+- [x] `bot` и `backend` не могут стартовать раньше `redis` (depends_on + healthcheck)
+- [x] `backend` не может стартовать раньше `mongodb`
 - [ ] Данные Redis и MongoDB персистируются в named volumes
-- [ ] `.env.example` содержит все необходимые переменные с комментариями
+- [x] `.env.example` содержит все необходимые переменные с комментариями

@@ -514,7 +514,7 @@ export const formatCountdown = (ms) => {
 
 ## Критерии готовности этапа
 
-- [ ] `npm run dev` в `mini-app/` открывает страницу без ошибок
+- [x] `npm run dev` в `mini-app/` открывает страницу без ошибок
 - [ ] `useTelegram().player` возвращает `@username` при запуске в Telegram
 - [ ] `useQueue().state` наполняется данными с `/api/state`
 - [ ] SSE-соединение открывается и не падает с CORS-ошибкой

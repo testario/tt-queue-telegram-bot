@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { writeFileSync } from 'fs'
 import { createBot } from '#interfaces/telegram/bot.js'
 import { parseCliOptions } from '#interfaces/cli/options.js'
 import { createRedisClient, createRedisPubSub } from '#infrastructure/redis/createRedisClient.js'
@@ -75,3 +76,5 @@ await readBus.subscribe(async (event) => {
 })
 
 log.info('Bot-процесс запущен', { chatId: queueChatId })
+// Healthcheck для Docker: сигнализирует, что процесс успешно запустился
+writeFileSync('/tmp/bot-alive', Date.now().toString())

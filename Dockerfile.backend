@@ -1,0 +1,27 @@
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Сборка фронтенда
+COPY mini-app/package.json mini-app/package-lock.json ./mini-app/
+RUN cd mini-app && npm ci
+
+COPY mini-app/ ./mini-app/
+RUN cd mini-app && npm run build
+# Результат: /app/mini-app/dist/
+
+# ──────────────────────────────────────
+FROM node:22-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY src/ ./src/
+# Статика фронтенда из builder-стадии
+COPY --from=builder /app/mini-app/dist ./mini-app/dist
+
+ENV NODE_ENV=production
+
+CMD ["node", "src/index-backend.js"]

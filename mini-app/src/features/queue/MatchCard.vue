@@ -22,77 +22,150 @@ const props = defineProps({
 const startTime = computed(() => formatTime(props.match.startDate))
 const endTime = computed(() => formatTime(props.match.endDate))
 const isPlaying = computed(() => props.match.status === 'playing')
+const progressPercent = computed(() => {
+  const start = props.match.startDate.getTime()
+  const end = props.match.endDate.getTime()
+  const duration = end - start
+
+  if (duration <= 0) return 100
+
+  const elapsed = Date.now() - start
+  return Math.min(100, Math.max(0, (elapsed / duration) * 100))
+})
 </script>
 
 <template>
   <div :class="['match-card', { 'match-card--current': isCurrent, 'match-card--playing': isPlaying }]">
 
-    <!-- Позиция в очереди -->
-    <div v-if="position" class="match-card__position">#{{ position }}</div>
+    <div v-if="isCurrent" class="match-card__top">
+      <span>{{ isPlaying ? 'Играют сейчас' : 'Следующая пара' }}</span>
+      <span v-if="isPlaying" class="match-card__live">live</span>
+    </div>
 
-    <!-- Игроки -->
+    <div v-else-if="position" class="match-card__position">#{{ position }}</div>
+
     <div class="match-card__players">
       <PlayerTag :name="match.player1" />
       <span class="match-card__vs">vs</span>
       <PlayerTag :name="match.player2" />
     </div>
 
-    <!-- Таймер для текущего матча -->
     <div v-if="isCurrent && isPlaying" class="match-card__timer">
       <CountdownTimer :end-date="match.endDate" />
     </div>
 
-    <!-- Время начала/окончания -->
     <div v-else class="match-card__time">
       {{ startTime }} — {{ endTime }}
     </div>
 
+    <div v-if="isCurrent && isPlaying" class="match-card__progress">
+      <span :style="{ width: `${progressPercent}%` }"></span>
+    </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .match-card {
-  background: var(--color-secondary-bg);
-  border-radius: 12px;
-  padding: 12px 16px;
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+  box-shadow: 0 8px 20px var(--color-card-shadow);
 
   &--current {
     background: var(--color-button);
     color: var(--color-button-text);
+    border-radius: 24px;
+    padding: 18px;
+    box-shadow: 0 14px 26px color-mix(in srgb, var(--color-button), transparent 70%);
   }
 
   &__players {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 16px;
-    font-weight: 500;
+    min-width: 0;
+    color: var(--color-link);
+    font-size: 18px;
+    font-weight: 800;
   }
 
   &__vs {
-    color: inherit;
-    opacity: 0.6;
-    font-size: 13px;
+    color: var(--color-text-secondary);
+    font-size: 15px;
+    font-weight: 800;
   }
 
   &__position {
+    width: fit-content;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: var(--color-surface-soft);
+    color: var(--color-text-secondary);
     font-size: 12px;
-    opacity: 0.6;
+    font-weight: 800;
+  }
+
+  &__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: #ddf0ff;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  &__live {
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: #ffffff22;
+    color: #ffffff;
+    font-size: 12px;
+    text-transform: uppercase;
   }
 
   &__timer {
-    font-size: 28px;
-    font-weight: 700;
+    color: #ffffff;
+    font-size: 54px;
+    font-weight: 800;
+    line-height: 0.95;
     font-variant-numeric: tabular-nums;
-    letter-spacing: 1px;
   }
 
   &__time {
-    font-size: 14px;
-    opacity: 0.7;
+    color: var(--color-text-secondary);
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  &__progress {
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #ffffff33;
+
+    span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: #ffffff;
+    }
+  }
+
+  &--current &__players {
+    color: #ffffff;
+  }
+
+  &--current &__vs {
+    color: #ddf0ff;
+  }
+
+  &--current :deep(.player-tag) {
+    background: #ffffff;
+    color: var(--color-button);
   }
 }
 </style>

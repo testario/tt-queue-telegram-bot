@@ -22,11 +22,16 @@ defineProps({
 <style lang="scss" scoped>
 .btn {
   width: 100%;
-  padding: 12px 16px;
+  min-height: 52px;
+  padding: 0 16px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   font-size: 16px;
-  font-weight: 500;
+  font-weight: 850;
   cursor: pointer;
   transition: opacity 0.15s;
 
@@ -39,12 +44,12 @@ defineProps({
   }
 
   &--danger {
-    background: #ff3b30;
+    background: var(--color-danger);
     color: #ffffff;
   }
 
   &--ghost {
-    background: var(--color-secondary-bg);
+    background: var(--color-surface-soft);
     color: var(--color-text);
   }
 }

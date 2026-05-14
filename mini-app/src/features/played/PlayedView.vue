@@ -23,18 +23,22 @@ const { state } = useQueue()
 
 <style lang="scss" scoped>
 .played {
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+
   &__title {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 800;
     color: var(--color-hint);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     margin-bottom: 8px;
   }
 
   &__empty {
     color: var(--color-hint);
     font-size: 14px;
+    font-weight: 600;
   }
 
   &__list {

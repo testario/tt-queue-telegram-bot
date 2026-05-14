@@ -46,7 +46,7 @@ const onError = () => { failed.value = true }
   border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--color-secondary-bg);
+  background: var(--color-blue-soft);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -58,8 +58,8 @@ const onError = () => { failed.value = true }
   }
 
   &__placeholder {
-    font-weight: 600;
-    color: var(--color-hint);
+    font-weight: 900;
+    color: var(--color-link);
     line-height: 1;
     user-select: none;
   }

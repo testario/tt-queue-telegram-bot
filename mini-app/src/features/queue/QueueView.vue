@@ -4,15 +4,11 @@ import { useQueue } from '@/composables/useQueue.js'
 import MatchCard from './MatchCard.vue'
 import SearchPanel from '@/features/search/SearchPanel.vue'
 import PlayedView from '@/features/played/PlayedView.vue'
-import InviteCard from '@/features/direct-match/InviteCard.vue'
 
 const { state } = useQueue()
 
 const currentMatch = computed(() => state.queue[0] ?? null)
 const waitingMatches = computed(() => state.queue.slice(1))
-const isCurrentPlaying = computed(() =>
-  currentMatch.value?.status === 'playing'
-)
 </script>
 
 <template>
@@ -37,18 +33,19 @@ const isCurrentPlaying = computed(() =>
 
       <!-- Активный матч -->
       <section v-if="currentMatch" class="section">
-        <h2 class="section__title">{{ isCurrentPlaying ? 'Играют сейчас' : 'Следующая пара' }}</h2>
         <MatchCard :match="currentMatch" :is-current="true" />
       </section>
 
       <!-- Нет матчей -->
       <section v-else class="section section--empty">
-        <p>Очередь пуста</p>
+        <div class="section__empty-icon">TT</div>
+        <h2>Очередь пуста</h2>
+        <p>Самое время найти соперника.</p>
       </section>
 
       <!-- Ожидающие матчи -->
       <section v-if="waitingMatches.length" class="section">
-        <h2 class="section__title">Очередь</h2>
+        <h2 class="section__title">Следующие</h2>
         <MatchCard
           v-for="(match, i) in waitingMatches"
           :key="`${match.player1}-${match.player2}`"
@@ -56,9 +53,6 @@ const isCurrentPlaying = computed(() =>
           :position="i + 2"
         />
       </section>
-
-      <!-- Входящее приглашение -->
-      <InviteCard />
 
       <!-- Ищут соперника -->
       <SearchPanel />
@@ -72,10 +66,9 @@ const isCurrentPlaying = computed(() =>
 
 <style lang="scss" scoped>
 .queue-view {
-  padding-top: 16px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 14px;
 
   &__loader,
   &__error {
@@ -91,31 +84,59 @@ const isCurrentPlaying = computed(() =>
 }
 
 .section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
   &__title {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 800;
     color: var(--color-hint);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
   }
 
   &--empty {
+    align-items: center;
+    padding: 28px 16px;
+    border-radius: var(--radius-card);
+    background: var(--color-blue-soft);
+    color: var(--color-text-secondary);
     text-align: center;
-    color: var(--color-hint);
-    padding: 32px 0;
+
+    h2 {
+      color: var(--color-link);
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    p {
+      font-size: 13px;
+      font-weight: 600;
+    }
+  }
+
+  &__empty-icon {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    background: var(--color-empty-icon-bg);
+    color: var(--color-link);
+    font-size: 14px;
+    font-weight: 900;
   }
 }
 
 .banner {
-  padding: 10px 14px;
-  border-radius: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
   font-size: 14px;
+  font-weight: 800;
   text-align: center;
 
   &--warn {
-    background: rgba(255, 204, 0, 0.2);
-    color: #b8860b;
+    background: color-mix(in srgb, var(--color-warning), transparent 84%);
+    color: var(--color-warning);
   }
 }
 </style>

@@ -4,6 +4,7 @@ import { useQueue } from '@/composables/useQueue.js'
 import { useTelegram } from '@/composables/useTelegram.js'
 import { useApi } from '@/composables/useApi.js'
 import AppButton from '@/shared/ui/AppButton.vue'
+import AppIcon from '@/shared/ui/AppIcon.vue'
 import PlayerTag from '@/shared/ui/PlayerTag.vue'
 import DirectMatchModal from '@/features/direct-match/DirectMatchModal.vue'
 
@@ -41,6 +42,8 @@ const registerSearch = async () => {
   loading.value = true
   try {
     await api.post('/search')
+  } catch (error) {
+    console.error('Не удалось начать поиск', error)
   } finally {
     loading.value = false
   }
@@ -50,6 +53,8 @@ const cancelSearch = async () => {
   loading.value = true
   try {
     await api.del('/search')
+  } catch (error) {
+    console.error('Не удалось отменить поиск', error)
   } finally {
     loading.value = false
   }
@@ -59,6 +64,8 @@ const cancelMatch = async () => {
   loading.value = true
   try {
     await api.del('/match')
+  } catch (error) {
+    console.error('Не удалось отменить матч', error)
   } finally {
     loading.value = false
   }
@@ -68,6 +75,8 @@ const playWith = async (opponent) => {
   loading.value = true
   try {
     await api.post('/match', { opponent })
+  } catch (error) {
+    console.error('Не удалось создать матч', error)
   } finally {
     loading.value = false
   }
@@ -78,6 +87,8 @@ const cancelInvite = async () => {
   loading.value = true
   try {
     await api.post('/direct/cancel', { opponent: myOutgoingInvite.value.opponent })
+  } catch (error) {
+    console.error('Не удалось отменить приглашение', error)
   } finally {
     loading.value = false
   }
@@ -88,11 +99,11 @@ const cancelInvite = async () => {
   <section class="search-panel">
 
     <!-- Ищут соперника -->
-    <div v-if="state.searching.length" class="search-panel__searching">
+    <div v-if="othersSearching.length" class="search-panel__searching">
       <h2 class="search-panel__title">Ищут соперника</h2>
 
       <div
-        v-for="searcher in state.searching"
+        v-for="searcher in othersSearching"
         :key="searcher"
         class="search-panel__row"
       >
@@ -100,7 +111,7 @@ const cancelInvite = async () => {
 
         <!-- Кнопка "Сыграть с ним" — только для других игроков, и только если ты idle -->
         <AppButton
-          v-if="searcher !== player && isIdle"
+          v-if="isIdle"
           variant="primary"
           :loading="loading"
           class="search-panel__play-btn"
@@ -159,7 +170,8 @@ const cancelInvite = async () => {
 
         <!-- Нет исходящего приглашения -->
         <template v-else>
-          <AppButton variant="primary" :loading="loading" @click="registerSearch">
+          <AppButton class="search-panel__cta" variant="primary" :loading="loading" @click="registerSearch">
+            <AppIcon name="play" />
             Ищу соперника
           </AppButton>
           <AppButton variant="ghost" @click="showDirectModal = true">
@@ -180,30 +192,37 @@ const cancelInvite = async () => {
 .search-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 
   &__title {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 800;
     color: var(--color-hint);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
+  }
+
+  &__searching {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
   &__row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--color-secondary-bg);
-
-    &:last-child { border-bottom: none; }
+    gap: 10px;
+    min-height: 64px;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 18px;
+    background: var(--color-surface);
   }
 
   &__play-btn {
     width: auto;
-    padding: 8px 12px;
+    min-height: 40px;
+    padding: 0 12px;
+    border-radius: 14px;
     font-size: 14px;
   }
 
@@ -211,13 +230,26 @@ const cancelInvite = async () => {
     font-size: 14px;
     color: var(--color-hint);
     text-align: center;
-    padding: 4px 0;
+    padding: 12px;
+    border-radius: 18px;
+    background: var(--color-surface);
   }
 
   &__actions {
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+
+  &__cta {
+    position: sticky;
+    bottom: 8px;
+    z-index: 5;
+
+    svg {
+      width: 18px;
+      height: 18px;
+    }
   }
 }
 </style>

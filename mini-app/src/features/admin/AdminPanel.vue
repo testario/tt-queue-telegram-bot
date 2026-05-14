@@ -121,18 +121,18 @@ const resultText = computed(() => {
 
 <style lang="scss" scoped>
 .admin-panel {
-  border-top: 1px solid var(--color-secondary-bg);
-  padding-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
   display: flex;
   flex-direction: column;
   gap: 12px;
 
   &__title {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 800;
     color: var(--color-hint);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
   }
 
   &__status {
@@ -143,17 +143,18 @@ const resultText = computed(() => {
 
   &__badge {
     font-size: 13px;
-    padding: 4px 10px;
-    border-radius: 20px;
+    font-weight: 800;
+    padding: 7px 10px;
+    border-radius: 999px;
 
-    &--ok      { background: rgba(52, 199, 89, 0.2); color: #1a7a3a; }
-    &--warn    { background: rgba(255, 204, 0, 0.2); color: #b8860b; }
-    &--danger  { background: rgba(255, 59, 48, 0.2); color: #c0392b; }
+    &--ok      { background: color-mix(in srgb, var(--color-success), transparent 84%); color: var(--color-success); }
+    &--warn    { background: color-mix(in srgb, var(--color-warning), transparent 84%); color: var(--color-warning); }
+    &--danger  { background: color-mix(in srgb, var(--color-danger), transparent 84%); color: var(--color-danger); }
   }
 
   &__error {
     font-size: 14px;
-    color: #ff3b30;
+    color: var(--color-danger);
   }
 
   &__actions {

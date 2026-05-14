@@ -75,34 +75,38 @@ const deletePlayer = async (username) => {
 
 <style lang="scss" scoped>
 .player-manager {
+  padding-top: 4px;
+
   &__title {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 800;
     color: var(--color-hint);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     margin-bottom: 10px;
   }
 
   &__hint {
     font-size: 14px;
+    font-weight: 600;
     color: var(--color-hint);
   }
 
   &__list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 8px;
   }
 
   &__row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 6px 4px;
-    border-radius: 8px;
+    gap: 12px;
+    min-height: 60px;
+    padding: 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 18px;
+    background: var(--color-bg);
 
-    &:hover { background: var(--color-secondary-bg); }
+    &:hover { background: var(--color-surface-soft); }
   }
 
   &__info {
@@ -115,7 +119,7 @@ const deletePlayer = async (username) => {
 
   &__name {
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 850;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -123,20 +127,26 @@ const deletePlayer = async (username) => {
 
   &__username {
     font-size: 12px;
+    font-weight: 650;
     color: var(--color-hint);
   }
 
   &__delete {
     border: none;
-    background: none;
+    background: var(--color-surface-soft);
     color: var(--color-hint);
     font-size: 16px;
     cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 6px;
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
     flex-shrink: 0;
 
-    &:hover { color: #ff3b30; background: rgba(255, 59, 48, 0.1); }
+    &:hover {
+      color: var(--color-danger);
+      background: color-mix(in srgb, var(--color-danger), transparent 90%);
+    }
+
     &:disabled { opacity: 0.4; cursor: not-allowed; }
   }
 }

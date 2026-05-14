@@ -149,36 +149,40 @@ const submit = async () => {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: flex-end;
   z-index: 100;
 }
 
 .modal {
-  background: var(--color-bg);
+  background: var(--color-surface);
   width: 100%;
   max-height: 80vh;
-  border-radius: 16px 16px 0 0;
-  padding: 24px 16px 32px;
+  border: 1px solid var(--color-border);
+  border-radius: 28px 28px 0 0;
+  padding: 24px 16px calc(24px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 12px;
+  box-shadow: 0 -14px 30px var(--color-card-shadow);
 
   &__title {
-    font-size: 18px;
-    font-weight: 600;
+    font-size: 22px;
+    font-weight: 900;
     text-align: center;
   }
 
   &__search, &__input {
     width: 100%;
-    padding: 10px 14px;
-    border: 1.5px solid var(--color-secondary-bg);
-    border-radius: 10px;
-    background: var(--color-secondary-bg);
+    min-height: 50px;
+    padding: 0 14px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-control);
+    background: var(--color-surface-soft);
     color: var(--color-text);
     font-size: 15px;
+    font-weight: 600;
     outline: none;
 
     &:focus { border-color: var(--color-button); }
@@ -196,8 +200,9 @@ const submit = async () => {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 8px 10px;
-    border-radius: 10px;
+    min-height: 62px;
+    padding: 10px;
+    border-radius: 18px;
     border: none;
     background: transparent;
     cursor: pointer;
@@ -206,7 +211,7 @@ const submit = async () => {
     color: var(--color-text);
 
     &:hover, &--selected {
-      background: var(--color-secondary-bg);
+      background: var(--color-surface-soft);
     }
 
     &--selected {
@@ -223,7 +228,7 @@ const submit = async () => {
 
   &__player-name {
     font-size: 15px;
-    font-weight: 500;
+    font-weight: 850;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -231,6 +236,7 @@ const submit = async () => {
 
   &__player-username {
     font-size: 13px;
+    font-weight: 650;
     color: var(--color-hint);
   }
 
@@ -253,7 +259,7 @@ const submit = async () => {
       top: 50%;
       width: 28%;
       height: 1px;
-      background: var(--color-secondary-bg);
+      background: var(--color-border);
     }
     &::before { left: 0; }
     &::after { right: 0; }
@@ -261,7 +267,7 @@ const submit = async () => {
 
   &__error {
     font-size: 14px;
-    color: #ff3b30;
+    color: var(--color-danger);
     text-align: center;
   }
 

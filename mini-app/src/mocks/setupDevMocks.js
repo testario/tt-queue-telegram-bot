@@ -7,7 +7,7 @@ const mockUser = {
 }
 
 const currentPlayer = `@${mockUser.username}`
-const matchDurationMs = 15 * 60 * 1000
+const matchDurationMs = 1 * 60 * 1000
 
 const createInitialPlayers = () => [
   { username: '@dev_user', displayName: 'Dev User' },
@@ -39,15 +39,15 @@ const createInitialState = () => {
         player1: '@anna',
         player2: '@boris',
         status: 'playing',
-        startDate: new Date(now - 2 * 60 * 1000).toISOString(),
-        endDate: new Date(now + 8 * 60 * 1000).toISOString(),
+        startDate: new Date(now - 0.5 * 60 * 1000).toISOString(),
+        endDate: new Date(now + 0.5 * 60 * 1000).toISOString(),
       },
       {
         player1: '@dima',
         player2: '@ira',
         status: 'waiting',
-        startDate: new Date(now + 9 * 60 * 1000).toISOString(),
-        endDate: new Date(now + 24 * 60 * 1000).toISOString(),
+        startDate: new Date(now + 0.5 * 60 * 1000).toISOString(),
+        endDate: new Date(now + 1.5 * 60 * 1000).toISOString(),
       },
     ],
     searching: ['@kate', '@maria', '@nick'],
@@ -543,7 +543,21 @@ class MockEventSource extends EventTarget {
   }
 }
 
+const advanceQueue = () => {
+  const current = state.queue[0]
+  if (!current || current.status !== 'playing') return
+
+  if (Date.now() < new Date(current.endDate).getTime()) return
+
+  state.played.push(current.player1, current.player2)
+  state.queue.shift()
+  startNextMatch()
+  broadcastState()
+}
+
 const setupApiMock = () => {
+  setInterval(advanceQueue, 1000)
+
   const nativeFetch = window.fetch.bind(window)
 
   window.fetch = async (input, init = {}) => {

@@ -54,6 +54,8 @@ services:
       PLAYERS_MONGODB_URI: mongodb://mongodb:27017
       PLAYERS_MONGODB_DB: tt-queue-bot
       WEBAPP_PORT: 3000
+    ports:
+      - "3000:3000"
     volumes:
       - frontend_dist:/app/mini-app/dist
     depends_on:

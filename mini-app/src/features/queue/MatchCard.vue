@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import CountdownTimer from '@/shared/ui/CountdownTimer.vue'
 import PlayerTag from '@/shared/ui/PlayerTag.vue'
 import { formatTime } from '@/shared/lib/formatTime.js'
@@ -21,6 +21,12 @@ const props = defineProps({
 
 defineEmits(['select'])
 
+const now = ref(Date.now())
+let progressTimer = null
+
+onMounted(() => { progressTimer = setInterval(() => { now.value = Date.now() }, 1000) })
+onUnmounted(() => clearInterval(progressTimer))
+
 const startTime = computed(() => formatTime(props.match.startDate))
 const endTime = computed(() => formatTime(props.match.endDate))
 const isPlaying = computed(() => props.match.status === 'playing')
@@ -31,7 +37,7 @@ const progressPercent = computed(() => {
 
   if (duration <= 0) return 100
 
-  const elapsed = Date.now() - start
+  const elapsed = now.value - start
   return Math.min(100, Math.max(0, (elapsed / duration) * 100))
 })
 </script>

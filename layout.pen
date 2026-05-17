@@ -3582,35 +3582,6 @@
                           "fontWeight": "750"
                         }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "dMEk4",
-                      "name": "swatch3",
-                      "width": "fill_container",
-                      "gap": 10,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "rectangle",
-                          "cornerRadius": 8,
-                          "id": "MWgBv",
-                          "name": "color3",
-                          "fill": "$success",
-                          "width": 28,
-                          "height": 28
-                        },
-                        {
-                          "type": "text",
-                          "id": "OxTTD",
-                          "name": "colorText3",
-                          "fill": "$text",
-                          "content": "Live/success",
-                          "fontFamily": "$font",
-                          "fontSize": 13,
-                          "fontWeight": "750"
-                        }
-                      ]
                     }
                   ]
                 }
@@ -5148,7 +5119,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "./images/generated-1778746830249.png",
+                        "url": "images/generated-1778746830249.png",
                         "mode": "fill"
                       },
                       "cornerRadius": 16
@@ -9530,7 +9501,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "./images/generated-1778746830249.png",
+                        "url": "images/generated-1778746830249.png",
                         "mode": "fill"
                       },
                       "cornerRadius": 16
@@ -13995,35 +13966,6 @@
                           "fontWeight": "750"
                         }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "mPU63",
-                      "name": "swatch3",
-                      "width": "fill_container",
-                      "gap": 10,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "rectangle",
-                          "cornerRadius": 8,
-                          "id": "EajJa",
-                          "name": "color3",
-                          "fill": "$success",
-                          "width": 28,
-                          "height": 28
-                        },
-                        {
-                          "type": "text",
-                          "id": "HDkHR",
-                          "name": "colorText3",
-                          "fill": "$text",
-                          "content": "Live/success",
-                          "fontFamily": "$font",
-                          "fontSize": 13,
-                          "fontWeight": "750"
-                        }
-                      ]
                     }
                   ]
                 }
@@ -14101,40 +14043,6 @@
                       "name": "btnSecondaryText",
                       "fill": "$text",
                       "content": "Пригласить игрока",
-                      "fontFamily": "$font",
-                      "fontSize": 16,
-                      "fontWeight": "850"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "flyxp",
-                  "name": "btnAccept",
-                  "width": "fill_container",
-                  "height": 52,
-                  "fill": "$success",
-                  "cornerRadius": 16,
-                  "gap": 8,
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "icon_font",
-                      "id": "F9GFA",
-                      "name": "btnAcceptIcon",
-                      "width": 18,
-                      "height": 18,
-                      "iconFontName": "check",
-                      "iconFontFamily": "lucide",
-                      "fill": "#FFFFFF"
-                    },
-                    {
-                      "type": "text",
-                      "id": "t4ItC",
-                      "name": "btnAcceptText",
-                      "fill": "#FFFFFF",
-                      "content": "Принять",
                       "fontFamily": "$font",
                       "fontSize": 16,
                       "fontWeight": "850"

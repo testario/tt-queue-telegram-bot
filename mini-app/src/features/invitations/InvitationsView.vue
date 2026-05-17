@@ -80,7 +80,9 @@ const cancelInvite = async () => {
       Пригласить игрока
     </AppButton>
 
-    <DirectMatchModal v-if="showDirectModal" @close="showDirectModal = false" />
+    <Transition name="app-modal" :duration="260">
+      <DirectMatchModal v-if="showDirectModal" @close="showDirectModal = false" />
+    </Transition>
   </div>
 </template>
 

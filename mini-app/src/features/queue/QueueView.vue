@@ -1,14 +1,27 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useQueue } from '@/composables/useQueue.js'
 import MatchCard from './MatchCard.vue'
+import MatchPairPopup from './MatchPairPopup.vue'
 import SearchPanel from '@/features/search/SearchPanel.vue'
 import PlayedView from '@/features/played/PlayedView.vue'
 
 const { state } = useQueue()
 
+const selectedMatchKey = ref(null)
+
 const currentMatch = computed(() => state.queue[0] ?? null)
 const waitingMatches = computed(() => state.queue.slice(1))
+const selectedMatch = computed(() =>
+  state.queue.find((match) => getMatchKey(match) === selectedMatchKey.value) ?? null
+)
+
+const getMatchKey = (match) =>
+  `${match.player1}:${match.player2}:${match.startDate.getTime()}`
+
+const openMatchPopup = (match) => {
+  selectedMatchKey.value = getMatchKey(match)
+}
 </script>
 
 <template>
@@ -33,7 +46,7 @@ const waitingMatches = computed(() => state.queue.slice(1))
 
       <!-- Активный матч -->
       <section v-if="currentMatch" class="section">
-        <MatchCard :match="currentMatch" :is-current="true" />
+        <MatchCard :match="currentMatch" :is-current="true" @select="openMatchPopup" />
       </section>
 
       <!-- Нет матчей -->
@@ -51,6 +64,7 @@ const waitingMatches = computed(() => state.queue.slice(1))
           :key="`${match.player1}-${match.player2}`"
           :match="match"
           :position="i + 2"
+          @select="openMatchPopup"
         />
       </section>
 
@@ -59,6 +73,13 @@ const waitingMatches = computed(() => state.queue.slice(1))
 
       <!-- Уже отыграли -->
       <PlayedView />
+
+      <MatchPairPopup
+        v-if="selectedMatch"
+        :match="selectedMatch"
+        @close="selectedMatchKey = null"
+      />
+      
 
     </template>
   </div>

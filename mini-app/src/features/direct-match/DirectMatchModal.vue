@@ -5,9 +5,11 @@ import { usePlayers } from '@/composables/usePlayers.js'
 import { useQueue } from '@/composables/useQueue.js'
 import { useTelegram } from '@/composables/useTelegram.js'
 import AppButton from '@/shared/ui/AppButton.vue'
+import AppModal from '@/shared/ui/AppModal.vue'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
 
 const emit = defineEmits(['close'])
+const modalRef = ref(null)
 const api = useApi()
 const { state: playersState, load } = usePlayers()
 const { state: queueState } = useQueue()
@@ -72,7 +74,7 @@ const submit = async () => {
   try {
     const result = await api.post('/direct', { opponent })
     if (result.ok) {
-      emit('close')
+      modalRef.value?.startClose()
     } else {
       error.value = reasonToText(result.reason)
     }
@@ -85,88 +87,74 @@ const submit = async () => {
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="$emit('close')">
-    <div class="modal">
-      <h3 class="modal__title">Пригласить игрока</h3>
+  <AppModal ref="modalRef" aria-label="Пригласить игрока" content-class="direct-match-modal" @close="$emit('close')" v-slot="{ close }">
+    <h3 class="direct-match-modal__title">Пригласить игрока</h3>
 
-      <!-- Поиск по списку -->
-      <input
-        v-model="search"
-        class="modal__search"
-        type="text"
-        placeholder="Поиск по имени или @username"
-        autofocus
-      />
+    <!-- Поиск по списку -->
+    <input
+      v-model="search"
+      class="direct-match-modal__search"
+      type="text"
+      placeholder="Поиск по имени или @username"
+      autofocus
+    />
 
-      <!-- Список известных игроков -->
-      <div class="modal__list">
-        <div v-if="playersState.loading" class="modal__hint">Загрузка...</div>
+    <!-- Список известных игроков -->
+    <div class="direct-match-modal__list">
+      <div v-if="playersState.loading" class="direct-match-modal__hint">Загрузка...</div>
 
-        <div v-else-if="!filteredPlayers.length" class="modal__hint">
-          Никого не найдено
+      <div v-else-if="!filteredPlayers.length" class="direct-match-modal__hint">
+        Никого не найдено
+      </div>
+
+      <button
+        v-for="p in filteredPlayers"
+        :key="p.username"
+        :class="[
+          'direct-match-modal__player',
+          { 'direct-match-modal__player--selected': selected?.username === p.username },
+        ]"
+        @click="selectPlayer(p)"
+      >
+        <PlayerAvatar :username="p.username" :size="40" />
+        <div class="direct-match-modal__player-info">
+          <span class="direct-match-modal__player-name">{{ p.displayName }}</span>
+          <span class="direct-match-modal__player-username">{{ p.username }}</span>
         </div>
-
-        <button
-          v-for="p in filteredPlayers"
-          :key="p.username"
-          :class="['modal__player', { 'modal__player--selected': selected?.username === p.username }]"
-          @click="selectPlayer(p)"
-        >
-          <PlayerAvatar :username="p.username" :size="40" />
-          <div class="modal__player-info">
-            <span class="modal__player-name">{{ p.displayName }}</span>
-            <span class="modal__player-username">{{ p.username }}</span>
-          </div>
-        </button>
-      </div>
-
-      <!-- Разделитель + ручной ввод -->
-      <div class="modal__divider">или введите username вручную</div>
-      <input
-        v-model="manualInput"
-        class="modal__input"
-        type="text"
-        placeholder="@username"
-        @input="selected = null"
-        @keydown.enter="submit"
-      />
-
-      <p v-if="error" class="modal__error">{{ error }}</p>
-
-      <div class="modal__buttons">
-        <AppButton :loading="loading" :disabled="!resolvedOpponent" @click="submit">
-          Пригласить
-        </AppButton>
-        <AppButton variant="ghost" @click="$emit('close')">
-          Отмена
-        </AppButton>
-      </div>
+      </button>
     </div>
-  </div>
+
+    <!-- Разделитель + ручной ввод -->
+    <div class="direct-match-modal__divider">или введите username вручную</div>
+    <input
+      v-model="manualInput"
+      class="direct-match-modal__input"
+      type="text"
+      placeholder="@username"
+      @input="selected = null"
+      @keydown.enter="submit"
+    />
+
+    <p v-if="error" class="direct-match-modal__error">{{ error }}</p>
+
+    <div class="direct-match-modal__buttons">
+      <AppButton :loading="loading" :disabled="!resolvedOpponent" @click="submit">
+        Пригласить
+      </AppButton>
+      <AppButton variant="ghost" @click="close">
+        Отмена
+      </AppButton>
+    </div>
+  </AppModal>
 </template>
 
 <style lang="scss" scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  align-items: flex-end;
-  z-index: 100;
+:deep(.direct-match-modal) {
+  gap: 12px;
+  padding: 24px 16px calc(24px + env(safe-area-inset-bottom, 0px));
 }
 
-.modal {
-  background: var(--color-surface);
-  width: 100%;
-  max-height: 80vh;
-  border: 1px solid var(--color-border);
-  border-radius: 28px 28px 0 0;
-  padding: 24px 16px calc(24px + env(safe-area-inset-bottom, 0px));
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  box-shadow: 0 -14px 30px var(--color-card-shadow);
-
+.direct-match-modal {
   &__title {
     font-size: 22px;
     font-weight: 900;

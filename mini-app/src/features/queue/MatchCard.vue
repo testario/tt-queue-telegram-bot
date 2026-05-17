@@ -19,6 +19,8 @@ const props = defineProps({
   },
 })
 
+defineEmits(['select'])
+
 const startTime = computed(() => formatTime(props.match.startDate))
 const endTime = computed(() => formatTime(props.match.endDate))
 const isPlaying = computed(() => props.match.status === 'playing')
@@ -35,7 +37,12 @@ const progressPercent = computed(() => {
 </script>
 
 <template>
-  <div :class="['match-card', { 'match-card--current': isCurrent, 'match-card--playing': isPlaying }]">
+  <div
+    :class="['match-card', { 'match-card--current': isCurrent, 'match-card--playing': isPlaying }]"
+    role="button"
+    :aria-label="`Открыть информацию о матче ${match.player1} против ${match.player2}`"
+    @click="$emit('select', match)"
+  >
 
     <div v-if="isCurrent" class="match-card__top">
       <span>{{ isPlaying ? 'Играют сейчас' : 'Следующая пара' }}</span>
@@ -66,6 +73,8 @@ const progressPercent = computed(() => {
 
 <style lang="scss" scoped>
 .match-card {
+  width: 100%;
+  border: none;
   background: var(--color-surface);
   border-radius: var(--radius-card);
   padding: 16px;
@@ -73,6 +82,7 @@ const progressPercent = computed(() => {
   flex-direction: column;
   gap: 12px;
   box-shadow: 0 8px 20px var(--color-card-shadow);
+  cursor: pointer;
 
   &--current {
     background: var(--color-button);

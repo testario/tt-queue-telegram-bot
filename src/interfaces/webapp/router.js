@@ -1,5 +1,7 @@
 import { verifyInitData } from './auth.js'
 import { buildSearchInlineKeyboard, buildDirectInviteKeyboard } from '#interfaces/telegram/keyboards.js'
+import { QueueState } from '#domain'
+import { recoverTimers } from '#infrastructure/timers/recoverTimers.js'
 
 /**
  * Регистрирует все REST-маршруты webapp-интерфейса.
@@ -42,14 +44,16 @@ export const registerRoutes = async (app, deps) => {
     }
   }
 
-  const notifyChat = (text, replyMarkup = undefined) =>
-    bot
-      .sendMessage(queueChatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined)
-      .catch((err) => log.error('Не удалось уведомить чат из webapp', { message: err.message }))
-
   // --- preHandlers ---
 
   const isDev = process.env.NODE_ENV !== 'production'
+
+  const notifyChat = isDev
+    ? () => {}
+    : (text, replyMarkup = undefined) =>
+        bot
+          .sendMessage(queueChatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined)
+          .catch((err) => log.error('Не удалось уведомить чат из webapp', { message: err.message }))
 
   const auth = async (req, reply) => {
     const initData = req.headers['x-telegram-init-data']
@@ -295,4 +299,139 @@ export const registerRoutes = async (app, deps) => {
     sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: true }
   })
+
+  // Dev-only: управление состоянием для локальной отладки
+  if (isDev) {
+    const getFreePlayers = async (state, excluded = []) => {
+      const all = await playersRepository.findAll()
+      const busy = new Set([
+        ...excluded,
+        ...state.queue.flatMap(m => [m.player1, m.player2]),
+        ...state.searching,
+        ...state.played,
+      ])
+      return all.map(p => p.username).filter(u => !busy.has(u))
+    }
+
+    const pickRandom = (arr) =>
+      arr.length ? arr[Math.floor(Math.random() * arr.length)] : null
+
+    // Сид состояния: игроки + очередь + инвайты.
+    // Вызывается фронтендом при старте и при сбросе через тулбар.
+    app.post('/api/dev/seed', async (req) => {
+      const { players = [], state: stateData = {}, force = false } = req.body || {}
+
+      for (const player of players) {
+        await playersRepository.upsert({ ...player, userId: null })
+      }
+
+      const existingState = await context.repository.get()
+      const hasData = existingState.queue.length > 0
+        || existingState.searching.length > 0
+        || existingState.played.length > 0
+
+      if (force || !hasData) {
+        const queueState = QueueState.from(stateData)
+        await context.repository.save(queueState)
+
+        await invitesStore.clear()
+        for (const invite of (stateData.pendingInvites || [])) {
+          await invitesStore.set(invite.player, invite)
+        }
+
+        setPauseMode(queueChatId, false)
+        emergeStateByChat.delete(String(queueChatId))
+
+        context.orchestrator.cancelAll()
+        await recoverTimers({ repository: context.repository, orchestrator: context.orchestrator, clock: context.clock })
+      }
+
+      sseManager.broadcast('state_update', await buildStatePayload())
+      return { ok: true }
+    })
+
+    app.post('/api/dev/mark-played', { preHandler: [auth] }, async (req) => {
+      const state = await context.repository.get()
+      if (!state.isPlayed(req.player)) {
+        state.removeSearching(req.player)
+        const { index } = state.removeMatchByPlayer(req.player)
+
+        if (index === -1 && state.queue.length > 0) {
+          // Dev user not in any match — simulate end of the current playing match
+          const finished = state.queue.shift()
+          state.played.push(finished.player1, finished.player2)
+          if (state.queue.length > 0) {
+            const next = state.queue[0]
+            next.status = 'playing'
+            next.startDate = new Date(context.clock.now().getTime() + context.queueService.readyMs)
+            next.endDate = new Date(next.startDate.getTime() + context.queueService.gameMs)
+            context.queueService.recalculateWaiting(state)
+          }
+          context.orchestrator.cancelAll()
+          await context.repository.save(state)
+          await recoverTimers({ repository: context.repository, orchestrator: context.orchestrator, clock: context.clock })
+        } else {
+          if (index === 0 && state.queue.length > 0) {
+            context.queueService.recalculateWaiting(state)
+          }
+          state.played.push(req.player)
+          await invitesStore.delete(req.player)
+          await context.repository.save(state)
+        }
+      }
+      sseManager.broadcast('state_update', await buildStatePayload())
+      return { ok: true }
+    })
+
+    app.post('/api/dev/add-pair', { preHandler: [auth] }, async (req) => {
+      const state = await context.repository.get()
+      const free = await getFreePlayers(state, [req.player])
+      if (free.length < 2) return { ok: false, reason: 'not_enough_players' }
+
+      const [p1, p2] = free.sort(() => Math.random() - 0.5)
+      state.played = state.played.filter(p => p !== p1 && p !== p2)
+      state.addSearching(p1)
+
+      const result = context.queueService.scheduleMatch(state, p1, p2, context.clock.now())
+      if (!result.ok) return { ok: false, reason: result.reason }
+      await context.repository.save(result.state)
+      sseManager.broadcast('state_update', await buildStatePayload())
+      return { ok: true, player1: p1, player2: p2 }
+    })
+
+    app.post('/api/dev/accept-invite', { preHandler: [auth] }, async (req) => {
+      const state = await context.repository.get()
+      const outgoing = (await invitesStore.getAll()).find(inv => inv.player === req.player)
+      const partner = outgoing?.opponent
+        ?? pickRandom(await getFreePlayers(state, [req.player]))
+      if (!partner) return { ok: false, reason: 'not_enough_players' }
+
+      state.played = state.played.filter(p => p !== req.player && p !== partner)
+      state.removeSearching(req.player)
+      state.removeSearching(partner)
+      state.removeMatchByPlayer(req.player)
+      state.removeMatchByPlayer(partner)
+      if (outgoing) await invitesStore.delete(req.player)
+
+      state.addSearching(req.player)
+      const result = context.queueService.scheduleMatch(state, req.player, partner, context.clock.now())
+      if (!result.ok) return { ok: false, reason: result.reason }
+      await context.repository.save(result.state)
+      sseManager.broadcast('state_update', await buildStatePayload())
+      return { ok: true, player: partner }
+    })
+
+    app.post('/api/dev/receive-invite', { preHandler: [auth] }, async (req) => {
+      const state = await context.repository.get()
+      const sender = pickRandom(await getFreePlayers(state, [req.player]))
+      if (!sender) return { ok: false, reason: 'not_enough_players' }
+
+      state.played = state.played.filter(p => p !== sender)
+      state.addSearching(sender)
+      await context.repository.save(state)
+      await invitesStore.set(sender, { player: sender, opponent: req.player, createdAt: Date.now() })
+      sseManager.broadcast('state_update', await buildStatePayload())
+      return { ok: true, player: sender }
+    })
+  }
 }

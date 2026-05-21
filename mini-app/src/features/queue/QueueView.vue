@@ -46,7 +46,7 @@ const openMatchPopup = (match) => {
 
       <!-- Активный матч -->
       <section v-if="currentMatch" class="section">
-        <MatchCard :match="currentMatch" :is-current="true" @select="openMatchPopup" />
+        <MatchCard :key="getMatchKey(currentMatch)" :match="currentMatch" :is-current="true" @select="openMatchPopup" />
       </section>
 
       <!-- Нет матчей -->

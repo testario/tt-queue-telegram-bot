@@ -8,7 +8,7 @@ const shouldUseMocks =
 const bootstrap = async () => {
   if (shouldUseMocks) {
     const { setupDevMocks } = await import('@/mocks/setupDevMocks.js')
-    setupDevMocks()
+    await setupDevMocks()
   }
 
   createApp(App).mount('#app')

@@ -18,4 +18,8 @@ export class InMemoryInvitesStore {
   async getAll() {
     return Array.from(this._map.values())
   }
+
+  async clear() {
+    this._map.clear()
+  }
 }

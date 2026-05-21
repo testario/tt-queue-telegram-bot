@@ -30,6 +30,7 @@ onUnmounted(() => clearInterval(progressTimer))
 const startTime = computed(() => formatTime(props.match.startDate))
 const endTime = computed(() => formatTime(props.match.endDate))
 const isPlaying = computed(() => props.match.status === 'playing')
+const isMatchStarted = computed(() => now.value >= props.match.startDate.getTime())
 const progressPercent = computed(() => {
   const start = props.match.startDate.getTime()
   const end = props.match.endDate.getTime()
@@ -71,7 +72,7 @@ const progressPercent = computed(() => {
       {{ startTime }} — {{ endTime }}
     </div>
 
-    <div v-if="isCurrent && isPlaying" class="match-card__progress">
+    <div v-if="isCurrent && isPlaying && isMatchStarted" class="match-card__progress">
       <span :style="{ width: `${progressPercent}%` }"></span>
     </div>
   </div>

@@ -23,4 +23,8 @@ export class RedisInvitesStore {
     if (!raw) return []
     return Object.values(raw).map(v => JSON.parse(v))
   }
+
+  async clear() {
+    await this.client.del(this.key)
+  }
 }

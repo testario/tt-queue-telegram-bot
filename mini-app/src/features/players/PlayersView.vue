@@ -23,6 +23,14 @@ const queuedPlayers = computed(() =>
   queueState.queue.flatMap((match) => [match.player1, match.player2])
 )
 
+const currentPlayerInQueue = computed(() =>
+  Boolean(currentPlayer) && queuedPlayers.value.includes(currentPlayer)
+)
+
+const currentPlayerPlayed = computed(() =>
+  Boolean(currentPlayer) && queueState.played.includes(currentPlayer)
+)
+
 const unavailablePlayers = computed(() => new Set([
   currentPlayer,
   ...queuedPlayers.value,
@@ -40,7 +48,10 @@ const playersWithStatus = computed(() =>
       isSearching,
       isQueued,
       isPlayed,
-      canInvite: Boolean(currentPlayer) && !unavailablePlayers.value.has(player.username),
+      canInvite: Boolean(currentPlayer)
+        && !unavailablePlayers.value.has(player.username)
+        && !currentPlayerInQueue.value
+        && !currentPlayerPlayed.value,
     }
   })
 )
@@ -116,6 +127,13 @@ const invite = async (username) => {
       >
         Не играли
       </button>
+    </div>
+
+    <div v-if="currentPlayerInQueue" class="players-view__played-banner">
+      Вы уже в очереди — приглашения недоступны
+    </div>
+    <div v-else-if="currentPlayerPlayed" class="players-view__played-banner">
+      Вы уже играли в этой части дня — приглашения недоступны
     </div>
 
     <p v-if="playersState.loading" class="players-view__hint">Загрузка...</p>
@@ -225,6 +243,16 @@ const invite = async (username) => {
       background: var(--color-button);
       color: var(--color-button-text);
     }
+  }
+
+  &__played-banner {
+    padding: 12px 14px;
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--color-warning), transparent 84%);
+    color: var(--color-warning);
+    font-size: 14px;
+    font-weight: 800;
+    text-align: center;
   }
 
   &__list {

@@ -19,6 +19,8 @@ import { createLocalization } from '#application/messages/localization.js'
 import { I18N_CONFIG } from '#application/config/i18n.js'
 import { DEFAULT_GAME_TIME, TIME_READY, WORK_SCHEDULE } from '#application/config/time.js'
 import { Match } from '#domain'
+import { NodeTimer } from '#infrastructure/timers/NodeTimer.js'
+import { MatchOrchestrator } from '#application/services/MatchOrchestrator.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -36,13 +38,16 @@ const buildBackendContext = ({ queueRepository, queueChatId, messages, eventBus 
   const clock = new SystemClock()
   const notifier = new EventNotifier({ eventBus })
 
-  // Null-orchestrator: lifecycle и отмена таймеров — ответственность bot-процесса
-  const nullOrchestrator = {
-    scheduleLifecycle: () => {},
-    scheduleFinish: () => {},
-    cancelAll: () => {},
-    cancelForMatch: () => {},
-  }
+  const timer = new NodeTimer()
+  const orchestrator = new MatchOrchestrator({
+    chatId: queueChatId,
+    timer,
+    notifier,
+    repository: queueRepository,
+    queueService,
+    messages,
+    clock,
+  })
 
   const registerSearch = new RegisterSearch({ repository: queueRepository, queueService, messages, clock })
   const cancelSearch = new CancelSearch({ repository: queueRepository, queueService, messages, clock })
@@ -50,7 +55,7 @@ const buildBackendContext = ({ queueRepository, queueChatId, messages, eventBus 
     chatId: queueChatId,
     repository: queueRepository,
     queueService,
-    orchestrator: nullOrchestrator,
+    orchestrator,
     notifier,
     messages,
     clock,
@@ -59,7 +64,7 @@ const buildBackendContext = ({ queueRepository, queueChatId, messages, eventBus 
     chatId: queueChatId,
     repository: queueRepository,
     queueService,
-    orchestrator: nullOrchestrator,
+    orchestrator,
     notifier,
     messages,
     clock,
@@ -80,7 +85,7 @@ const buildBackendContext = ({ queueRepository, queueChatId, messages, eventBus 
     repository: queueRepository,
     notifier,
     clock,
-    orchestrator: nullOrchestrator,
+    orchestrator,
     registerSearch,
     addMatch,
     directMatch,
@@ -98,7 +103,7 @@ const buildBackendContext = ({ queueRepository, queueChatId, messages, eventBus 
  * Для полной синхронизации паузы между процессами потребуется Redis-хранилище
  * (за рамками текущей фазы).
  */
-const buildLocalAdminState = ({ queueChatId, bot, messages, queueService }) => {
+const buildLocalAdminState = ({ queueChatId, bot, messages, queueService, isDev = false }) => {
   const pauseModeChats = new Set()
   const emergeStateByChat = new Map()
 
@@ -117,7 +122,9 @@ const buildLocalAdminState = ({ queueChatId, bot, messages, queueService }) => {
       })
       await context.repository.save(state)
     }
-    bot.sendMessage(chatId, messages.pauseModeEnabled({ action: 'none' })).catch(() => {})
+    if (!isDev) {
+      bot.sendMessage(chatId, messages.pauseModeEnabled({ action: 'none' })).catch(() => {})
+    }
   }
 
   const resumeQueueAfterPause = async (context) => {
@@ -144,6 +151,10 @@ const buildLocalAdminState = ({ queueChatId, bot, messages, queueService }) => {
   const resumeEmergeAfterContinue = async (_deps) => ({ handled: false })
 
   const handleEmerge = async ({ chatId, context, userId }) => {
+    if (isDev) {
+      await applyPauseMode({ chatId, context })
+      return
+    }
     try {
       const member = await bot.getChatMember(chatId, userId)
       if (!['administrator', 'creator'].includes(member?.status)) {
@@ -264,6 +275,7 @@ export const createWebApp = async ({
       bot,
       messages: resolvedMessages,
       queueService: backendContext.queueService,
+      isDev: process.env.NODE_ENV !== 'production',
     })
     resolvedIsPauseModeEnabled = adminState.isPauseModeEnabled
     resolvedSetPauseMode = adminState.setPauseMode

@@ -4,7 +4,7 @@ import { useTelegram } from '@/composables/useTelegram.js'
 import { useQueue } from '@/composables/useQueue.js'
 import { useAdmin } from '@/composables/useAdmin.js'
 import QueueView from '@/features/queue/QueueView.vue'
-import InvitationsView from '@/features/invitations/InvitationsView.vue'
+
 import PlayersView from '@/features/players/PlayersView.vue'
 import AdminPanel from '@/features/admin/AdminPanel.vue'
 import MockToolbar from '@/features/mock/MockToolbar.vue'
@@ -13,15 +13,14 @@ import BottomNavigation from '@/shared/ui/BottomNavigation.vue'
 const { ready, expand } = useTelegram()
 const { init } = useQueue()
 const { isAdmin, checkAdmin } = useAdmin()
-const activeTab = ref('games')
+const activeTab = ref('queue')
 const isMockMode =
   import.meta.env.DEV &&
   (import.meta.env.MODE === 'mock' || import.meta.env.VITE_USE_MOCKS === 'true')
 
 const navigationTabs = computed(() => {
   const tabs = [
-    { id: 'games', label: 'Игры', icon: 'trophy' },
-    { id: 'invites', label: 'Инвайты', icon: 'mail' },
+    { id: 'queue', label: 'Очередь', icon: 'trophy' },
     { id: 'players', label: 'Игроки', icon: 'users' },
   ]
 
@@ -33,15 +32,14 @@ const navigationTabs = computed(() => {
 })
 
 const activeView = computed(() => ({
-  games: QueueView,
-  invites: InvitationsView,
+  queue: QueueView,
   players: PlayersView,
   management: AdminPanel,
 }[activeTab.value] ?? QueueView))
 
 watch(isAdmin, (value) => {
   if (value === false && activeTab.value === 'management') {
-    activeTab.value = 'games'
+    activeTab.value = 'queue'
   }
 })
 

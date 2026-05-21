@@ -92,10 +92,6 @@ const invite = async (username) => {
 
 <template>
   <div class="players-view">
-    <header class="players-view__header">
-      <h1>Игроки</h1>
-    </header>
-
     <label class="players-view__search">
       <AppIcon name="search" />
       <input
@@ -174,19 +170,6 @@ const invite = async (username) => {
   display: flex;
   flex-direction: column;
   gap: 14px;
-
-  &__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-
-    h1 {
-      color: var(--color-text);
-      font-size: 28px;
-      font-weight: 850;
-      line-height: 1.15;
-    }
-  }
 
   &__search {
     display: flex;

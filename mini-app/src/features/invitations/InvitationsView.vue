@@ -23,7 +23,19 @@ const outgoingInvite = computed(() =>
   state.pendingInvites?.find((invite) => invite.player === player) ?? null
 )
 
-const hasInvites = computed(() => incomingInvite.value || outgoingInvite.value)
+const incomingInviteResolved = computed(() => {
+  if (!incomingInvite.value) return false
+  const inviter = incomingInvite.value.player
+  return state.queue.some(
+    (m) =>
+      (m.player1 === inviter || m.player2 === inviter) &&
+      (m.player1 === player || m.player2 === player)
+  )
+})
+
+const hasInvites = computed(() =>
+  (incomingInvite.value && !incomingInviteResolved.value) || Boolean(outgoingInvite.value)
+)
 
 const cancelInvite = async () => {
   if (!outgoingInvite.value) return
@@ -41,16 +53,6 @@ const cancelInvite = async () => {
 
 <template>
   <div class="invitations-view">
-    <section class="invitations-view__hero">
-      <div>
-        <p class="invitations-view__eyebrow">Инвайты</p>
-        <h1>Быстрая пара</h1>
-      </div>
-      <div class="invitations-view__hero-icon">
-        <AppIcon name="mail" />
-      </div>
-    </section>
-
     <InviteCard />
 
     <section v-if="outgoingInvite" class="invitations-view__card">
@@ -71,8 +73,8 @@ const cancelInvite = async () => {
         <AppIcon name="check" />
       </span>
       <div>
-        <h2>Когда инвайтов нет</h2>
-        <p>Показываем спокойное состояние и быстрый переход к игрокам.</p>
+        <h2>Пока инвайтов нет</h2>
+        <p>Можешь позвать кого-нибудь или подожди, пока позовут тебя</p>
       </div>
     </section>
 
@@ -92,53 +94,16 @@ const cancelInvite = async () => {
   flex-direction: column;
   gap: 14px;
 
-  &__hero {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 18px;
-    border-radius: 24px;
-    background: #193047;
-    color: #ffffff;
-    box-shadow: 0 14px 26px #19304730;
-
-    h1 {
-      font-size: 22px;
-      font-weight: 900;
-      line-height: 1.05;
-    }
-  }
-
-  &__eyebrow,
   &__label {
     color: var(--color-text-secondary);
     font-size: 13px;
     font-weight: 800;
   }
 
-  &__hero &__eyebrow {
-    margin-bottom: 3px;
-    color: #ddf0ff;
-  }
-
-  &__hero-icon,
   &__empty-icon {
     display: grid;
     place-items: center;
     flex: 0 0 auto;
-  }
-
-  &__hero-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: 999px;
-    background: var(--color-button);
-
-    svg {
-      width: 20px;
-      height: 20px;
-    }
   }
 
   &__card,

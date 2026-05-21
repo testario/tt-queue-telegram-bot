@@ -4,7 +4,8 @@ import { useQueue } from '@/composables/useQueue.js'
 import MatchCard from './MatchCard.vue'
 import MatchPairPopup from './MatchPairPopup.vue'
 import SearchPanel from '@/features/search/SearchPanel.vue'
-import PlayedView from '@/features/played/PlayedView.vue'
+import PlayedSection from '@/features/played/PlayedSection.vue'
+import InviteCard from '@/features/direct-match/InviteCard.vue'
 
 const { state } = useQueue()
 
@@ -68,11 +69,14 @@ const openMatchPopup = (match) => {
         />
       </section>
 
+      <!-- Прямой инвайт -->
+      <InviteCard />
+
       <!-- Ищут соперника -->
       <SearchPanel />
 
       <!-- Уже отыграли -->
-      <PlayedView />
+      <PlayedSection />
 
       <MatchPairPopup
         v-if="selectedMatch"

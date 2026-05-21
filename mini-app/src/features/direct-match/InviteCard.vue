@@ -16,6 +16,17 @@ const myInvite = computed(() =>
   state.pendingInvites?.find((inv) => inv.opponent === player) ?? null
 )
 
+const inviteResolved = computed(() => {
+  if (!myInvite.value) return false
+  const inviter = myInvite.value.player
+  if (state.played.includes(player) || state.played.includes(inviter)) return true
+  return state.queue.some(
+    (m) =>
+      (m.player1 === inviter || m.player2 === inviter) &&
+      (m.player1 === player || m.player2 === player)
+  )
+})
+
 const accept = async () => {
   if (!myInvite.value) return
   loading.value = true
@@ -42,7 +53,7 @@ const decline = async () => {
 </script>
 
 <template>
-  <div v-if="myInvite" class="invite-card">
+  <div v-if="myInvite && !inviteResolved" class="invite-card">
     <div class="invite-card__header">
       <span class="invite-card__icon">
         <AppIcon name="mail" />

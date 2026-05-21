@@ -7,9 +7,24 @@ import SearchPanel from '@/features/search/SearchPanel.vue'
 import PlayedSection from '@/features/played/PlayedSection.vue'
 import InviteCard from '@/features/direct-match/InviteCard.vue'
 
-const { state } = useQueue()
+const { state, player, cancelMatch } = useQueue()
 
 const selectedMatchKey = ref(null)
+const cancelling = ref(false)
+
+const isMyMatch = (match) => match.player1 === player || match.player2 === player
+
+const handleCancel = async (match) => {
+  if (cancelling.value) return
+  cancelling.value = true
+  try {
+    await cancelMatch()
+  } catch (e) {
+    console.error('Не удалось отменить матч', e)
+  } finally {
+    cancelling.value = false
+  }
+}
 
 const currentMatch = computed(() => state.queue[0] ?? null)
 const waitingMatches = computed(() => state.queue.slice(1))
@@ -47,7 +62,7 @@ const openMatchPopup = (match) => {
 
       <!-- Активный матч -->
       <section v-if="currentMatch" class="section">
-        <MatchCard :key="getMatchKey(currentMatch)" :match="currentMatch" :is-current="true" @select="openMatchPopup" />
+        <MatchCard :key="getMatchKey(currentMatch)" :match="currentMatch" :is-current="true" :cancelable="isMyMatch(currentMatch)" @select="openMatchPopup" @cancel="handleCancel" />
       </section>
 
       <!-- Нет матчей -->
@@ -65,7 +80,9 @@ const openMatchPopup = (match) => {
           :key="`${match.player1}-${match.player2}`"
           :match="match"
           :position="i + 2"
+          :cancelable="isMyMatch(match)"
           @select="openMatchPopup"
+          @cancel="handleCancel"
         />
       </section>
 

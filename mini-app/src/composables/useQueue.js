@@ -1,5 +1,6 @@
 import { reactive, readonly } from 'vue'
 import { useApi } from './useApi.js'
+import { useTelegram } from './useTelegram.js'
 
 const state = reactive({
   queue: [],
@@ -48,7 +49,8 @@ const connectSse = () => {
 }
 
 export function useQueue() {
-  const { get } = useApi()
+  const { get, del } = useApi()
+  const { player } = useTelegram()
 
   const init = async () => {
     try {
@@ -62,5 +64,7 @@ export function useQueue() {
     }
   }
 
-  return { state: readonly(state), init }
+  const cancelMatch = () => del('/match')
+
+  return { state: readonly(state), player, init, cancelMatch }
 }

@@ -17,9 +17,13 @@ const props = defineProps({
     type: Number,
     default: null,
   },
+  cancelable: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-defineEmits(['select'])
+defineEmits(['select', 'cancel'])
 
 const now = ref(Date.now())
 let progressTimer = null
@@ -75,6 +79,10 @@ const progressPercent = computed(() => {
     <div v-if="isCurrent && isPlaying && isMatchStarted" class="match-card__progress">
       <span :style="{ width: `${progressPercent}%` }"></span>
     </div>
+
+    <button v-if="cancelable" class="match-card__cancel" @click.stop="$emit('cancel', match)">
+      Отменить
+    </button>
   </div>
 </template>
 
@@ -183,6 +191,23 @@ const progressPercent = computed(() => {
   &--current :deep(.player-tag) {
     background: #ffffff;
     color: var(--color-button);
+  }
+
+  &__cancel {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--color-danger), transparent 88%);
+    color: var(--color-danger);
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  &--current &__cancel {
+    background: #ffffff33;
+    color: #ffffff;
   }
 }
 </style>

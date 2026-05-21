@@ -4,7 +4,8 @@ export function useApi() {
   const { initData } = useTelegram()
 
   const request = async (method, path, body = undefined) => {
-    const headers = { 'Content-Type': 'application/json' }
+    const headers = {}
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
     if (initData) headers['X-Telegram-Init-Data'] = initData
     const res = await fetch(`/api${path}`, {
       method,

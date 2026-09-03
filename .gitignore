@@ -1,12 +1,15 @@
 .DS_Store
 node_modules
 /dist
+/mini-app/dist
 
 
 # local env files
 .env.*.local
 .env.local
 .env
+.env.*
+!.env.example
 # Log files
 npm-debug.log*
 yarn-debug.log*

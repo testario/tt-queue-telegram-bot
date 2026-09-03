@@ -1,0 +1,4 @@
+tt-bot.dev.liffesteel.ru {
+    encode zstd gzip
+    reverse_proxy frontend:80
+}

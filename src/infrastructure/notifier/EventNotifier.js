@@ -2,13 +2,15 @@ import EventEmitter from "events";
 
 /**
  * Уведомитель, публикующий события через `EventEmitter`.
+ * Опционально публикует в Redis Pub/Sub через `eventBus` (для кросс-процессного режима).
  */
 /**
  * @implements {import("#application/types.js").Notifier}
  */
 class EventNotifier {
-  constructor(emitter = new EventEmitter()) {
-    this.emitter = emitter;
+  constructor({ emitter, eventBus } = {}) {
+    this.emitter = emitter || new EventEmitter()
+    this.eventBus = eventBus || null
   }
 
   /**
@@ -19,6 +21,17 @@ class EventNotifier {
    */
   notify(chatId, text, meta = undefined) {
     this.emitter.emit("message", { chatId, text, meta });
+
+    // Публикуем в Redis если bus настроен (bot-процесс с Redis)
+    if (this.eventBus) {
+      this.eventBus.publish({
+        type: (meta && meta.type) || 'state_update',
+        chatId: String(chatId),
+        payload: meta,
+      }).catch(err => {
+        console.error('EventNotifier: ошибка публикации в Redis', err.message)
+      })
+    }
   }
 
   /**

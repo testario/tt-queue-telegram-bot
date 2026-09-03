@@ -17,14 +17,20 @@ jobs:
           key_fmt="$(printf '%s' "$key_raw" | perl -0777 -pe 's/^\\s+|\\s+$//g; s/^["'\''`]//; s/["'\''`]$//; s/\\n/\n/g' | tr -d '\r')"
 
           tmp_key=$(mktemp)
+          decoded_key=$(mktemp)
+          cleanup() {
+            rm -f "$tmp_key" "$decoded_key" sshkey.err
+          }
+          trap cleanup EXIT
+
           printf '%s\n' "$key_fmt" > "$tmp_key"
           chmod 600 "$tmp_key"
 
-          # Если формат не читается, пробуем base64-декод
+          # Если raw-ключ не читается, пробуем валидный base64-декод в отдельный файл
           if ! ssh-keygen -y -f "$tmp_key" >/dev/null 2>&1; then
-            decoded="$(printf '%s' "$key_fmt" | base64 -d 2>/dev/null || true)"
-            if [ -n "$decoded" ]; then
-              printf '%s\n' "$decoded" > "$tmp_key"
+            if printf '%s' "$key_fmt" | base64 -d > "$decoded_key" 2>/dev/null \
+              && ssh-keygen -y -f "$decoded_key" >/dev/null 2>&1; then
+              cp "$decoded_key" "$tmp_key"
               chmod 600 "$tmp_key"
             fi
           fi
@@ -35,7 +41,8 @@ jobs:
             cat sshkey.err
             exit 1
           fi
-          rm -f sshkey.err
+          rm -f "$decoded_key" sshkey.err
+          trap - EXIT
 
           mv "$tmp_key" ~/.ssh/id_rsa
           ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts

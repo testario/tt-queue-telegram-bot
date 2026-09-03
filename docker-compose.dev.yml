@@ -1,0 +1,61 @@
+services:
+
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: tt-queue-bot
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend.dev
+    env_file: .env
+    environment:
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+      PLAYERS_MONGODB_URI: mongodb://mongodb:27017
+      PLAYERS_MONGODB_DB: tt-queue-bot
+      WEBAPP_PORT: 3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - internal
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  internal:
+    driver: bridge

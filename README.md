@@ -19,6 +19,12 @@
 ## Тесты
 - Unit: `npm test` (Jest, покрыты доменный сервис и use-case создания матча).
 
+## Mini App без Telegram
+- Запуск браузерного mock-режима: `cd mini-app && npm run dev:mock`.
+- Открыть: `http://127.0.0.1:5173/app/`.
+- В этом режиме подменяются Telegram WebApp, `/api/*` и SSE-события. Backend, домен и бот не нужны.
+- Сброс мок-состояния из консоли браузера: `window.__TT_QUEUE_MOCKS__.reset()`.
+
 ## Архитектура
 - Краткое описание слоёв и потоков: `docs/architecture.md`.
 - Сообщения и тексты: `src/application/messages/localization.js` + `src/application/messages/locales/*`.

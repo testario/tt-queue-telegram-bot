@@ -68,35 +68,17 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:80"
     depends_on:
       - backend
     networks:
       - internal
-      - external
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - frontend
-    networks:
-      - external
 
 volumes:
   mongodb_data:
   redis_data:
-  caddy_data:
-  caddy_config:
 
 networks:
   internal:
-    driver: bridge
-  external:
     driver: bridge

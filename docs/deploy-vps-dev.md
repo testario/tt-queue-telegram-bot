@@ -1,204 +1,240 @@
-# Развёртывание dev-стенда на VPS
+# Развёртывание dev-стенда на VPS через Git worktree
 
-Этот гайд поднимает только dev-стенд по адресу
-`https://tt-bot.dev.liffesteel.ru`. Домен `tt-bot.liffesteel.ru` и
-продовый compose-файл не используются и не меняются.
+Гайд поднимает только dev-стенд по адресу
+`https://tt-bot.dev.liffesteel.ru`. `tt-bot.liffesteel.ru` и production не
+настраиваются.
 
-Стек запускается из `docker-compose.vps-dev.yml`:
+Рабочая схема:
 
-- `caddy` принимает публичные HTTPS-запросы;
-- `frontend` отдаёт Mini App и проксирует `/api/*` к backend;
-- `bot`, `backend`, `redis` и `mongodb` доступны только во внутренней Docker-сети.
-
-Так наружу открыты лишь порты `80` и `443`. Dev-стенд работает с
-`NODE_ENV=production`: это важно, потому что только так backend проверяет
-Telegram `initData` и не включает browser-only dev-авторизацию.
-
-Mini App собирается в отдельный образ `frontend` (`Dockerfile.frontend`), поэтому
-после каждого `up --build` nginx получает актуальную сборку без ручного копирования
-файлов или общего volume с backend.
-
-## 1. Что потребуется
-
-- VPS с Ubuntu 22.04/24.04 или Debian, минимум 1 GB RAM (2 GB комфортнее);
-- публичный IPv4-адрес; если для домена есть AAAA-запись, VPS также должен быть
-  доступен по IPv6;
-- SSH-доступ и свободные порты `80` и `443`;
-- отдельный Telegram-бот и тестовый групповой чат. Это рекомендуемый вариант:
-  Telegram разрешает только один polling-процесс на токен, а dev-бот не смешает
-  тестовую очередь с будущей production-очередью.
-
-Установите Docker Engine и Compose plugin по
-[официальной инструкции Docker](https://docs.docker.com/engine/install/ubuntu/).
-После установки достаточно проверить:
-
-```bash
-docker --version
-docker compose version
+```text
+/home/liffesteel/tt-queue-telegram-bot  — основной репозиторий
+                 │
+                 └── git worktree (origin/develop)
+                       │
+                       ▼
+        /home/liffesteel/deploy/tt-queue-dev
+                       │
+                       ├── Docker: bot, backend, Redis, MongoDB, frontend
+                       └── frontend → 127.0.0.1:8081
+                                              │
+                                              ▼
+                  system nginx + Certbot → HTTPS-домен
 ```
 
-Если команды требуют `sudo`, можно либо использовать его в командах ниже, либо
-выполнить [post-install шаг Docker](https://docs.docker.com/engine/install/linux-postinstall).
-Добавление пользователя в группу `docker` фактически даёт ему root-подобный
-доступ к хосту — это нормально только для доверенного пользователя VPS.
+`git worktree` позволяет держать независимые checkout’ы разных веток рядом;
+основной рабочий каталог не нужно переключать для деплоя. Это штатное поведение
+Git: worktree связан с одним репозиторием, но имеет собственные `HEAD` и index.
+[Документация Git](https://git-scm.com/docs/git-worktree).
 
-## 2. DNS и сетевой доступ
+Dev-стенд должен работать с `NODE_ENV=production`. В этом проекте
+`NODE_ENV=development` отключает проверку Telegram `initData` и уведомления в
+чат из API; название окружения задаётся доменом, веткой и отдельным ботом, а не
+значением Node environment.
 
-В DNS-панели создайте запись:
+## 1. Подготовить VPS
 
-| Тип | Имя | Значение |
-| --- | --- | --- |
-| A | `tt-bot.dev` | публичный IPv4 VPS |
+Нужны Docker Engine с Compose plugin, Nginx, свободные порты `80` и `443`, а
+также отдельные dev-бот и тестовый Telegram-чат. Docker устанавливайте по
+[официальной инструкции](https://docs.docker.com/engine/install/ubuntu/).
 
-Полное имя записи будет `tt-bot.dev.liffesteel.ru`. Если существует AAAA-запись,
-она должна указывать на рабочий IPv6 этого же VPS; иначе удалите её. Проверьте
-результат уже на сервере:
-
-```bash
-dig +short A tt-bot.dev.liffesteel.ru
-dig +short AAAA tt-bot.dev.liffesteel.ru
-```
-
-Разрешите входящий HTTP/HTTPS в панели провайдера и firewall. Для UFW при
-стандартном SSH-порте это выглядит так:
+Для Ubuntu/Debian установите Nginx и откройте входящий HTTP/HTTPS (и в firewall
+провайдера, если он есть):
 
 ```bash
+sudo apt update
+sudo apt install -y nginx
 sudo ufw allow OpenSSH
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw enable
 ```
 
-Если SSH работает на нестандартном порту, сначала разрешите именно его, иначе
-не включайте UFW до проверки доступа в отдельной SSH-сессии.
+Если SSH работает на нестандартном порту, сначала разрешите именно его. Не
+устанавливайте Caddy для этого стенда: Nginx будет единственным процессом,
+который слушает `80` и `443`.
 
-Caddy автоматически получит и будет обновлять TLS-сертификат. Для этого DNS
-должен уже вести на VPS, а порты `80` и `443` должны быть доступны извне.
-[Это требования Caddy для автоматического HTTPS](https://caddyserver.com/docs/automatic-https).
+В DNS создайте только запись `A`:
 
-## 3. Подготовка проекта и секретов
+| Тип | Имя | Значение |
+| --- | --- | --- |
+| A | `tt-bot.dev` | публичный IPv4 VPS |
 
-На VPS клонируйте репозиторий в отдельный каталог и переключитесь на ветку,
-которую хотите выкатывать в dev. В примере это `develop`; замените её, если
-dev должен следить за другой веткой.
+Если для `tt-bot.dev.liffesteel.ru` есть AAAA-запись, VPS должен быть доступен
+по этому IPv6; иначе AAAA лучше удалить. Проверьте DNS на сервере:
 
 ```bash
-sudo mkdir -p /opt/tt-queue-bot
-sudo chown "$USER":"$USER" /opt/tt-queue-bot
-git clone git@github.com:testario/tt-queue-telegram-bot.git /opt/tt-queue-bot
-cd /opt/tt-queue-bot
-git switch develop
+dig +short A tt-bot.dev.liffesteel.ru
+dig +short AAAA tt-bot.dev.liffesteel.ru
 ```
 
-Создайте секретный файл окружения из шаблона:
+## 2. Создать dev worktree
+
+В проекте сейчас существует ветка `develop`. Команда ниже создаёт локальную
+ветку `deploy-dev`, отслеживающую `origin/develop`, и checkout в отдельном
+каталоге. Локальное имя `deploy-dev` важно: оно позволяет оставить `develop`
+открытой в основном рабочем каталоге, если она там уже используется.
 
 ```bash
+cd /home/liffesteel/tt-queue-telegram-bot
+git fetch origin --prune
+mkdir -p /home/liffesteel/deploy
+git worktree add --track -b deploy-dev \
+  /home/liffesteel/deploy/tt-queue-dev origin/develop
+git worktree list
+```
+
+Если ваша ветка называется `dev`, замените `origin/develop` на `origin/dev`.
+Повторно создавать существующий worktree не нужно. Если локальная ветка
+`deploy-dev` уже была создана ранее, используйте:
+
+```bash
+git worktree add /home/liffesteel/deploy/tt-queue-dev deploy-dev
+```
+
+Впоследствии для production можно будет создать соседний worktree, например
+`deploy-prod`, отслеживающий `origin/main`, но этот гайд его не создаёт.
+
+## 3. Задать dev-секреты
+
+У каждого worktree свой игнорируемый `.env`, поэтому токены и chat id не
+пересекаются с будущим production-окружением:
+
+```bash
+cd /home/liffesteel/deploy/tt-queue-dev
 cp .env.example .env
 chmod 600 .env
 nano .env
 ```
 
-Заполните как минимум:
+Заполните минимум следующие значения:
 
 ```env
-TG_BOT_API_TOKEN=<токен dev-бота из @BotFather>
-TG_CHAT_ID=<id тестового группового чата, обычно начинается с -100>
+TG_BOT_API_TOKEN=<токен отдельного dev-бота из @BotFather>
+TG_CHAT_ID=<id тестового группового чата, обычно -100...>
 WEBAPP_URL=https://tt-bot.dev.liffesteel.ru
+NODE_ENV=production
 ```
 
-Не добавляйте `.env` в Git и не отправляйте его в чат. Файл уже игнорируется
-проектом. `WEBAPP_URL` хранит публичный адрес стенда, но не настраивает кнопку
-в Telegram автоматически — это отдельный шаг ниже.
+Не добавляйте `.env` в Git. `VITE_APP_URL` не нужен: frontend этого проекта не
+читает его, а API и SSE вызываются по относительным путям того же домена.
 
-## 4. Первый запуск
+## 4. Запустить Docker-стек
 
-Убедитесь, что на VPS нет другого сервиса, занятого на `80` или `443`, затем
-соберите и запустите отдельный dev-compose:
+`docker-compose.vps-dev.yml` использует отдельное имя проекта
+`tt-queue-bot-dev`. Его Redis и MongoDB получат отдельные named volumes, что
+позволит позднее запустить production без пересечения данных.
 
 ```bash
-docker compose -f docker-compose.vps-dev.yml config
+cd /home/liffesteel/deploy/tt-queue-dev
+docker compose -f docker-compose.vps-dev.yml config --quiet
 docker compose -f docker-compose.vps-dev.yml up -d --build
 docker compose -f docker-compose.vps-dev.yml ps
 ```
 
-Ожидаемые сервисы: `mongodb`, `redis`, `bot`, `backend`, `frontend`, `caddy`.
-`mongodb` и `redis` должны стать healthy; бот и backend должны быть `Up`.
+Mini App собирается внутри Docker-образа `frontend`; выполнять `npm ci` и
+`npm run build` на VPS отдельно не нужно. Наружу Docker публикует только
+`127.0.0.1:8081`; bot, backend, Redis и MongoDB остаются во внутренней сети.
 
-Проверьте запуск и выдачу сертификата:
+Проверьте сервисы до настройки HTTPS:
 
 ```bash
-docker compose -f docker-compose.vps-dev.yml logs --tail=100 bot backend caddy
+curl http://127.0.0.1:8081/api/state
+docker compose -f docker-compose.vps-dev.yml logs --tail=100 bot backend frontend
+```
+
+Первый запрос должен вернуть JSON состояния очереди.
+
+## 5. Настроить Nginx и HTTPS
+
+Скопируйте подготовленный конфиг. Он проксирует весь сайт на Docker frontend и
+не буферизует ответы: это необходимо для SSE-потока `/api/events`.
+
+```bash
+cd /home/liffesteel/deploy/tt-queue-dev
+sudo cp deploy/nginx/tt-bot.dev.liffesteel.ru.conf \
+  /etc/nginx/sites-available/tt-bot.dev.liffesteel.ru
+sudo ln -s /etc/nginx/sites-available/tt-bot.dev.liffesteel.ru \
+  /etc/nginx/sites-enabled/tt-bot.dev.liffesteel.ru
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Проверьте HTTP до выпуска сертификата:
+
+```bash
+curl -I http://tt-bot.dev.liffesteel.ru
+```
+
+Установите Certbot для Nginx по [актуальной инструкции Certbot](https://certbot.eff.org/instructions?os=ubuntufocal&ws=nginx).
+На Ubuntu она использует snap:
+
+```bash
+sudo snap install --classic certbot
+sudo ln -s /snap/bin/certbot /usr/local/bin/certbot
+sudo certbot --nginx -d tt-bot.dev.liffesteel.ru
+sudo certbot renew --dry-run
+```
+
+Certbot добавит TLS-конфигурацию и редирект на HTTPS. Проверьте:
+
+```bash
 curl -I https://tt-bot.dev.liffesteel.ru
 curl https://tt-bot.dev.liffesteel.ru/api/state
 ```
 
-Первый запрос к HTTPS может занять немного больше времени: Caddy запрашивает
-сертификат. Второй `curl` должен вернуть JSON с состоянием очереди. Если Caddy
-не выдаёт сертификат, в первую очередь проверьте DNS, IPv6 и доступность 80/443
-снаружи, затем его логи.
+## 6. Подключить Telegram Mini App
 
-## 5. Регистрация Mini App в Telegram
+В `@BotFather` выберите dev-бота и выполните `/setmenubutton` (либо **Bot
+Settings → Menu Button**). Задайте URL:
 
-В `@BotFather` выберите dev-бота и выполните `/setmenubutton` (либо откройте
-**Bot Settings → Menu Button**). Укажите:
+```text
+https://tt-bot.dev.liffesteel.ru/app/
+```
 
-- текст кнопки, например `Открыть очередь`;
-- URL: `https://tt-bot.dev.liffesteel.ru/app/`.
-
-Telegram Mini Apps, открытые из menu button, получают URL именно из этой
-настройки. [BotFather и menu button — штатный способ настройки](https://core.telegram.org/bots/webapps#launching-mini-apps-from-the-menu-button).
-
-Добавьте dev-бота в тестовый чат, выведите его из приватного режима при
-необходимости и задайте `TG_CHAT_ID` этого чата. После изменения `.env`
-перезапустите только зависящие от него сервисы:
+Используйте отдельного dev-бота: один токен не должен одновременно обслуживаться
+несколькими polling-процессами, а menu button может указывать только на один
+адрес. После изменения `.env` перезапустите bot и backend:
 
 ```bash
 docker compose -f docker-compose.vps-dev.yml up -d --force-recreate bot backend
 ```
 
-Откройте кнопку из Telegram, а не только в обычном браузере: это проверяет
-передачу `initData`, авторизацию API и SSE-обновления. Обычный браузер может
-показать landing page — это ожидаемая защита Mini App.
+Откройте кнопку в Telegram. Это проверяет передачу `initData`, авторизацию API
+и SSE; в обычном браузере вместо Mini App может отображаться landing page — это
+ожидаемо.
 
-## 6. Обновление и обслуживание
+## 7. Независимый dev-деплой
 
-Для следующего деплоя:
+После push в `develop` обновляется только dev worktree и только dev Docker
+проект:
 
 ```bash
-cd /opt/tt-queue-bot
+cd /home/liffesteel/deploy/tt-queue-dev
 git pull --ff-only
 docker compose -f docker-compose.vps-dev.yml up -d --build
 docker compose -f docker-compose.vps-dev.yml ps
 ```
 
+Nginx перезапускать не нужно: он проксирует на постоянный localhost-порт.
+
 Полезные команды:
 
 ```bash
-# Логи конкретного сервиса
 docker compose -f docker-compose.vps-dev.yml logs -f bot
 docker compose -f docker-compose.vps-dev.yml logs -f backend
-
-# Перезапуск без пересборки
 docker compose -f docker-compose.vps-dev.yml restart bot backend
-
-# Остановка стенда с сохранением Redis, MongoDB и TLS-сертификатов
 docker compose -f docker-compose.vps-dev.yml down
 ```
 
-Не используйте `docker compose ... down -v`, если хотите сохранить очередь,
-список игроков и сертификаты: эта команда удаляет named volumes с данными.
+Последняя команда останавливает стек, но сохраняет очередь, игроков и данные
+MongoDB/Redis. Не используйте `down -v`, если данные нужно сохранить.
 
-## 7. Краткая диагностика
+## Диагностика
 
 | Симптом | Что проверить |
 | --- | --- |
-| Caddy не получает сертификат | DNS A/AAAA, свободные и доступные извне порты 80/443, `logs caddy` |
-| Бот постоянно перезапускается | `TG_BOT_API_TOKEN`, `TG_CHAT_ID`, `logs bot`; убедитесь, что другой процесс не использует этот токен для polling |
-| Mini App не открывается | в BotFather должен быть URL с HTTPS и суффиксом `/app/` |
-| API отвечает 401 в Telegram | токен в `.env` должен принадлежать тому же боту, из которого открыта Mini App |
-| Сайт открывается, но API недоступен | `logs backend frontend`; проверьте `curl https://tt-bot.dev.liffesteel.ru/api/state` |
-
-Когда понадобится production, создайте для него отдельный compose-проект,
-отдельные volumes и Caddy site для `tt-bot.liffesteel.ru`. Не меняйте этот
-dev-стенд в production-режим заменой домена: так сохраняется независимость
-данных, токенов и тестового чата.
+| Nginx отдаёт 502 | `curl http://127.0.0.1:8081/api/state`, затем `docker compose ... logs frontend backend` |
+| Mini App не обновляется | `proxy_buffering off` и `proxy_read_timeout 1h` в Nginx-конфиге, `logs backend` |
+| Бот перезапускается | токен, chat id, `logs bot`; не должен существовать второй polling с тем же токеном |
+| HTTPS не выпускается | A/AAAA, доступность 80/443 снаружи, `sudo nginx -t`, логи Certbot |
+| API возвращает 401 в Telegram | dev-бот в `.env` должен совпадать с ботом, из которого открыта Mini App |

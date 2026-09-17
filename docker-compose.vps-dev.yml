@@ -4,8 +4,6 @@ services:
   mongodb:
     image: mongo:7
     restart: unless-stopped
-    volumes:
-      - mongodb_data:/data/db
     environment:
       MONGO_INITDB_DATABASE: tt-queue-bot
     healthcheck:
@@ -19,9 +17,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --save "" --appendonly no
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -74,10 +70,6 @@ services:
       - backend
     networks:
       - internal
-
-volumes:
-  mongodb_data:
-  redis_data:
 
 networks:
   internal:

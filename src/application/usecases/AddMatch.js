@@ -1,5 +1,6 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 import { Match } from "#domain";
+import { updateQueueState } from "./queueStateCas.js";
 
 /**
  * @typedef {import("#application/types.js").QueueRepository} QueueRepository
@@ -53,9 +54,22 @@ class AddMatch {
    */
   async execute(player1, player2, { scheduleLifecycle = true } = {}) {
     this.logger.info("Попытка создать матч", { player1, player2 });
-    const state = await this.repository.get();
     const now = this.clock.now();
-    const result = this.queueService.scheduleMatch(state, player1, player2, now);
+    const { result, match } = await updateQueueState({
+      repository: this.repository,
+      logger: this.logger,
+      operation: "add_match",
+      mutate: (state) => {
+        const result = this.queueService.scheduleMatch(state, player1, player2, now);
+        if (!result.ok) return { state: result.state, result, match: null, save: false };
+
+        const { match } = result;
+        if (!scheduleLifecycle && match.status === Match.statuses.playing) {
+          match.status = Match.statuses.waiting;
+        }
+        return { state: result.state, result, match };
+      },
+    });
 
     if (!result.ok) {
       this.logger.warn("Матч не создан", { player1, player2, reason: result.reason });
@@ -66,12 +80,6 @@ class AddMatch {
       };
     }
 
-    const { match } = result;
-    if (!scheduleLifecycle && match.status === Match.statuses.playing) {
-      match.status = Match.statuses.waiting;
-    }
-
-    await this.repository.save(result.state);
     this.logger.info("Матч создан", {
       player1: match.player1,
       player2: match.player2,
@@ -115,4 +123,3 @@ class AddMatch {
 }
 
 export { AddMatch };
-

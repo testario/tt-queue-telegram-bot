@@ -8,7 +8,8 @@ import { QueueState } from "#domain/entities/QueueState.js";
  */
 class InMemoryQueueRepository {
   constructor(initialState) {
-    this.state = initialState || QueueState.createEmpty();
+    this.state = QueueState.from(initialState || QueueState.createEmpty()).clone()
+    this.revision = 0
   }
 
   /**
@@ -16,7 +17,11 @@ class InMemoryQueueRepository {
    * @returns {Promise<QueueState>}
    */
   async get() {
-    return this.state;
+    return this.state.clone()
+  }
+
+  async getVersioned() {
+    return { state: this.state.clone(), revision: this.revision }
   }
 
   /**
@@ -25,9 +30,16 @@ class InMemoryQueueRepository {
    * @returns {Promise<void>}
    */
   async save(state) {
-    this.state = state;
+    this.state = QueueState.from(state).clone()
+    this.revision += 1
+  }
+
+  async saveIfRevision(expectedRevision, state) {
+    if (Number(expectedRevision) !== this.revision) return false
+    this.state = QueueState.from(state).clone()
+    this.revision += 1
+    return true
   }
 }
 
 export { InMemoryQueueRepository };
-

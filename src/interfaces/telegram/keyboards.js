@@ -45,18 +45,22 @@ export const buildMatchCancelKeyboard = (match, ui, log = null) => {
 
 /**
  * Клавиатура для прямого приглашения (принять / отклонить / отменить).
- * @param {{ player: string, opponent: string }} invite
+ * @param {{ inviteId: string }} invite
  * @param {{ inline: { directAccept: string, directDecline: string, directCancel: string } }} ui
  * @returns {{ inline_keyboard: Array }}
  */
-export const buildDirectInviteKeyboard = (invite, ui) => ({
-  inline_keyboard: [
-    [
-      { text: ui.inline.directAccept, callback_data: `direct_accept:${invite.player},${invite.opponent}` },
-      { text: ui.inline.directDecline, callback_data: `direct_decline:${invite.player},${invite.opponent}` },
+export const buildDirectInviteKeyboard = (invite, ui) => {
+  if (!invite?.inviteId) return undefined
+
+  return {
+    inline_keyboard: [
+      [
+        { text: ui.inline.directAccept, callback_data: `direct_accept:${invite.inviteId}` },
+        { text: ui.inline.directDecline, callback_data: `direct_decline:${invite.inviteId}` },
+      ],
+      [
+        { text: ui.inline.directCancel, callback_data: `direct_cancel:${invite.inviteId}` },
+      ],
     ],
-    [
-      { text: ui.inline.directCancel, callback_data: `direct_cancel:${invite.player},${invite.opponent}` },
-    ],
-  ],
-})
+  }
+}

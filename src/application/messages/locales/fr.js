@@ -163,6 +163,7 @@ const createFrUi = () => ({
     testModeDisabled: "Mode test désactivé",
     directNotTarget: "Seul l’adversaire invité peut répondre",
     directNotAuthor: "Seul l’auteur peut annuler l’invitation",
+    actionFailed: "Action échouée à cause d’une modification concurrente, réessaie.",
   },
   test: {
     playerName: ({ timestamp, index, suffix }) => `Test_${timestamp}_${index}_${suffix}`,

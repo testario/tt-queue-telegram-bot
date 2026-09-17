@@ -27,8 +27,13 @@ import { CancelMatch } from "#application/usecases/CancelMatch.js";
 import { GetQueue } from "#application/usecases/GetQueue.js";
 import { GetPlayed } from "#application/usecases/GetPlayed.js";
 import { parseCallbackData } from "#application/parsers/callbackData.js";
+import {
+  updateQueueState,
+  QueueStateConflictError,
+} from "#application/usecases/queueStateCas.js";
 import { UsageMetricsService } from "#application/services/UsageMetricsService.js";
 import { MongoUsageMetricsRepository } from "#infrastructure/metrics/MongoUsageMetricsRepository.js";
+import { InMemoryInvitesStore } from "#infrastructure/invites/InMemoryInvitesStore.js";
 import { Match } from "#domain";
 
 /**
@@ -64,15 +69,32 @@ import { Match } from "#domain";
 /**
  * Создает и настраивает Telegram-бота с контекстами чатов.
  * @param {string} token
- * @param {{ logger?: Logger, locale?: string, metricsEnabled?: boolean }} [options]
+ * @param {{ logger?: Logger, locale?: string, metricsEnabled?: boolean, invitesStore?: object }} [options]
  * @returns {TelegramApi}
  */
-const createBot = (token, { logger, locale, metricsEnabled = false, playersRepository = null, queueRepository = null, eventBus = null } = {}) => {
+const createBot = (
+  token,
+  {
+    logger,
+    locale,
+    metricsEnabled = false,
+    playersRepository = null,
+    queueRepository = null,
+    eventBus = null,
+    invitesStore = null,
+    lifecycleManagedExternally = false,
+    onQueueChanged = null,
+    autoStartPolling = true,
+    onDispose: initialDisposeHandler = null,
+    onStop: ownerShutdown = null,
+  } = {}
+) => {
   const { messages: rawMessages, ui, locale: currentLocale } = createLocalization({
     ...I18N_CONFIG,
     locale: locale || I18N_CONFIG.locale,
   });
   const log = logger || createLogger({ prefix: "bot" });
+  const directInvitesStore = invitesStore || new InMemoryInvitesStore();
   const playerDisplayNames = new Map();
 
   const composeDisplayName = ({ username, firstName, lastName }) => {
@@ -233,6 +255,9 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
     return elapsedMs >= PAUSE_CANCEL_MATCH_MS;
   };
 
+  const shouldHoldMatch = (chatId, match, now) =>
+    isPauseModeEnabled(chatId) && !shouldKeepMatchOnPause(match, now);
+
   /**
    * Парсит период для метрик из строки вида "24h", "7d", "2w".
    * @param {string} rawRange
@@ -299,6 +324,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
   });
 
   const startLongPolling = async () => {
+    if (isStopped) return;
     try {
       await bot.deleteWebHook();
       log.info("Webhook отключен перед запуском long polling");
@@ -381,9 +407,88 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
   };
 
   let isStopped = false;
+  let stopCommandStarted = false;
+  let disposePromise = null;
+  const disposeHandlers = new Set();
+  if (typeof initialDisposeHandler === "function") {
+    disposeHandlers.add(initialDisposeHandler);
+  }
+
+  const onDispose = (handler) => {
+    if (typeof handler !== "function") return () => {};
+    if (disposePromise) {
+      void disposePromise.then(() => handler()).catch((error) =>
+        log.error("Ошибка dispose-handler", { message: error.message })
+      );
+      return () => {};
+    }
+    disposeHandlers.add(handler);
+    return () => disposeHandlers.delete(handler);
+  };
+
+  const dispose = async () => {
+    if (disposePromise) return disposePromise;
+    disposePromise = (async () => {
+      isStopped = true;
+      try {
+        await bot.stopPolling();
+        log.info("Polling остановлен");
+      } catch (error) {
+        log.error("Ошибка остановки polling", { message: error.message });
+      }
+
+      for (const handler of disposeHandlers) {
+        try {
+          await handler();
+        } catch (error) {
+          log.error("Ошибка dispose-handler", { message: error.message });
+        }
+      }
+      disposeHandlers.clear();
+
+      for (const context of contexts.values()) {
+        try {
+          context.orchestrator.cancelAll();
+        } catch (error) {
+          log.error("Ошибка при отмене таймеров", {
+            chatId: context.chatId,
+            message: error.message,
+          });
+        }
+      }
+      for (const context of contexts.values()) {
+        if (typeof context.orchestrator.dispose !== "function") continue;
+        try {
+          await context.orchestrator.dispose();
+        } catch (error) {
+          log.error("Ошибка drain lifecycle таймеров", {
+            chatId: context.chatId,
+            message: error.message,
+          });
+        }
+      }
+    })();
+    return disposePromise;
+  };
   const MAX_TEST_MATCHES = 10;
   const MAX_CALLBACK_DATA_BYTES = 64;
   const isTestFeatureEnabled = process.env.ENABLE_TEST_FEATURE === "true";
+
+  bot.onText(/^\/start(?:@[\w_]+)?/, async (msg) => {
+    rememberUserDisplayName(msg.from);
+    trackUsage("command:start");
+
+    if (!msg.chat?.id) return;
+
+    try {
+      await bot.sendMessage(msg.chat.id, messages.greet());
+    } catch (error) {
+      log.error("Не удалось отправить приветствие по /start", {
+        chatId: msg.chat.id,
+        message: error.message,
+      });
+    }
+  });
 
   /**
    * Проверяет, является ли ошибка "message is not modified".
@@ -524,6 +629,16 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       logger: log.child(`service:orchestrator:${chatId}`),
     });
 
+    const usecaseOrchestrator = lifecycleManagedExternally
+      ? {
+          scheduleLifecycle: () => {},
+          scheduleFinish: () => {},
+          cancelForMatch: (...args) => orchestrator.cancelForMatch(...args),
+          cancelAll: (...args) => orchestrator.cancelAll(...args),
+          handleMatchFinished: (...args) => orchestrator.handleMatchFinished(...args),
+        }
+      : orchestrator;
+
     const registerSearch = new RegisterSearch({
       repository,
       queueService,
@@ -535,7 +650,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       chatId,
       repository,
       queueService,
-      orchestrator,
+      orchestrator: usecaseOrchestrator,
       notifier,
       messages,
       clock,
@@ -560,7 +675,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       chatId,
       repository,
       queueService,
-      orchestrator,
+      orchestrator: usecaseOrchestrator,
       notifier,
       messages,
       clock,
@@ -599,6 +714,8 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
 
     notifier.onMessage(({ chatId: targetChatId, text, meta }) => {
       if (targetChatId !== chatId) return;
+      onQueueChanged?.({ chatId, meta });
+      if (meta?.type === "state_update") return;
 
       const replyMarkup =
         meta && meta.match && (meta.type === "match_created" || meta.type === "match_started")
@@ -625,37 +742,111 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
   const buildMatchCancelKeyboard = (match) => buildMatchCancelKeyboardFn(match, ui, log);
   const buildDirectInviteKeyboard = (invite) => buildDirectInviteKeyboardFn(invite, ui);
 
+  const answerStaleDirectInvite = (callbackId) =>
+    bot
+      .answerCallbackQuery(callbackId, {
+        text: ui.callback.matchNotFound,
+        show_alert: true,
+      })
+      .catch(console.error);
+
+  const deleteDirectInvite = async (player) => {
+    try {
+      await directInvitesStore.deleteByPlayer(player);
+    } catch (error) {
+      log.error("Не удалось удалить прямое приглашение", { player, message: error.message });
+    }
+  };
+
+  const createDirectInvite = async (context, player, opponentRaw) => {
+    const opponent = context.directMatch.normalizeOpponent(opponentRaw);
+    if (!player || !opponent) return context.directMatch.execute(player, opponentRaw);
+
+    const invite = await directInvitesStore.create({ player, opponent, createdAt: Date.now() });
+    if (!invite) {
+      return { ok: false, reason: "invite_exists", text: messages.matchAlreadyInQueue() };
+    }
+
+    try {
+      const result = await context.directMatch.execute(player, opponent);
+      if (!result.ok) await deleteDirectInvite(player);
+      if (result.ok) context.notifier.notify(context.chatId, "", { type: "state_update" });
+      return result.ok ? { ...result, invite } : result;
+    } catch (error) {
+      await deleteDirectInvite(player);
+      throw error;
+    }
+  };
+
+  const consumeDirectInvite = async (context, callbackId, inviteId, actor, role) => {
+    if (!inviteId) {
+      answerStaleDirectInvite(callbackId);
+      return null;
+    }
+
+    try {
+      const invite = await directInvitesStore.consume(inviteId, actor, role);
+      if (!invite) {
+        answerStaleDirectInvite(callbackId);
+      }
+      return invite;
+    } catch (error) {
+      log.error("Не удалось обработать прямое приглашение", { message: error.message });
+      bot
+        .answerCallbackQuery(callbackId, {
+          text: ui.callback.contextMissing,
+          show_alert: true,
+        })
+        .catch(console.error);
+      return null;
+    }
+  };
+
   const freezeQueueForPause = async (context) => {
     if (!context) return { hasQueue: false };
-    const state = await context.repository.get();
-    if (!state.queue.length) {
-      return { hasQueue: false };
-    }
+    const result = await updateQueueState({
+      repository: context.repository,
+      logger: log,
+      operation: "bot_pause",
+      mutate: (state) => {
+        if (!state.queue.length) return { state, hasQueue: false, save: false };
 
-    const now = context.clock.now();
-    const currentMatch = state.queue[0];
-    const shouldKeepCurrent = shouldKeepMatchOnPause(currentMatch, now);
+        const now = context.clock.now();
+        const currentMatch = state.queue[0];
+        const shouldKeepCurrent = shouldKeepMatchOnPause(currentMatch, now);
 
-    if (!shouldKeepCurrent) {
-      context.orchestrator.cancelAll();
-      state.queue.forEach((item) => {
-        item.status = Match.statuses.waiting;
-      });
-    } else {
-      state.queue.forEach((item, index) => {
-        if (index > 0) {
-          item.status = Match.statuses.waiting;
+        if (!shouldKeepCurrent) {
+          state.queue.forEach((item) => {
+            item.status = Match.statuses.waiting;
+          });
+        } else {
+          state.queue.forEach((item, index) => {
+            if (index > 0) {
+              item.status = Match.statuses.waiting;
+            }
+          });
         }
-      });
-    }
 
-    context.queueService.recalculateWaiting(state);
-    await context.repository.save(state);
+        state.holdNextMatch = shouldKeepCurrent;
+        context.queueService.recalculateWaiting(state);
+        return {
+          state,
+          hasQueue: true,
+          currentMatch,
+          currentMatchContinues: shouldKeepCurrent,
+        };
+      },
+    });
+
+    if (!result.hasQueue) return { hasQueue: false };
+
+    if (!result.currentMatchContinues) context.orchestrator.cancelAll();
+    onQueueChanged?.({ chatId: context.chatId, meta: { type: "state_update" } });
     return {
       hasQueue: true,
-      nextMatch: state.queue[0],
-      currentMatch,
-      currentMatchContinues: shouldKeepCurrent,
+      nextMatch: result.state.queue[0],
+      currentMatch: result.currentMatch,
+      currentMatchContinues: result.currentMatchContinues,
     };
   };
 
@@ -679,8 +870,26 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
     inlineMessageId = undefined,
     source = "pause",
   }) => {
-    setPauseMode(chatId, true);
-    const freezeResult = await freezeQueueForPause(context);
+    let freezeResult;
+    try {
+      freezeResult = await freezeQueueForPause(context);
+    } catch (error) {
+      if (!(error instanceof QueueStateConflictError)) throw error;
+      log.error("Не удалось включить режим паузы: исчерпаны попытки CAS", {
+        chatId,
+        username,
+        source,
+        message: error.message,
+      });
+      await respondEmergeMessage({
+        chatId,
+        text: ui.callback.actionFailed,
+        replyToMessageId,
+        inlineMessageId,
+      });
+      return;
+    }
+    if (freezeResult.hasQueue) setPauseMode(chatId, true);
     log.info("Режим паузы включен", {
       chatId,
       username,
@@ -699,24 +908,53 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
 
   const resumeQueueAfterPause = async (context) => {
     if (!context) return { hasQueue: false };
-    const state = await context.repository.get();
-    if (!state.queue.length) {
-      return { hasQueue: false };
-    }
     const now = context.clock.now();
-    const nextMatch = state.queue[0];
-    const isCurrentPlaying =
-      nextMatch.status === Match.statuses.playing && now >= nextMatch.startDate;
-    if (isCurrentPlaying) {
-      return { hasQueue: true, currentMatchContinues: true, currentMatch: nextMatch };
+    let result;
+    try {
+      result = await updateQueueState({
+        repository: context.repository,
+        logger: log,
+        operation: "bot_resume_queue",
+        mutate: (state) => {
+          if (!state.queue.length) return { state, hasQueue: false, save: false };
+          const nextMatch = state.queue[0];
+          const isCurrentPlaying =
+            nextMatch.status === Match.statuses.playing && now >= nextMatch.startDate;
+          if (isCurrentPlaying) {
+            state.holdNextMatch = false;
+            return {
+              state,
+              hasQueue: true,
+              currentMatchContinues: true,
+              currentMatch: nextMatch,
+            };
+          }
+          nextMatch.status = Match.statuses.playing;
+          nextMatch.startDate = new Date(now.getTime() + context.queueService.readyMs);
+          nextMatch.endDate = new Date(nextMatch.startDate.getTime() + context.queueService.gameMs);
+          state.holdNextMatch = false;
+          context.queueService.recalculateWaiting(state);
+          return { state, hasQueue: true, nextMatch };
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof QueueStateConflictError)) throw error;
+      log.error("Не удалось снять режим паузы: исчерпаны попытки CAS", {
+        chatId: context.chatId,
+        message: error.message,
+      });
+      return { hasQueue: false, conflict: true };
     }
-    nextMatch.status = Match.statuses.playing;
-    nextMatch.startDate = new Date(now.getTime() + context.queueService.readyMs);
-    nextMatch.endDate = new Date(nextMatch.startDate.getTime() + context.queueService.gameMs);
-    context.queueService.recalculateWaiting(state);
-    await context.repository.save(state);
-    context.orchestrator.scheduleLifecycle(nextMatch);
-    return { hasQueue: true, nextMatch };
+
+    if (!result.hasQueue) return { hasQueue: false };
+
+    setPauseMode(context.chatId, false);
+    onQueueChanged?.({ chatId: context.chatId, meta: { type: "state_update" } });
+    if (result.currentMatchContinues) {
+      return { hasQueue: true, currentMatchContinues: true, currentMatch: result.currentMatch };
+    }
+    if (!lifecycleManagedExternally) context.orchestrator.scheduleLifecycle(result.nextMatch);
+    return { hasQueue: true, nextMatch: result.nextMatch };
   };
 
   const notifyQueuePausedIfNeeded = async (chatId, replyToMessageId) => {
@@ -836,10 +1074,37 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
     const storedEmerge = emergeStateByChat.get(chatKey);
     if (!storedEmerge) return { handled: false };
 
-    const state = await context.repository.get();
-    const currentMatch = state.queue[0];
+    let result;
+    try {
+      result = await updateQueueState({
+        repository: context.repository,
+        logger: log,
+        operation: "bot_resume_emerge",
+        mutate: (state) => {
+          const currentMatch = state.queue[0];
+          if (!currentMatch || buildMatchKey(currentMatch) !== storedEmerge.matchKey) {
+            return { state, save: false, stale: true };
+          }
+          if (storedEmerge.remainingMs <= EMERGE_RESUME_MIN_MS) {
+            return { state, save: false, tooLate: true, currentMatch };
+          }
+          const now = context.clock.now();
+          currentMatch.status = Match.statuses.playing;
+          currentMatch.startDate = now;
+          currentMatch.endDate = new Date(now.getTime() + storedEmerge.remainingMs);
+          return { state, save: true, currentMatch };
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof QueueStateConflictError)) throw error;
+      log.error("Не удалось возобновить матч после emerge: исчерпаны попытки CAS", {
+        chatId,
+        message: error.message,
+      });
+      return { handled: false, conflict: true };
+    }
 
-    if (!currentMatch || buildMatchKey(currentMatch) !== storedEmerge.matchKey) {
+    if (result.stale) {
       emergeStateByChat.delete(chatKey);
       await respondEmergeMessage({
         chatId,
@@ -849,33 +1114,29 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       return { handled: true };
     }
 
-    emergeStateByChat.delete(chatKey);
-
-    if (storedEmerge.remainingMs <= EMERGE_RESUME_MIN_MS) {
+    if (result.tooLate) {
+      emergeStateByChat.delete(chatKey);
       await respondEmergeMessage({
         chatId,
         text: messages.emergeTooLate({
-          player1: currentMatch.player1,
-          player2: currentMatch.player2,
+          player1: result.currentMatch.player1,
+          player2: result.currentMatch.player2,
         }),
         replyToMessageId,
       });
-      await context.orchestrator.handleMatchFinished(currentMatch);
+      await context.orchestrator.handleMatchFinished(result.currentMatch);
       return { handled: true };
     }
 
-    const now = context.clock.now();
-    currentMatch.status = Match.statuses.playing;
-    currentMatch.startDate = now;
-    currentMatch.endDate = new Date(now.getTime() + storedEmerge.remainingMs);
-    await context.repository.save(state);
-    context.orchestrator.scheduleFinish(currentMatch);
+    emergeStateByChat.delete(chatKey);
+    onQueueChanged?.({ chatId: context.chatId, meta: { type: "state_update" } });
+    if (!lifecycleManagedExternally) context.orchestrator.scheduleFinish(result.currentMatch);
 
     await respondEmergeMessage({
       chatId,
       text: messages.emergeResumed({
-        player1: currentMatch.player1,
-        player2: currentMatch.player2,
+        player1: result.currentMatch.player1,
+        player2: result.currentMatch.player2,
         remainingMinutes: Math.ceil(storedEmerge.remainingMs / (60 * 1000)),
       }),
       replyToMessageId,
@@ -934,32 +1195,25 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
    * @returns {Promise<void>}
    */
   const stopBot = async (chatId, username) => {
-    if (isStopped) {
+    if (isStopped || stopCommandStarted) {
       log.info("Получена повторная команда /stop, бот уже остановлен", { chatId, username });
       return;
     }
-    isStopped = true;
+    stopCommandStarted = true;
     log.warn("Остановка бота по команде /stop", { chatId, username });
-    contexts.forEach((context) => {
-      try {
-        context.orchestrator.cancelAll();
-      } catch (error) {
-        log.error("Ошибка при отмене таймеров", {
-          chatId: context.chatId,
-          message: error.message,
-        });
-      }
-    });
     try {
       await bot.sendMessage(chatId, messages.botStopped());
     } catch (error) {
       log.error("Не удалось отправить сообщение об остановке", { message: error.message });
     }
-    try {
-      await bot.stopPolling();
-      log.info("Polling остановлен");
-    } catch (error) {
-      log.error("Ошибка остановки polling", { message: error.message });
+    if (typeof ownerShutdown === "function") {
+      try {
+        await ownerShutdown();
+      } catch (error) {
+        log.error("Ошибка owner-level shutdown по /stop", { message: error.message });
+      }
+    } else {
+      await dispose();
     }
   };
 
@@ -1049,6 +1303,12 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       context,
       replyToMessageId: msg.message_id,
     });
+    if (emergeResult.conflict) {
+      await bot.sendMessage(chatId, ui.callback.actionFailed, {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
     const pauseEnabled = isPauseModeEnabled(chatId);
 
     if (!pauseEnabled && !emergeResult.handled) {
@@ -1067,7 +1327,6 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       return;
     }
 
-    setPauseMode(chatId, false);
     const resumeResult = await resumeQueueAfterPause(context);
     log.info("Режим паузы выключен", {
       chatId,
@@ -1075,6 +1334,13 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       queueStarted: resumeResult.hasQueue,
       currentMatchContinues: resumeResult.currentMatchContinues,
     });
+
+    if (resumeResult.conflict) {
+      await bot.sendMessage(chatId, ui.callback.actionFailed, {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
 
     if (!resumeResult.hasQueue) {
       await bot.sendMessage(chatId, messages.pauseModeDisabledNoQueue(), {
@@ -1312,7 +1578,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
     log.info("Получена команда /play", { chatId, player, opponentRaw });
 
     try {
-      const result = await context.directMatch.execute(player, opponentRaw);
+      const result = await createDirectInvite(context, player, opponentRaw);
       trackUsage("usecase:direct_match", { ok: result.ok, reason: result.reason });
       if (!result.ok) {
         await bot.sendMessage(chatId, result.text, {
@@ -1533,7 +1799,18 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
       await handleEmerge({ chatId, context, userId, inlineMessageId });
     } else if (resultId?.startsWith("direct:")) {
       const opponentRaw = decodeURIComponent(resultId.replace("direct:", ""));
-      const directResult = await context.directMatch.execute(player, opponentRaw);
+      let directResult;
+      try {
+        directResult = await createDirectInvite(context, player, opponentRaw);
+      } catch (error) {
+        log.error("Ошибка создания прямого приглашения из inline", { message: error.message });
+        if (inlineMessageId) {
+          bot
+            .editMessageText(ui.callback.contextMissing, { inline_message_id: inlineMessageId })
+            .catch((editError) => handleEditMessageError(editError, "Не удалось показать ошибку inline direct"));
+        }
+        return;
+      }
 
       // Всегда отправляем приглашение в общий чат
       const sendInvite = (text, invite) =>
@@ -1572,7 +1849,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
     }
   });
 
-  bot.on("callback_query", async (callbackQuery) => {
+  const handleCallbackQuery = async (callbackQuery) => {
     const callbackId = callbackQuery.id;
     const messageId = callbackQuery.inline_message_id;
     const player2 = "@" + callbackQuery.from.username;
@@ -1695,6 +1972,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
             );
         }
       } else {
+        context.notifier.notify(context.chatId, "", { type: "state_update" });
         bot
           .answerCallbackQuery(callbackId, {
             text: ui.callback.cancelAlreadyRemoved,
@@ -1745,27 +2023,9 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
         }
       }
     } else if (parsed.type === "direct_accept") {
-      const [player1, invited] = parsed.players || [];
-
-      if (!player1 || !invited) {
-        bot
-          .answerCallbackQuery(callbackId, {
-            text: ui.callback.contextNotFound,
-            show_alert: true,
-          })
-          .catch(console.error);
-        return;
-      }
-
-      if (player2 !== invited) {
-        bot
-          .answerCallbackQuery(callbackId, {
-            text: ui.callback.directNotTarget,
-            show_alert: true,
-          })
-          .catch(console.error);
-        return;
-      }
+      const invite = await consumeDirectInvite(context, callbackId, parsed.inviteId, player2, "opponent");
+      if (!invite) return;
+      const { player: player1, opponent: invited } = invite;
 
       const addResult = await addMatch.execute(player1, player2, {
         scheduleLifecycle: !isPauseModeEnabled(chatId),
@@ -1796,29 +2056,12 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
           .catch(console.error);
       }
     } else if (parsed.type === "direct_decline") {
-      const [player1, invited] = parsed.players || [];
-
-      if (!player1 || !invited) {
-        bot
-          .answerCallbackQuery(callbackId, {
-            text: ui.callback.contextNotFound,
-            show_alert: true,
-          })
-          .catch(console.error);
-        return;
-      }
-
-      if (player2 !== invited) {
-        bot
-          .answerCallbackQuery(callbackId, {
-            text: ui.callback.directNotTarget,
-            show_alert: true,
-          })
-          .catch(console.error);
-        return;
-      }
+      const invite = await consumeDirectInvite(context, callbackId, parsed.inviteId, player2, "opponent");
+      if (!invite) return;
+      const { player: player1, opponent: invited } = invite;
 
       await cancelSearch.execute(player1);
+      context.notifier.notify(context.chatId, "", { type: "state_update" });
       const editOptions = buildEditOptions();
       if (editOptions) {
         bot
@@ -1835,32 +2078,17 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
           );
       }
     } else if (parsed.type === "direct_cancel") {
-      const [player1, invited] = parsed.players || [];
+      const inviteId = parsed.inviteId;
       const canDelete =
         callbackQuery.message?.chat?.id !== undefined &&
         callbackQuery.message?.message_id !== undefined;
 
-      if (!player1 || !invited) {
-        bot
-          .answerCallbackQuery(callbackId, {
-            text: ui.callback.contextNotFound,
-            show_alert: true,
-          })
-          .catch(console.error);
-        return;
-      }
-
-      if (player2 !== player1) {
-        bot
-          .answerCallbackQuery(callbackId, {
-            text: ui.callback.directNotAuthor,
-            show_alert: true,
-          })
-          .catch(console.error);
-        return;
-      }
+      const invite = await consumeDirectInvite(context, callbackId, inviteId, player2, "initiator");
+      if (!invite) return;
+      const { player: player1, opponent: invited } = invite;
 
       await cancelSearch.execute(player1);
+      context.notifier.notify(context.chatId, "", { type: "state_update" });
       if (canDelete) {
         bot
           .deleteMessage(chatId, callbackQuery.message.message_id)
@@ -1940,6 +2168,25 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
         log.info("Тестовые матчи созданы через callback inline_test", { count: created.length });
       }
     }
+  };
+
+  // Ошибки обработки callback не должны приводить к unhandled rejection:
+  // отвечаем дружелюбным alert и логируем (включая QueueStateConflictError из CAS).
+  bot.on("callback_query", async (callbackQuery) => {
+    try {
+      await handleCallbackQuery(callbackQuery);
+    } catch (error) {
+      log.error("Ошибка обработки callback", {
+        data: callbackQuery.data,
+        message: error.message,
+      });
+      bot
+        .answerCallbackQuery(callbackQuery.id, {
+          text: ui.callback.actionFailed,
+          show_alert: true,
+        })
+        .catch(console.error);
+    }
   });
 
   bot.on("polling_error", (error) => {
@@ -1950,7 +2197,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
     getContext(queueChatId);
   }
 
-  void startLongPolling();
+  if (autoStartPolling) void startLongPolling();
 
   return {
     bot,
@@ -1963,8 +2210,13 @@ const createBot = (token, { logger, locale, metricsEnabled = false, playersRepos
     resumeEmergeAfterContinue,
     resumeQueueAfterPause,
     handleEmerge,
+    shouldHoldMatch,
     messages,
     ui,
+    buildMatchCancelKeyboard,
+    startPolling: startLongPolling,
+    dispose,
+    onDispose,
     log,
   };
 };

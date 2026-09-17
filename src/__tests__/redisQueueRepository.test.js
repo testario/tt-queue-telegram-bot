@@ -6,8 +6,9 @@ import { QueueState } from '#domain/entities/QueueState.js'
 describe('RedisQueueRepository', () => {
   let client, repo
 
-  beforeEach(() => {
+  beforeEach(async () => {
     client = new RedisMock()
+    await client.flushall()
     repo = new RedisQueueRepository({ client })
   })
 
@@ -37,5 +38,40 @@ describe('RedisQueueRepository', () => {
     const loaded = await repo.get()
     expect(loaded.queue[0].startDate).toBeInstanceOf(Date)
     expect(loaded.queue[0].endDate).toBeInstanceOf(Date)
+  })
+
+  it('читает revision и сохраняет его атомарно вместе с состоянием', async () => {
+    const initial = await repo.getVersioned()
+    const state = QueueState.createEmpty()
+    state.addSearching('@player1')
+
+    await repo.save(state)
+
+    expect(initial.revision).toBe(0)
+    expect((await repo.getVersioned()).revision).toBe(1)
+  })
+
+  it('отклоняет stale CAS и сохраняет unrelated changes', async () => {
+    const first = QueueState.createEmpty()
+    first.addSearching('@first')
+    await repo.save(first)
+    const versioned = await repo.getVersioned()
+
+    const changed = QueueState.createEmpty()
+    changed.addSearching('@second')
+    await repo.save(changed)
+
+    expect(await repo.saveIfRevision(versioned.revision, QueueState.createEmpty())).toBe(false)
+    expect((await repo.get()).searching).toEqual(['@second'])
+  })
+
+  it('считает legacy state версией 0', async () => {
+    const state = QueueState.createEmpty()
+    state.addSearching('@legacy')
+    await client.set('queue:state', JSON.stringify(state))
+
+    const versioned = await repo.getVersioned()
+    expect(versioned.revision).toBe(0)
+    expect(versioned.state.searching).toEqual(['@legacy'])
   })
 })

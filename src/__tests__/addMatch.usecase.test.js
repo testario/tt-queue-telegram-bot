@@ -12,8 +12,8 @@ import {
 import { QueueState } from "#domain/entities/QueueState.js";
 
 const createRepo = (state = {}) => ({
-  get: jest.fn().mockResolvedValue(state),
-  save: jest.fn(),
+  getVersioned: jest.fn().mockResolvedValue({ state, revision: 0 }),
+  saveIfRevision: jest.fn().mockResolvedValue(true),
 });
 
 const baseDeps = ({ matchStatus = Match.statuses.playing } = {}) => {
@@ -55,7 +55,7 @@ describe("AddMatch use case", () => {
 
     expect(result.ok).toBe(true);
     expect(queueService.scheduleMatch).toHaveBeenCalled();
-    expect(repository.save).toHaveBeenCalledWith({ some: "state" });
+    expect(repository.saveIfRevision).toHaveBeenCalledWith(0, { some: "state" });
     expect(notifier.notify).toHaveBeenCalledWith(42, expect.any(String), {
       type: "match_created",
       match: expect.objectContaining({ player1: "@p1", player2: "@p2" }),
@@ -82,7 +82,7 @@ describe("AddMatch use case", () => {
     expect(result.ok).toBe(true);
     expect(result.match.status).toBe(Match.statuses.waiting);
     expect(orchestrator.scheduleLifecycle).not.toHaveBeenCalled();
-    expect(repository.save).toHaveBeenCalledWith({ some: "state" });
+    expect(repository.saveIfRevision).toHaveBeenCalledWith(0, { some: "state" });
   });
 });
 
@@ -162,8 +162,11 @@ describe("AddMatch use case", () => {
 
   test("возвращает текст ошибки и не сохраняет состояние при сбое планирования", async () => {
     const failingRepository = {
-      get: jest.fn().mockResolvedValue(QueueState.createEmpty()),
-      save: jest.fn(),
+      getVersioned: jest.fn().mockResolvedValue({
+        state: QueueState.createEmpty(),
+        revision: 0,
+      }),
+      saveIfRevision: jest.fn(),
     };
     const failingQueueService = {
       scheduleMatch: jest.fn().mockReturnValue({
@@ -188,9 +191,8 @@ describe("AddMatch use case", () => {
 
     expect(result.ok).toBe(false);
     expect(result.text).toBe(templates.matchSamePlayer());
-    expect(failingRepository.save).not.toHaveBeenCalled();
+    expect(failingRepository.saveIfRevision).not.toHaveBeenCalled();
     expect(stubNotifier.notify).not.toHaveBeenCalled();
     expect(stubOrchestrator.scheduleLifecycle).not.toHaveBeenCalled();
   });
 });
-

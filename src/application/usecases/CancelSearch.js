@@ -1,4 +1,5 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
+import { updateQueueState } from "./queueStateCas.js";
 
 /**
  * @typedef {import("#application/types.js").QueueRepository} QueueRepository
@@ -33,14 +34,13 @@ class CancelSearch {
    */
   async execute(player) {
     this.logger.info("Запрошена отмена поиска", { player });
-    const state = await this.repository.get();
     const now = this.clock.now();
-    const { state: nextState, status } = this.queueService.cancelSearch(
-      state,
-      player,
-      now
-    );
-    await this.repository.save(nextState);
+    const { status } = await updateQueueState({
+      repository: this.repository,
+      logger: this.logger,
+      operation: "cancel_search",
+      mutate: (state) => this.queueService.cancelSearch(state, player, now),
+    });
 
     if (status === "removed") {
       this.logger.info("Поиск удален", { player });
@@ -56,4 +56,3 @@ class CancelSearch {
 }
 
 export { CancelSearch };
-

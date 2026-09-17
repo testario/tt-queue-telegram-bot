@@ -1,4 +1,5 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
+import { updateQueueState } from "./queueStateCas.js";
 
 /**
  * @typedef {import("#application/types.js").BotMessages} Messages
@@ -66,9 +67,14 @@ class CreateDirectMatch {
     }
 
     const now = this.clock.now();
-    const state = await this.repository.get();
-    const { state: normalizedState } = this.queueService.normalizeState(state, now);
-    await this.repository.save(normalizedState);
+    const { state: normalizedState } = await updateQueueState({
+      repository: this.repository,
+      logger: this.logger,
+      operation: "normalize_direct_match_state",
+      mutate: (state) => ({
+        state: this.queueService.normalizeState(state, now).state,
+      }),
+    });
 
     if (normalizedState.isPlayed(opponent)) {
       this.logger.info("Прямое создание матча прервано: оппонент уже играл", {
@@ -101,5 +107,4 @@ class CreateDirectMatch {
 }
 
 export { CreateDirectMatch };
-
 

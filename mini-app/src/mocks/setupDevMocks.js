@@ -43,7 +43,7 @@ export const createInitialDevState = () => {
     searching: ['@kate', '@maria', '@nick'],
     played: ['@oleg', '@sveta'],
     pendingInvites: [
-      { player: '@kate', opponent: '@dev_user', createdAt: now - 60 * 1000 },
+      { inviteId: 'DevInvite0000001', player: '@kate', opponent: '@dev_user', createdAt: now - 60 * 1000 },
     ],
   }
 }

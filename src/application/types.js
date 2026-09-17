@@ -13,6 +13,8 @@
  * @typedef {Object} QueueRepository
  * @property {() => Promise<QueueState>} get
  * @property {(state: QueueState) => Promise<void>} save
+ * @property {() => Promise<{ state: QueueState, revision: number }>} getVersioned
+ * @property {(expectedRevision: number, state: QueueState) => Promise<boolean>} saveIfRevision
  */
 
 /**
@@ -80,10 +82,11 @@
 
 /**
  * @typedef {Object} MatchLifecycle
- * @property {(match: Match) => void} scheduleLifecycle
- * @property {(match: Match) => void} scheduleFinish
+ * @property {(match: Match, options?: { scheduleNext?: boolean }) => void} scheduleLifecycle
+ * @property {(match: Match, options?: { scheduleNext?: boolean }) => void} scheduleFinish
  * @property {(match: Match) => void} cancelForMatch
- * @property {(match: Match) => Promise<void>} handleMatchFinished
+ * @property {(match: Match, options?: { scheduleNext?: boolean }) => Promise<void>} handleMatchFinished
+ * @property {() => Promise<void>} [dispose]
  */
 
 /**
@@ -192,6 +195,7 @@
  * @property {string} testModeDisabled
  * @property {string} directNotTarget
  * @property {string} directNotAuthor
+ * @property {string} actionFailed
  */
 
 /**
@@ -245,4 +249,3 @@
  */
 
 export {};
-

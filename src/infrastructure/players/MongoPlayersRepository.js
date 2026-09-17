@@ -15,9 +15,11 @@ export class MongoPlayersRepository {
     this.log = logger || createNullLogger()
     this.client = null
     this.collection = null
+    this.closePromise = null
   }
 
   async connect() {
+    this.closePromise = null
     this.client = new MongoClient(this.uri)
     await this.client.connect()
     const db = this.client.db(this.dbName)
@@ -94,5 +96,17 @@ export class MongoPlayersRepository {
   async deleteOne(username) {
     const result = await this.collection.deleteOne({ username })
     return result.deletedCount > 0
+  }
+
+  /** Безопасно закрывает MongoDB-клиент; повторный вызов ничего не делает. */
+  async close() {
+    if (this.closePromise) return this.closePromise
+    const client = this.client
+    if (!client) return
+
+    this.client = null
+    this.collection = null
+    this.closePromise = Promise.resolve(client.close())
+    return this.closePromise
   }
 }

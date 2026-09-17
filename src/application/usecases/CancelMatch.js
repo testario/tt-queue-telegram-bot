@@ -1,4 +1,5 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
+import { updateQueueState } from "./queueStateCas.js";
 
 /**
  * @typedef {import("#application/types.js").QueueRepository} QueueRepository
@@ -50,10 +51,16 @@ class CancelMatch {
    */
   async execute(player) {
     this.logger.info("Отмена матча запрошена", { player });
-    const state = await this.repository.get();
     const now = this.clock.now();
-    const result = this.queueService.cancelMatch(state, player, now);
-    await this.repository.save(result.state);
+    const { result } = await updateQueueState({
+      repository: this.repository,
+      logger: this.logger,
+      operation: "cancel_match",
+      mutate: (state) => {
+        const result = this.queueService.cancelMatch(state, player, now);
+        return { state: result.state, result };
+      },
+    });
 
     if (result.status === "not_found") {
       this.logger.warn("Матч для отмены не найден", { player });
@@ -89,4 +96,3 @@ class CancelMatch {
 }
 
 export { CancelMatch };
-

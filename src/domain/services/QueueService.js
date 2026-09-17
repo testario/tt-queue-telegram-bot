@@ -133,6 +133,8 @@ class QueueService {
     const { state: normalizedState, isLunchTime, isAfterWork } =
       this.normalizeState(state, now);
     const nextState = normalizedState.clone();
+    const holdNextMatch = nextState.holdNextMatch;
+    nextState.holdNextMatch = false;
     const endedMatch = nextState.shiftQueue();
     let nextMatch = null;
 
@@ -140,7 +142,7 @@ class QueueService {
       nextState.played.push(endedMatch.player1, endedMatch.player2);
     }
 
-    if (nextState.queue.length > 0) {
+    if (nextState.queue.length > 0 && !holdNextMatch) {
       const current = nextState.queue[0];
       current.status = Match.statuses.playing;
       current.startDate = new Date(now.getTime() + this.readyMs);
@@ -149,7 +151,12 @@ class QueueService {
       this.recalculateWaiting(nextState);
     }
 
-    return { state: nextState, endedMatch, nextMatch };
+    return {
+      state: nextState,
+      endedMatch,
+      nextMatch,
+      heldNextMatch: holdNextMatch ? nextState.queue[0] || null : null,
+    };
   }
 
   /**
@@ -172,14 +179,20 @@ class QueueService {
       const currentTime = now.getTime();
       // Оставшееся время для пользователей: считаем до конца матча, включая подготовку, если отмена пришла раньше старта.
       const remains = Math.max(0, match.endDate.getTime() - currentTime);
+      const holdNextMatch = nextState.holdNextMatch;
+      nextState.holdNextMatch = false;
 
       let nextMatch = null;
       if (nextState.queue.length > 0) {
         const current = nextState.queue[0];
-        current.status = Match.statuses.playing;
-        current.startDate = new Date(currentTime + this.readyMs);
-        current.endDate = new Date(current.startDate.getTime() + this.gameMs);
-        nextMatch = current;
+        if (holdNextMatch) {
+          current.status = Match.statuses.waiting;
+        } else {
+          current.status = Match.statuses.playing;
+          current.startDate = new Date(currentTime + this.readyMs);
+          current.endDate = new Date(current.startDate.getTime() + this.gameMs);
+          nextMatch = current;
+        }
         this.recalculateWaiting(nextState);
       }
 
@@ -188,6 +201,7 @@ class QueueService {
         status: "removed_current",
         removedMatch: match,
         nextMatch,
+        heldNextMatch: holdNextMatch ? nextState.queue[0] || null : null,
         remains,
       };
     }
@@ -296,4 +310,3 @@ class QueueService {
 }
 
 export { QueueService };
-

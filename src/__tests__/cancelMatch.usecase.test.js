@@ -4,8 +4,8 @@ import { QueueState } from "#domain/entities/QueueState.js";
 import { templates } from "#application/messages/templates.js";
 
 const createRepo = (state = QueueState.createEmpty()) => ({
-  get: jest.fn().mockResolvedValue(state),
-  save: jest.fn(),
+  getVersioned: jest.fn().mockResolvedValue({ state, revision: 0 }),
+  saveIfRevision: jest.fn().mockResolvedValue(true),
 });
 
 const createNotifier = () => ({ notify: jest.fn() });
@@ -42,7 +42,7 @@ describe("CancelMatch use case", () => {
     const result = await useCase.execute("@ghost");
 
     expect(result).toEqual({ ok: false, reason: "not_found" });
-    expect(repository.save).toHaveBeenCalledWith(expect.any(QueueState));
+    expect(repository.saveIfRevision).toHaveBeenCalledWith(0, expect.any(QueueState));
     expect(notifier.notify).not.toHaveBeenCalled();
     expect(orchestrator.cancelForMatch).not.toHaveBeenCalled();
   });
@@ -101,5 +101,4 @@ describe("CancelMatch use case", () => {
     expect(orchestrator.scheduleLifecycle).not.toHaveBeenCalled();
   });
 });
-
 

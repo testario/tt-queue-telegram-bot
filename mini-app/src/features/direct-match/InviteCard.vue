@@ -31,7 +31,7 @@ const accept = async () => {
   if (!myInvite.value) return
   loading.value = true
   try {
-    await api.post('/direct/accept', { player: myInvite.value.player })
+    await api.post('/direct/accept', { inviteId: myInvite.value.inviteId })
   } catch (error) {
     console.error('Не удалось принять приглашение', error)
   } finally {
@@ -43,7 +43,7 @@ const decline = async () => {
   if (!myInvite.value) return
   loading.value = true
   try {
-    await api.post('/direct/decline', { player: myInvite.value.player })
+    await api.post('/direct/decline', { inviteId: myInvite.value.inviteId })
   } catch (error) {
     console.error('Не удалось отклонить приглашение', error)
   } finally {

@@ -109,6 +109,32 @@ describe("QueueService", () => {
     expect(afterFinish.queue[0].player1).toBe("@p3");
   });
 
+  test("keeps the next match waiting when durable pause requests a hold", () => {
+    const matchTime = new Date(2024, 0, 1, 11, 0, 0, 0);
+    const first = Match.create({
+      player1: "@p1",
+      player2: "@p2",
+      startDate: matchTime,
+      endDate: new Date(matchTime.getTime() + DEFAULT_GAME_TIME),
+      status: Match.statuses.playing,
+    });
+    const next = Match.create({
+      player1: "@p3",
+      player2: "@p4",
+      startDate: new Date(matchTime.getTime() + DEFAULT_GAME_TIME + TIME_READY),
+      endDate: new Date(matchTime.getTime() + DEFAULT_GAME_TIME * 2 + TIME_READY),
+      status: Match.statuses.waiting,
+    });
+    const state = new QueueState({ queue: [first, next], holdNextMatch: true });
+
+    const result = service.finishCurrent(state, first.endDate);
+
+    expect(result.nextMatch).toBeNull();
+    expect(result.heldNextMatch).toEqual(next);
+    expect(result.state.queue[0].status).toBe(Match.statuses.waiting);
+    expect(result.state.holdNextMatch).toBe(false);
+  });
+
   test("cancels current match and promotes next", () => {
     const base = QueueState.createEmpty();
     const { state: s1 } = service.registerSearch(base, "@p1");
@@ -121,6 +147,32 @@ describe("QueueService", () => {
     expect(result.status).toBe("removed_current");
     expect(result.nextMatch.player1).toBe("@p3");
     expect(result.state.queue[0].status).toBe(Match.statuses.playing);
+  });
+
+  test("consumes durable hold when canceling current match and keeps next waiting", () => {
+    const current = Match.create({
+      player1: "@p1",
+      player2: "@p2",
+      startDate: now,
+      endDate: new Date(now.getTime() + DEFAULT_GAME_TIME),
+      status: Match.statuses.playing,
+    });
+    const next = Match.create({
+      player1: "@p3",
+      player2: "@p4",
+      startDate: new Date(current.endDate.getTime() + TIME_READY),
+      endDate: new Date(current.endDate.getTime() + TIME_READY + DEFAULT_GAME_TIME),
+      status: Match.statuses.waiting,
+    });
+    const state = new QueueState({ queue: [current, next], holdNextMatch: true });
+
+    const result = service.cancelMatch(state, "@p1", now);
+
+    expect(result.status).toBe("removed_current");
+    expect(result.nextMatch).toBeNull();
+    expect(result.heldNextMatch).toEqual(next);
+    expect(result.state.holdNextMatch).toBe(false);
+    expect(result.state.queue[0].status).toBe(Match.statuses.waiting);
   });
 
   test("returns not_found when canceling missing match", () => {
@@ -222,4 +274,3 @@ describe("QueueService", () => {
     expect(result.status).toBe("not_found");
   });
 });
-

@@ -41,6 +41,8 @@ if (playersMongoUri && playersRepository.connect) {
 // Хранилище очереди + Pub/Sub + InvitesStore: Redis если задан REDIS_URL, иначе in-memory
 const redisUrl = process.env.REDIS_URL || null;
 let redisClient = null;
+let redisPublisher = null;
+let redisSubscriber = null;
 let queueRepository = null;
 let eventBus = null;
 let invitesStore = new InMemoryInvitesStore();
@@ -50,11 +52,21 @@ if (redisUrl) {
   queueRepository = new RedisQueueRepository({ client: redisClient });
 
   const { publisher, subscriber } = await createRedisPubSub({ url: redisUrl });
+  redisPublisher = publisher;
+  redisSubscriber = subscriber;
   eventBus = new RedisEventBus({ publisher, subscriber });
   invitesStore = new RedisInvitesStore({ client: redisClient });
 }
 
-const botResult = createBot(token, { metricsEnabled, playersRepository, queueRepository, eventBus });
+const botResult = createBot(token, {
+  metricsEnabled,
+  playersRepository,
+  queueRepository,
+  eventBus,
+  invitesStore,
+  autoStartPolling: false,
+  onStop: () => shutdown(),
+});
 
 const {
   bot,
@@ -72,7 +84,51 @@ const {
   log,
 } = botResult;
 
-// Восстанавливаем таймеры из Redis после старта (если Redis включён)
+let shutdownPromise = null;
+let webAppPromise = null;
+const closeResource = async (name, close) => {
+  if (typeof close !== "function") return;
+  try {
+    await close();
+  } catch (error) {
+    log.error(`Не удалось закрыть ${name}`, { message: error.message });
+  }
+};
+
+const shutdown = () => {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    await closeResource("Bot", () => botResult.dispose?.());
+    await closeResource("WebApp", async () => {
+      const webApp = await webAppPromise;
+      await webApp?.app?.close();
+    });
+    await closeResource("Redis wakeup", () => eventBus?.unsubscribe?.());
+    await closeResource("Redis state client", () => redisClient?.quit?.());
+    await closeResource("Redis publisher", () => redisPublisher?.quit?.());
+    await closeResource("Redis subscriber", () => redisSubscriber?.quit?.());
+    await closeResource("Players repository", () => playersRepository.close?.());
+  })();
+  return shutdownPromise;
+};
+
+let exitStarted = false;
+const handleSignal = (signal) => {
+  if (exitStarted) return;
+  exitStarted = true;
+  void shutdown().then(
+    () => process.exit(0),
+    (error) => {
+      log.error(`Ошибка завершения по ${signal}`, { message: error.message });
+      process.exit(1);
+    }
+  );
+};
+
+process.once("SIGTERM", () => handleSignal("SIGTERM"));
+process.once("SIGINT", () => handleSignal("SIGINT"));
+
+// Сначала регистрируем shutdown и восстанавливаем lifecycle, затем запускаем WebApp и polling.
 if (redisClient && queueChatId) {
   const ctx = getContext(queueChatId);
   if (ctx) {
@@ -85,7 +141,7 @@ if (redisClient && queueChatId) {
   }
 }
 
-createWebApp({
+webAppPromise = createWebApp({
   bot,
   getContext,
   queueChatId,
@@ -105,3 +161,6 @@ createWebApp({
 }).catch((err) => {
   log.error("Не удалось запустить WebApp", { message: err.message });
 });
+
+await webAppPromise;
+if (!shutdownPromise) await botResult.startPolling();

@@ -1,4 +1,5 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
+import { updateQueueState } from "./queueStateCas.js";
 
 /**
  * @typedef {import("#application/types.js").QueueRepository} QueueRepository
@@ -33,14 +34,13 @@ class RegisterSearch {
    */
   async execute(player) {
     this.logger.info("Игрок отправил запрос на поиск соперника", { player });
-    const state = await this.repository.get();
     const now = this.clock.now();
-    const { state: nextState, status } = this.queueService.registerSearch(
-      state,
-      player,
-      now
-    );
-    await this.repository.save(nextState);
+    const { status } = await updateQueueState({
+      repository: this.repository,
+      logger: this.logger,
+      operation: "register_search",
+      mutate: (state) => this.queueService.registerSearch(state, player, now),
+    });
 
     this.logger.debug("Статус регистрации поиска", { player, status });
     switch (status) {
@@ -59,4 +59,3 @@ class RegisterSearch {
 }
 
 export { RegisterSearch };
-

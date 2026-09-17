@@ -194,6 +194,7 @@ const createRuUi = () => ({
     testModeDisabled: "Тестовый режим отключен",
     directNotTarget: "Отвечать на приглашение может только указанный оппонент",
     directNotAuthor: "Отменить может только автор приглашения",
+    actionFailed: "Действие не выполнено из-за параллельного изменения, попробуйте ещё раз.",
   },
   test: {
     playerName: ({ timestamp, index, suffix }) => `Тестовый_${timestamp}_${index}_${suffix}`,

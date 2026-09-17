@@ -1,4 +1,5 @@
 import { createNullLogger } from '#infrastructure/logger/Logger.js'
+import { randomUUID } from 'node:crypto'
 
 const QUEUE_EVENTS_CHANNEL = 'queue:events'
 
@@ -14,10 +15,11 @@ class RedisEventBus {
    * Важно: publisher и subscriber — РАЗНЫЕ клиенты. Redis не позволяет
    * использовать один клиент и для PUBLISH, и для SUBSCRIBE одновременно.
    */
-  constructor({ publisher, subscriber, logger }) {
+  constructor({ publisher, subscriber, logger, sourceId = randomUUID() }) {
     this.publisher = publisher
     this.subscriber = subscriber
     this.log = logger || createNullLogger()
+    this.sourceId = sourceId
     this._handlers = new Set()
   }
 
@@ -26,7 +28,7 @@ class RedisEventBus {
    * @param {{ type: string, chatId: string|number, payload?: object }} event
    */
   async publish(event) {
-    const message = JSON.stringify(event)
+    const message = JSON.stringify({ ...event, sourceId: event.sourceId || this.sourceId })
     await this.publisher.publish(QUEUE_EVENTS_CHANNEL, message)
     this.log.info('RedisEventBus: опубликовано событие', { type: event.type })
   }
@@ -44,7 +46,13 @@ class RedisEventBus {
         if (channel !== QUEUE_EVENTS_CHANNEL) return
         try {
           const event = JSON.parse(message)
-          this._handlers.forEach(h => h(event))
+          this._handlers.forEach((handler) => {
+            Promise.resolve(handler(event)).catch((handlerError) => {
+              this.log.error('RedisEventBus: ошибка обработчика события', {
+                message: handlerError.message,
+              })
+            })
+          })
         } catch (err) {
           this.log.error('RedisEventBus: ошибка разбора события', { message: err.message })
         }
@@ -56,6 +64,10 @@ class RedisEventBus {
    * Отписывается от Redis-канала.
    */
   async unsubscribe() {
+    if (!this.subscriber) {
+      this._handlers.clear()
+      return
+    }
     await this.subscriber.unsubscribe(QUEUE_EVENTS_CHANNEL)
     this._handlers.clear()
     this.log.info('RedisEventBus: отписан от канала')

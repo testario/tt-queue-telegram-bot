@@ -1,4 +1,5 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
+import { updateQueueState } from "./queueStateCas.js";
 
 /**
  * @typedef {import("#application/types.js").QueueRepository} QueueRepository
@@ -31,13 +32,13 @@ class GetPlayed {
    * @returns {Promise<string>}
    */
   async execute() {
-    const state = await this.repository.get();
     const now = this.clock.now();
-    const { state: normalizedState } = this.queueService.normalizeState(
-      state,
-      now
-    );
-    await this.repository.save(normalizedState);
+    const { state: normalizedState } = await updateQueueState({
+      repository: this.repository,
+      logger: this.logger,
+      operation: "normalize_get_played_state",
+      mutate: (state) => this.queueService.normalizeState(state, now),
+    });
     this.logger.debug("Получен список сыгравших", {
       count: normalizedState.played.length,
     });
@@ -46,4 +47,3 @@ class GetPlayed {
 }
 
 export { GetPlayed };
-

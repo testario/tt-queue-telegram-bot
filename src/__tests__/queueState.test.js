@@ -40,6 +40,7 @@ describe("QueueState", () => {
       ],
       played: ["@p3"],
       searching: ["@p4"],
+      holdNextMatch: true,
     };
 
     const state = QueueState.from(raw);
@@ -48,6 +49,7 @@ describe("QueueState", () => {
     expect(state.queue[0].endDate).toBeInstanceOf(Date);
     expect(state.played).toEqual(["@p3"]);
     expect(state.searching).toEqual(["@p4"]);
+    expect(state.holdNextMatch).toBe(true);
   });
 
   test("hasPlayer учитывает поиск, очередь и сыгравших", () => {
@@ -76,5 +78,4 @@ describe("QueueState", () => {
     expect(state.queue).toEqual([match1]);
   });
 });
-
 

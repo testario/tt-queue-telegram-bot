@@ -8,12 +8,14 @@ class QueueState {
    * @param {string[]} [params.played] Игроки, уже сыгравшие сегодня.
    * @param {string[]} [params.searching] Игроки в поиске.
    * @param {Date|null} [params.lastPlayedResetAt] Время последнего сброса списка сыгравших.
+   * @param {boolean} [params.holdNextMatch] Удержать следующую голову после завершения текущей.
    */
   constructor({
     queue = [],
     played = [],
     searching = [],
     lastPlayedResetAt = null,
+    holdNextMatch = false,
   } = {}) {
     this.queue = queue;
     this.played = played;
@@ -21,6 +23,7 @@ class QueueState {
     this.lastPlayedResetAt = lastPlayedResetAt
       ? new Date(lastPlayedResetAt)
       : null;
+    this.holdNextMatch = Boolean(holdNextMatch);
   }
 
   /**
@@ -38,6 +41,7 @@ class QueueState {
    * @param {string[]} [raw.played] Уже сыгравшие игроки.
    * @param {string[]} [raw.searching] Игроки в поиске.
    * @param {Date|string|null} [raw.lastPlayedResetAt] Время сброса списка сыгравших.
+   * @param {boolean} [raw.holdNextMatch] Удержать следующую голову после завершения текущей.
    * @returns {QueueState}
    */
   static from(raw) {
@@ -54,6 +58,7 @@ class QueueState {
       lastPlayedResetAt: raw.lastPlayedResetAt
         ? new Date(raw.lastPlayedResetAt)
         : null,
+      holdNextMatch: raw.holdNextMatch,
     });
   }
 
@@ -73,6 +78,7 @@ class QueueState {
       lastPlayedResetAt: this.lastPlayedResetAt
         ? new Date(this.lastPlayedResetAt)
         : null,
+      holdNextMatch: this.holdNextMatch,
     });
   }
 
@@ -171,4 +177,3 @@ class QueueState {
 }
 
 export { QueueState };
-

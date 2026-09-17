@@ -162,6 +162,7 @@ const createEnUi = () => ({
     testModeDisabled: "Test mode is disabled",
     directNotTarget: "Only the invited opponent can respond",
     directNotAuthor: "Only the author can cancel the invite",
+    actionFailed: "Action failed due to a concurrent update, please try again.",
   },
   test: {
     playerName: ({ timestamp, index, suffix }) => `Test_${timestamp}_${index}_${suffix}`,

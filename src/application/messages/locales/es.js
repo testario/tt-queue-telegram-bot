@@ -163,6 +163,7 @@ const createEsUi = () => ({
     testModeDisabled: "El modo de prueba está desactivado",
     directNotTarget: "Solo el oponente invitado puede responder",
     directNotAuthor: "Solo el autor puede cancelar la invitación",
+    actionFailed: "Acción no realizada por un cambio concurrente, inténtalo de nuevo.",
   },
   test: {
     playerName: ({ timestamp, index, suffix }) => `Prueba_${timestamp}_${index}_${suffix}`,

@@ -19,17 +19,17 @@ import { createLocalization } from '#application/messages/localization.js'
 import { I18N_CONFIG } from '#application/config/i18n.js'
 import { DEFAULT_GAME_TIME, TIME_READY, WORK_SCHEDULE } from '#application/config/time.js'
 import { Match } from '#domain'
-import { NodeTimer } from '#infrastructure/timers/NodeTimer.js'
-import { MatchOrchestrator } from '#application/services/MatchOrchestrator.js'
+import { buildMatchCancelKeyboard } from '#interfaces/telegram/keyboards.js'
+import { updateQueueState, QueueStateConflictError } from '#application/usecases/queueStateCas.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
  * Строит контекст всех use-case для backend-only режима.
- * Вместо MatchOrchestrator использует null-объект: lifecycle-таймеры ставит bot-процесс
- * через Redis Pub/Sub (получает match_created и вызывает scheduleLifecycle).
+ * Вместо MatchOrchestrator использует null-объект: lifecycle-таймеры ставит bot-процесс,
+ * а backend отправляет Telegram-анонс созданного матча.
  */
-const buildBackendContext = ({ queueRepository, queueChatId, messages, eventBus }) => {
+export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui, bot, eventBus, log }) => {
   const queueService = new QueueService({
     readyMs: TIME_READY,
     gameMs: DEFAULT_GAME_TIME,
@@ -37,16 +37,23 @@ const buildBackendContext = ({ queueRepository, queueChatId, messages, eventBus 
   })
   const clock = new SystemClock()
   const notifier = new EventNotifier({ eventBus })
+  const orchestrator = {
+    scheduleLifecycle: () => {},
+    scheduleFinish: () => {},
+    cancelForMatch: () => {},
+    cancelAll: () => {},
+    handleMatchFinished: async () => {},
+  }
 
-  const timer = new NodeTimer()
-  const orchestrator = new MatchOrchestrator({
-    chatId: queueChatId,
-    timer,
-    notifier,
-    repository: queueRepository,
-    queueService,
-    messages,
-    clock,
+  notifier.onMessage(({ chatId, text, meta }) => {
+    if (meta?.type !== 'match_created') return
+    const replyMarkup = buildMatchCancelKeyboard(meta.match, ui)
+    bot
+      .sendMessage(chatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined)
+      .catch((error) => log.error('Не удалось отправить анонс созданного матча', {
+        chatId,
+        message: error.message,
+      }))
   })
 
   const registerSearch = new RegisterSearch({ repository: queueRepository, queueService, messages, clock })
@@ -99,11 +106,10 @@ const buildBackendContext = ({ queueRepository, queueChatId, messages, eventBus 
 
 /**
  * Строит минимальные реализации pause/emerge-функций для backend-only режима.
- * Состояние хранится in-process (не синхронизируется с bot-процессом).
- * Для полной синхронизации паузы между процессами потребуется Redis-хранилище
- * (за рамками текущей фазы).
+ * Флаг admin-mode локален процессу, а поведение текущей головы сохраняется
+ * в durable queue state и передаётся bot-процессу через state-update wakeup.
  */
-const buildLocalAdminState = ({ queueChatId, bot, messages, queueService, isDev = false }) => {
+export const buildLocalAdminState = ({ queueChatId, bot, messages, queueService, isDev = false, logger }) => {
   const pauseModeChats = new Set()
   const emergeStateByChat = new Map()
 
@@ -114,13 +120,37 @@ const buildLocalAdminState = ({ queueChatId, bot, messages, queueService, isDev 
   }
 
   const applyPauseMode = async ({ chatId, context }) => {
-    setPauseMode(chatId, true)
-    const state = await context.repository.get()
-    if (state.queue.length) {
-      state.queue.forEach((item, i) => {
-        if (i > 0) item.status = Match.statuses.waiting
+    let result
+    try {
+      result = await updateQueueState({
+        repository: context.repository,
+        logger: logger || { warn: () => {} },
+        operation: 'backend_pause',
+        mutate: (state) => {
+          if (!state.queue.length) return { state, hasQueue: false, save: false }
+          const now = context.clock.now()
+          const current = state.queue[0]
+          const elapsedMs = now.getTime() - current.startDate.getTime()
+          const currentContinues =
+            current.status === Match.statuses.playing && elapsedMs >= 5 * 60 * 1000
+          state.queue.forEach((item, index) => {
+            if (index === 0 && currentContinues) return
+            item.status = Match.statuses.waiting
+          })
+          state.holdNextMatch = currentContinues
+          return { state, hasQueue: true }
+        },
       })
-      await context.repository.save(state)
+    } catch (err) {
+      // Локальный флаг паузы не трогаем: состояние не изменено, повтор возможен
+      if (err instanceof QueueStateConflictError) {
+        return { hasQueue: false, conflict: true }
+      }
+      throw err
+    }
+    if (result.hasQueue) setPauseMode(chatId, true)
+    if (result.hasQueue) {
+      context.notifier.notify(context.chatId, '', { type: 'state_update' })
     }
     if (!isDev) {
       bot.sendMessage(chatId, messages.pauseModeEnabled({ action: 'none' })).catch(() => {})
@@ -129,22 +159,43 @@ const buildLocalAdminState = ({ queueChatId, bot, messages, queueService, isDev 
 
   const resumeQueueAfterPause = async (context) => {
     if (!context) return { hasQueue: false }
-    const state = await context.repository.get()
-    if (!state.queue.length) return { hasQueue: false }
     const now = context.clock.now()
-    const nextMatch = state.queue[0]
-    const isCurrentPlaying =
-      nextMatch.status === Match.statuses.playing && now >= nextMatch.startDate
-    if (isCurrentPlaying) {
-      return { hasQueue: true, currentMatchContinues: true, currentMatch: nextMatch }
+    let result
+    try {
+      result = await updateQueueState({
+        repository: context.repository,
+        logger: logger || { warn: () => {} },
+        operation: 'backend_resume_queue',
+        mutate: (state) => {
+          if (!state.queue.length) return { state, hasQueue: false, save: false }
+          const nextMatch = state.queue[0]
+          const isCurrentPlaying =
+            nextMatch.status === Match.statuses.playing && now >= nextMatch.startDate
+          if (isCurrentPlaying) {
+            state.holdNextMatch = false
+            return { state, hasQueue: true, currentMatchContinues: true, currentMatch: nextMatch }
+          }
+          nextMatch.status = Match.statuses.playing
+          nextMatch.startDate = new Date(now.getTime() + context.queueService.readyMs)
+          nextMatch.endDate = new Date(nextMatch.startDate.getTime() + context.queueService.gameMs)
+          state.holdNextMatch = false
+          context.queueService.recalculateWaiting(state)
+          return { state, hasQueue: true, nextMatch }
+        },
+      })
+    } catch (err) {
+      // Локальный флаг паузы не трогаем: состояние не изменено, повтор возможен
+      if (err instanceof QueueStateConflictError) {
+        return { hasQueue: false, conflict: true }
+      }
+      throw err
     }
-    nextMatch.status = Match.statuses.playing
-    nextMatch.startDate = new Date(now.getTime() + queueService.readyMs)
-    nextMatch.endDate = new Date(nextMatch.startDate.getTime() + queueService.gameMs)
-    queueService.recalculateWaiting(state)
-    await context.repository.save(state)
+    if (result.hasQueue) setPauseMode(context.chatId, false)
+    if (result.hasQueue) {
+      context.notifier.notify(context.chatId, '', { type: 'state_update' })
+    }
     // Bot-процесс поставит таймеры, получив state_update через Redis
-    return { hasQueue: true, nextMatch }
+    return result
   }
 
   // В backend-only режиме emerge-состояние не отслеживается между процессами
@@ -266,7 +317,10 @@ export const createWebApp = async ({
       queueRepository,
       queueChatId,
       messages: resolvedMessages,
+      ui: resolvedUi,
+      bot,
       eventBus,
+      log,
     })
     resolvedGetContext = (_chatId) => backendContext
 
@@ -276,6 +330,7 @@ export const createWebApp = async ({
       messages: resolvedMessages,
       queueService: backendContext.queueService,
       isDev: process.env.NODE_ENV !== 'production',
+      logger: log,
     })
     resolvedIsPauseModeEnabled = adminState.isPauseModeEnabled
     resolvedSetPauseMode = adminState.setPauseMode

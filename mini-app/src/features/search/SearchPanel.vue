@@ -86,7 +86,7 @@ const cancelInvite = async () => {
   if (!myOutgoingInvite.value) return
   loading.value = true
   try {
-    await api.post('/direct/cancel', { opponent: myOutgoingInvite.value.opponent })
+    await api.post('/direct/cancel', { inviteId: myOutgoingInvite.value.inviteId })
   } catch (error) {
     console.error('Не удалось отменить приглашение', error)
   } finally {

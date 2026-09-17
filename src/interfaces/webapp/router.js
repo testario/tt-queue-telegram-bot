@@ -58,11 +58,28 @@ export const registerRoutes = async (app, deps) => {
   const auth = async (req, reply) => {
     const initData = req.headers['x-telegram-init-data']
 
+    const registerPlayer = async () => {
+      try {
+        await playersRepository.upsert({
+          username: req.player,
+          userId: req.tgUser.id,
+          firstName: req.tgUser.firstName,
+          lastName: req.tgUser.lastName,
+        })
+      } catch (err) {
+        log.error('Не удалось зарегистрировать игрока из webapp', {
+          username: req.player,
+          message: err.message,
+        })
+        return reply.code(503).send({ error: 'player_registration_failed' })
+      }
+    }
+
     // В dev-режиме пропускаем без initData (для тестирования через браузер)
     if (isDev && !initData) {
       req.tgUser = { id: 123456, username: 'dev_user', firstName: 'Dev', lastName: '' }
       req.player = '@dev_user'
-      return
+      return registerPlayer()
     }
 
     const result = verifyInitData(initData, process.env.TG_BOT_API_TOKEN)
@@ -70,6 +87,7 @@ export const registerRoutes = async (app, deps) => {
     if (!result.user.username) return reply.code(400).send({ error: 'username_required' })
     req.tgUser = result.user
     req.player = `@${result.user.username}`
+    return registerPlayer()
   }
 
   const requireAdmin = async (req, reply) => {
@@ -186,51 +204,104 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // POST /api/direct — прямое приглашение
-  app.post('/api/direct', { preHandler: [auth] }, async (req) => {
+  app.post('/api/direct', { preHandler: [auth] }, async (req, reply) => {
     const { opponent } = req.body
-    const result = await context.directMatch.execute(req.player, opponent)
+
+    const normalizedOpponent = context.directMatch.normalizeOpponent(opponent)
+    if (!normalizedOpponent) {
+      const result = await context.directMatch.execute(req.player, opponent)
+      return { ok: result.ok, reason: result.reason }
+    }
+    let invite
+    try {
+      invite = await invitesStore.create({
+        player: req.player,
+        opponent: normalizedOpponent,
+        createdAt: Date.now(),
+      })
+    } catch (err) {
+      log.error('Не удалось создать прямое приглашение', { message: err.message })
+      return reply.code(503).send({ error: 'invite_storage_unavailable' })
+    }
+    if (!invite) return { ok: false, reason: 'invite_exists' }
+
+    let result
+    try {
+      result = await context.directMatch.execute(req.player, normalizedOpponent)
+    } catch (err) {
+      await invitesStore.deleteByPlayer(req.player).catch((cleanupError) => {
+        log.error('Не удалось удалить незавершенное приглашение', { message: cleanupError.message })
+      })
+      throw err
+    }
     if (result.ok) {
-      const { invite } = result
-      await invitesStore.set(req.player, { player: req.player, opponent, createdAt: Date.now() })
       notifyChat(
         messages.directInvite({ from: invite.player, to: invite.opponent }),
         buildDirectInviteKeyboard(invite, ui)
       )
       sseManager.broadcast('state_update', await buildStatePayload())
+    } else {
+      await invitesStore.deleteByPlayer(req.player)
     }
     return { ok: result.ok, reason: result.reason }
   })
 
   // POST /api/direct/accept — принять прямое приглашение
-  app.post('/api/direct/accept', { preHandler: [auth] }, async (req) => {
-    const { player } = req.body
-    const result = await context.addMatch.execute(player, req.player, {
+  app.post('/api/direct/accept', { preHandler: [auth] }, async (req, reply) => {
+    const { inviteId } = req.body || {}
+    let invite
+    try {
+      invite = await invitesStore.consume(inviteId, req.player, 'opponent')
+    } catch (err) {
+      log.error('Не удалось принять прямое приглашение', { message: err.message })
+      return reply.code(503).send({ error: 'invite_storage_unavailable' })
+    }
+    if (!invite) return { ok: false, reason: 'invite_not_found' }
+
+    const result = await context.addMatch.execute(invite.player, req.player, {
       scheduleLifecycle: !isPauseModeEnabled(queueChatId),
     })
     if (result.ok) {
-      await invitesStore.delete(player)
-      notifyChat(messages.directAccepted({ from: player, to: req.player }))
+      notifyChat(messages.directAccepted({ from: invite.player, to: req.player }))
+      sseManager.broadcast('state_update', await buildStatePayload())
+    } else {
       sseManager.broadcast('state_update', await buildStatePayload())
     }
     return { ok: result.ok, reason: result.reason }
   })
 
   // POST /api/direct/decline — отклонить прямое приглашение
-  app.post('/api/direct/decline', { preHandler: [auth] }, async (req) => {
-    const { player } = req.body
-    await invitesStore.delete(player)
-    await context.cancelSearch.execute(player)
-    notifyChat(messages.directDeclined({ from: player, to: req.player }))
+  app.post('/api/direct/decline', { preHandler: [auth] }, async (req, reply) => {
+    const { inviteId } = req.body || {}
+    let invite
+    try {
+      invite = await invitesStore.consume(inviteId, req.player, 'opponent')
+    } catch (err) {
+      log.error('Не удалось отклонить прямое приглашение', { message: err.message })
+      return reply.code(503).send({ error: 'invite_storage_unavailable' })
+    }
+    if (!invite) return { ok: false, reason: 'invite_not_found' }
+
+    await context.cancelSearch.execute(invite.player)
+    notifyChat(messages.directDeclined({ from: invite.player, to: req.player }))
     sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: true }
   })
 
   // POST /api/direct/cancel — отменить своё прямое приглашение
-  app.post('/api/direct/cancel', { preHandler: [auth] }, async (req) => {
-    const { opponent } = req.body
-    await invitesStore.delete(req.player)
+  app.post('/api/direct/cancel', { preHandler: [auth] }, async (req, reply) => {
+    const { inviteId } = req.body || {}
+    let invite
+    try {
+      invite = await invitesStore.consume(inviteId, req.player, 'initiator')
+    } catch (err) {
+      log.error('Не удалось отменить прямое приглашение', { message: err.message })
+      return reply.code(503).send({ error: 'invite_storage_unavailable' })
+    }
+    if (!invite) return { ok: false, reason: 'invite_not_found' }
+
     await context.cancelSearch.execute(req.player)
-    notifyChat(messages.directCancelled({ from: req.player, to: opponent }))
+    notifyChat(messages.directCancelled({ from: req.player, to: invite.opponent }))
     sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: true }
   })
@@ -241,11 +312,16 @@ export const registerRoutes = async (app, deps) => {
     if (isPauseModeEnabled(queueChatId)) {
       return { ok: false, reason: 'already_paused' }
     }
-    await applyPauseMode({
+    const result = await applyPauseMode({
       chatId: queueChatId,
       context,
       username: req.tgUser.username,
     })
+    if (result?.conflict) {
+      // Состояние не изменено из-за конкурирующей записи — операцию можно повторить
+      sseManager.broadcast('state_update', await buildStatePayload())
+      return { ok: false, reason: 'conflict' }
+    }
     sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: true }
   })
@@ -260,8 +336,13 @@ export const registerRoutes = async (app, deps) => {
     }
 
     if (pauseEnabled) {
-      setPauseMode(queueChatId, false)
       const resumeResult = await resumeQueueAfterPause(context)
+
+      // Состояние не изменено из-за конкурирующей записи — операцию можно повторить
+      if (resumeResult.conflict) {
+        sseManager.broadcast('state_update', await buildStatePayload())
+        return { ok: false, reason: 'conflict' }
+      }
 
       // Уведомить Telegram чат о снятии паузы
       if (!resumeResult.hasQueue) {
@@ -336,7 +417,11 @@ export const registerRoutes = async (app, deps) => {
 
         await invitesStore.clear()
         for (const invite of (stateData.pendingInvites || [])) {
-          await invitesStore.set(invite.player, invite)
+          await invitesStore.create({
+            player: invite.player,
+            opponent: invite.opponent,
+            createdAt: invite.createdAt,
+          })
         }
 
         setPauseMode(queueChatId, false)
@@ -375,7 +460,7 @@ export const registerRoutes = async (app, deps) => {
             context.queueService.recalculateWaiting(state)
           }
           state.played.push(req.player)
-          await invitesStore.delete(req.player)
+          await invitesStore.deleteByPlayer(req.player)
           await context.repository.save(state)
         }
       }
@@ -401,7 +486,7 @@ export const registerRoutes = async (app, deps) => {
 
     app.post('/api/dev/accept-invite', { preHandler: [auth] }, async (req) => {
       const state = await context.repository.get()
-      const outgoing = (await invitesStore.getAll()).find(inv => inv.player === req.player)
+      const outgoing = await invitesStore.getByPlayer(req.player)
       const partner = outgoing?.opponent
         ?? pickRandom(await getFreePlayers(state, [req.player]))
       if (!partner) return { ok: false, reason: 'not_enough_players' }
@@ -411,7 +496,7 @@ export const registerRoutes = async (app, deps) => {
       state.removeSearching(partner)
       state.removeMatchByPlayer(req.player)
       state.removeMatchByPlayer(partner)
-      if (outgoing) await invitesStore.delete(req.player)
+      if (outgoing) await invitesStore.deleteByPlayer(req.player)
 
       state.addSearching(req.player)
       const result = context.queueService.scheduleMatch(state, req.player, partner, context.clock.now())
@@ -429,7 +514,7 @@ export const registerRoutes = async (app, deps) => {
       state.played = state.played.filter(p => p !== sender)
       state.addSearching(sender)
       await context.repository.save(state)
-      await invitesStore.set(sender, { player: sender, opponent: req.player, createdAt: Date.now() })
+      await invitesStore.create({ player: sender, opponent: req.player, createdAt: Date.now() })
       sseManager.broadcast('state_update', await buildStatePayload())
       return { ok: true, player: sender }
     })

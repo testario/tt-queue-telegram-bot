@@ -16,6 +16,15 @@ export const recoverTimers = async ({ repository, orchestrator, clock, logger })
   const now = clock.now()
   const current = state.queue[0]
 
+  if (current.status !== 'playing') {
+    log.info('Восстановление: текущий матч удержан, таймеры не планируются', {
+      player1: current.player1,
+      player2: current.player2,
+      status: current.status,
+    })
+    return
+  }
+
   if (current.endDate <= now) {
     // Матч уже должен был завершиться — завершаем сразу
     log.warn('Восстановление: матч просрочен, финишируем', {
@@ -33,11 +42,5 @@ export const recoverTimers = async ({ repository, orchestrator, clock, logger })
       player2: current.player2,
     })
     orchestrator.scheduleFinish(current)
-  } else {
-    log.info('Восстановление: матч ожидает старта, планируем полный lifecycle', {
-      player1: current.player1,
-      player2: current.player2,
-    })
-    orchestrator.scheduleLifecycle(current)
   }
 }

@@ -1,11 +1,14 @@
 import 'dotenv/config'
-import { writeFileSync } from 'fs'
+import { rmSync, writeFileSync } from 'fs'
 import { createBot } from '#interfaces/telegram/bot.js'
 import { parseCliOptions } from '#interfaces/cli/options.js'
 import { createRedisClient, createRedisPubSub } from '#infrastructure/redis/createRedisClient.js'
 import { RedisQueueRepository } from '#infrastructure/repositories/RedisQueueRepository.js'
 import { RedisEventBus } from '#infrastructure/events/RedisEventBus.js'
-import { recoverTimers } from '#infrastructure/timers/recoverTimers.js'
+import { RedisInvitesStore } from '#infrastructure/invites/RedisInvitesStore.js'
+import { MongoPlayersRepository } from '#infrastructure/players/MongoPlayersRepository.js'
+import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlayersRepository.js'
+import { LifecycleReconciler } from '#infrastructure/timers/LifecycleReconciler.js'
 
 const token = process.env.TG_BOT_API_TOKEN
 const redisUrl = process.env.REDIS_URL
@@ -20,60 +23,126 @@ const stateClient = await createRedisClient({ url: redisUrl })
 const { publisher, subscriber } = await createRedisPubSub({ url: redisUrl })
 
 const queueRepository = new RedisQueueRepository({ client: stateClient })
+const invitesStore = new RedisInvitesStore({ client: stateClient })
+
+// Хранилище игроков: те же MongoDB defaults, что и в backend-процессе.
+const playersMongoUri = process.env.PLAYERS_MONGODB_URI || process.env.MONGODB_URI || null
+const playersRepository = playersMongoUri
+  ? new MongoPlayersRepository({
+      uri: playersMongoUri,
+      dbName: process.env.PLAYERS_MONGODB_DB || process.env.MONGODB_DB || 'tt-queue-bot',
+      collectionName: process.env.PLAYERS_MONGODB_COLLECTION || 'players',
+    })
+  : new InMemoryPlayersRepository()
+
+if (playersMongoUri && playersRepository.connect) {
+  await playersRepository.connect()
+}
 
 // eventBus для публикации событий из бота в Redis (subscriber не нужен боту как publisher)
 const eventBus = new RedisEventBus({ publisher, subscriber: null })
 
+let lifecycleReconciler = null
 const botResult = createBot(token, {
   metricsEnabled,
-  playersRepository: null,   // бот записывает в MongoDB только через upsert при взаимодействии — без MongoDB ок
+  playersRepository,
   queueRepository,
   eventBus,
+  invitesStore,
+  lifecycleManagedExternally: true,
+  autoStartPolling: false,
+  onDispose: () => lifecycleReconciler?.dispose(),
+  onStop: () => shutdown(),
+  onQueueChanged: () => lifecycleReconciler?.wake(),
 })
 
-const { getContext, queueChatId, isPauseModeEnabled, log } = botResult
+const {
+  bot,
+  getContext,
+  queueChatId,
+  shouldHoldMatch,
+  log,
+  startPolling,
+  dispose: disposeBot,
+} = botResult
 
-// Восстановление таймеров из Redis после рестарта
-if (queueChatId) {
-  const ctx = getContext(queueChatId)
-  if (ctx) {
-    await recoverTimers({
-      repository: ctx.repository,
-      orchestrator: ctx.orchestrator,
-      clock: ctx.clock,
-      logger: log,
-    })
+const ctx = queueChatId ? getContext(queueChatId) : null
+if (!ctx) throw new Error('Контекст очереди не найден для bot-процесса')
+
+lifecycleReconciler = new LifecycleReconciler({
+  repository: ctx.repository,
+  orchestrator: ctx.orchestrator,
+  clock: ctx.clock,
+  logger: log,
+  shouldHold: (match, now) => shouldHoldMatch(queueChatId, match, now),
+})
+
+// Pub/Sub используется только как сигнал перечитать durable-состояние.
+const readBus = new RedisEventBus({ publisher: null, subscriber, sourceId: eventBus.sourceId })
+await readBus.subscribe(async (event) => {
+  if (event.sourceId === eventBus.sourceId) return
+  if (!queueChatId) return
+  if (event.chatId && String(event.chatId) !== String(queueChatId)) return
+  lifecycleReconciler.wake()
+})
+
+const closeResource = async (name, close) => {
+  if (typeof close !== 'function') return
+  try {
+    await Promise.race([
+      Promise.resolve().then(close),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ])
+  } catch (error) {
+    log.error(`Не удалось закрыть ${name}`, { message: error.message })
   }
 }
 
-// Подписываемся на события от backend-процесса через Redis Pub/Sub.
-// Когда backend создаёт матч (POST /api/match), он публикует match_created.
-// Бот получает это событие и ставит таймеры через orchestrator.
-const readBus = new RedisEventBus({ publisher: null, subscriber })
-await readBus.subscribe(async (event) => {
-  if (event.type !== 'match_created') return
-  const matchRaw = event.payload?.match
-  if (!matchRaw || !queueChatId) return
+const closeClient = (client) => {
+  if (!client) return undefined
+  if (typeof client.quit === 'function') return () => client.quit()
+  if (typeof client.disconnect === 'function') return () => client.disconnect()
+  return undefined
+}
 
-  const ctx = getContext(queueChatId)
-  if (!ctx) return
-  if (isPauseModeEnabled(queueChatId)) return
+let shutdownPromise = null
+const shutdown = () => {
+  if (shutdownPromise) return shutdownPromise
+  shutdownPromise = (async () => {
+    await disposeBot()
+    await closeResource('Redis wakeup', () => readBus.unsubscribe())
+    await closeResource('Redis state client', closeClient(stateClient))
+    await closeResource('Redis publisher', closeClient(publisher))
+    await closeResource('Redis subscriber', closeClient(subscriber))
+    await closeResource('Mongo players repository', () => playersRepository.close?.())
+    try {
+      rmSync('/tmp/bot-alive', { force: true })
+    } catch (error) {
+      log.error('Не удалось удалить health marker', { message: error.message })
+    }
+  })()
+  return shutdownPromise
+}
 
-  // Восстанавливаем даты из JSON (они сериализуются как строки)
-  const match = {
-    ...matchRaw,
-    startDate: new Date(matchRaw.startDate),
-    endDate: new Date(matchRaw.endDate),
-  }
+let exitStarted = false
+const handleSignal = (signal) => {
+  if (exitStarted) return
+  exitStarted = true
+  void shutdown().then(
+    () => process.exit(0),
+    (error) => {
+      log.error(`Ошибка завершения по ${signal}`, { message: error.message })
+      process.exit(1)
+    }
+  )
+}
+process.once('SIGTERM', () => handleSignal('SIGTERM'))
+process.once('SIGINT', () => handleSignal('SIGINT'))
 
-  if (match.status === 'playing') {
-    ctx.orchestrator.scheduleLifecycle(match)
-    log.info('Bot: запланирован lifecycle для match_created из Redis', {
-      player1: match.player1,
-      player2: match.player2,
-    })
-  }
-})
+// Порядок важен: сначала принимаем wakeup, затем сверяем durable-state, затем polling.
+await lifecycleReconciler.reconcile()
+lifecycleReconciler.start()
+await startPolling()
 
 log.info('Bot-процесс запущен', { chatId: queueChatId })
 // Healthcheck для Docker: сигнализирует, что процесс успешно запустился

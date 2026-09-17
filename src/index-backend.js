@@ -44,7 +44,7 @@ if (playersMongoUri && playersRepository.connect) {
 // getChatMember (проверка прав admin), sendMessage (уведомления в чат), getUserProfilePhotos (аватары)
 const tgApi = new TelegramApi(token)
 
-await createWebApp({
+const webApp = await createWebApp({
   bot: tgApi,
   queueRepository,
   eventBus,
@@ -55,3 +55,42 @@ await createWebApp({
 })
 
 log.info('Backend-процесс запущен')
+
+const closeResource = async (name, close) => {
+  if (typeof close !== 'function') return
+  try {
+    await close()
+  } catch (error) {
+    log.error(`Не удалось закрыть ${name}`, { message: error.message })
+  }
+}
+
+let shutdownPromise = null
+const shutdown = () => {
+  if (shutdownPromise) return shutdownPromise
+  shutdownPromise = (async () => {
+    await closeResource('WebApp', () => webApp?.app?.close())
+    await closeResource('Redis wakeup', () => eventBus.unsubscribe())
+    await closeResource('Redis state client', () => stateClient.quit?.())
+    await closeResource('Redis publisher', () => publisher.quit?.())
+    await closeResource('Redis subscriber', () => subscriber.quit?.())
+    await closeResource('Mongo players repository', () => playersRepository.close?.())
+  })()
+  return shutdownPromise
+}
+
+let exitStarted = false
+const handleSignal = (signal) => {
+  if (exitStarted) return
+  exitStarted = true
+  void shutdown().then(
+    () => process.exit(0),
+    (error) => {
+      log.error(`Ошибка завершения по ${signal}`, { message: error.message })
+      process.exit(1)
+    }
+  )
+}
+
+process.once('SIGTERM', () => handleSignal('SIGTERM'))
+process.once('SIGINT', () => handleSignal('SIGINT'))

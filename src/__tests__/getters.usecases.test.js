@@ -22,9 +22,16 @@ describe("GetQueue use case", () => {
 describe("GetPlayed use case", () => {
   test("возвращает список сыгравших", async () => {
     const played = ["@p1", "@p2"];
+    let state = new QueueState({ played });
+    let revision = 0;
     const repository = {
-      get: jest.fn().mockResolvedValue(new QueueState({ played })),
-      save: jest.fn(),
+      getVersioned: jest.fn(async () => ({ state, revision })),
+      saveIfRevision: jest.fn(async (expectedRevision, nextState) => {
+        if (expectedRevision !== revision) return false;
+        state = nextState;
+        revision += 1;
+        return true;
+      }),
     };
     const queueService = {
       normalizeState: jest.fn((state) => ({ state })),
@@ -37,8 +44,39 @@ describe("GetPlayed use case", () => {
     expect(result).toBe("played text");
     expect(messages.playedList).toHaveBeenCalledWith(played);
     expect(queueService.normalizeState).toHaveBeenCalled();
-    expect(repository.save).toHaveBeenCalledWith(expect.any(QueueState));
+    expect(repository.saveIfRevision).toHaveBeenCalledWith(0, expect.any(QueueState));
+  });
+
+  test("повторяет нормализацию и не затирает завершение матча при CAS-конфликте", async () => {
+    const lifecycleState = new QueueState({ played: ["@p1", "@p2"] });
+    let state = new QueueState({ queue: [{ player1: "@p1", player2: "@p2" }] });
+    let revision = 0;
+    const repository = {
+      getVersioned: jest.fn(async () => ({ state, revision })),
+      saveIfRevision: jest.fn(async (expectedRevision, nextState) => {
+        if (expectedRevision !== revision) return false;
+        state = nextState;
+        revision += 1;
+        return true;
+      }),
+    };
+    repository.saveIfRevision.mockImplementationOnce(async () => {
+      state = lifecycleState;
+      revision = 1;
+      return false;
+    });
+    const queueService = {
+      normalizeState: jest.fn((currentState) => ({ state: currentState })),
+    };
+    const messages = { playedList: jest.fn().mockReturnValue("played text") };
+    const useCase = new GetPlayed({ repository, queueService, messages });
+
+    await useCase.execute();
+
+    expect(repository.getVersioned).toHaveBeenCalledTimes(2);
+    expect(queueService.normalizeState).toHaveBeenCalledTimes(2);
+    expect(state).toBe(lifecycleState);
+    expect(state.played).toEqual(["@p1", "@p2"]);
   });
 });
-
 

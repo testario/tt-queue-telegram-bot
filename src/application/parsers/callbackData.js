@@ -6,6 +6,7 @@ const inlineTestPrefix = "inline_test:";
 const directAcceptPrefix = "direct_accept:";
 const directDeclinePrefix = "direct_decline:";
 const directCancelPrefix = "direct_cancel:";
+const inviteIdPattern = /^[A-Za-z0-9_-]{16}$/;
 
 /**
  * @typedef {Object} PlayWithData
@@ -31,15 +32,15 @@ const directCancelPrefix = "direct_cancel:";
  *
  * @typedef {Object} DirectAcceptData
  * @property {"direct_accept"} type
- * @property {string[]} players
+ * @property {string|null} inviteId
  *
  * @typedef {Object} DirectDeclineData
  * @property {"direct_decline"} type
- * @property {string[]} players
+ * @property {string|null} inviteId
  *
  * @typedef {Object} DirectCancelData
  * @property {"direct_cancel"} type
- * @property {string[]} players
+ * @property {string|null} inviteId
  *
  * @typedef {Object} UnknownData
  * @property {"unknown"} type
@@ -76,22 +77,18 @@ const parseCallbackData = (data) => {
     return { type: "inline_test", count };
   }
   if (data.startsWith(directAcceptPrefix)) {
-    const payload = data.split(":").pop();
-    const players = (payload || "").split(",").filter(Boolean);
-    return { type: "direct_accept", players };
+    const inviteId = data.slice(directAcceptPrefix.length);
+    return { type: "direct_accept", inviteId: inviteIdPattern.test(inviteId) ? inviteId : null };
   }
   if (data.startsWith(directDeclinePrefix)) {
-    const payload = data.split(":").pop();
-    const players = (payload || "").split(",").filter(Boolean);
-    return { type: "direct_decline", players };
+    const inviteId = data.slice(directDeclinePrefix.length);
+    return { type: "direct_decline", inviteId: inviteIdPattern.test(inviteId) ? inviteId : null };
   }
   if (data.startsWith(directCancelPrefix)) {
-    const payload = data.split(":").pop();
-    const players = (payload || "").split(",").filter(Boolean);
-    return { type: "direct_cancel", players };
+    const inviteId = data.slice(directCancelPrefix.length);
+    return { type: "direct_cancel", inviteId: inviteIdPattern.test(inviteId) ? inviteId : null };
   }
   return { type: "unknown" };
 };
 
 export { parseCallbackData };
-

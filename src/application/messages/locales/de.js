@@ -164,6 +164,7 @@ const createDeUi = () => ({
     testModeDisabled: "Testmodus ist deaktiviert",
     directNotTarget: "Nur der eingeladene Gegner kann antworten",
     directNotAuthor: "Nur der Autor kann die Einladung abbrechen",
+    actionFailed: "Aktion wegen gleichzeitiger Änderung fehlgeschlagen, bitte erneut versuchen.",
   },
   test: {
     playerName: ({ timestamp, index, suffix }) => `Test_${timestamp}_${index}_${suffix}`,

@@ -288,11 +288,12 @@ describe('bot ownership and shutdown', () => {
       text: '/play @bob',
     }, ['/play @bob', '@bob'])
 
+    // Прямое приглашение не анонсируется в общий чат: обе стороны получают сообщения в ЛС.
     expect(fakeBot.sendMessage).toHaveBeenCalledTimes(2)
     expect(fakeBot.sendMessage.mock.calls[0][0]).toBe(42)
     expect(fakeBot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard).toHaveLength(1)
     expect(fakeBot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard[0]).toHaveLength(2)
-    expect(fakeBot.sendMessage.mock.calls[1][0]).toBe('queue')
+    expect(fakeBot.sendMessage.mock.calls[1][0]).toBe(1)
     expect(fakeBot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard).toHaveLength(1)
     expect(fakeBot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard[0][0].callback_data)
       .toMatch(/^direct_cancel:/)
@@ -625,6 +626,94 @@ describe('bot ownership and shutdown', () => {
     expect(fakeBot.answerCallbackQuery).toHaveBeenCalledWith(
       'banned-play-with',
       expect.objectContaining({ show_alert: true })
+    )
+    await botResult.dispose()
+  })
+
+  test('play_with accept announces the accepting player, not the original searcher', async () => {
+    const aliceIdentity = { username: '@alice', userId: 1, generation: 1 }
+    const bobIdentity = { username: '@bob', userId: 2, generation: 1 }
+    const queueRepository = new InMemoryQueueRepository(new QueueState({
+      searching: ['@alice'],
+      searchingIdentities: { '@alice': aliceIdentity },
+      ownership: {
+        '@alice': { ...aliceIdentity, status: 'active' },
+        '@bob': { ...bobIdentity, status: 'active' },
+      },
+    }))
+    const botResult = createBot('token', {
+      queueRepository,
+      autoStartPolling: false,
+    })
+    const fakeBot = instances[0]
+    const callbackHandler = fakeBot.eventHandlers.get('callback_query')
+
+    await callbackHandler({
+      id: 'accept-play-with',
+      from: { id: 2, username: 'bob' },
+      data: 'i_want_to_play_with_:@alice',
+      message: { chat: { id: 'queue' }, message_id: 200 },
+    })
+
+    expect(fakeBot.editMessageText).toHaveBeenCalledWith(
+      expect.stringContaining('@bob'),
+      expect.objectContaining({ chat_id: 'queue', message_id: 200 })
+    )
+    await botResult.dispose()
+  })
+
+  test('cancel_search silently deletes the announcement created in the group chat', async () => {
+    const aliceIdentity = { username: '@alice', userId: 1, generation: 1 }
+    const queueRepository = new InMemoryQueueRepository(new QueueState({
+      searching: ['@alice'],
+      searchingIdentities: { '@alice': aliceIdentity },
+      ownership: { '@alice': { ...aliceIdentity, status: 'active' } },
+    }))
+    const botResult = createBot('token', {
+      queueRepository,
+      autoStartPolling: false,
+    })
+    const fakeBot = instances[0]
+    const callbackHandler = fakeBot.eventHandlers.get('callback_query')
+
+    await callbackHandler({
+      id: 'cancel-search-group',
+      from: { id: 1, username: 'alice' },
+      data: 'i_want_to_cancel:@alice',
+      message: { chat: { id: 'queue' }, message_id: 201 },
+    })
+
+    expect(fakeBot.deleteMessage).toHaveBeenCalledWith('queue', 201)
+    expect(fakeBot.editMessageText).not.toHaveBeenCalled()
+    expect(fakeBot.sendMessage).not.toHaveBeenCalled()
+    await botResult.dispose()
+  })
+
+  test('cancel_search clears the keyboard on an inline announcement instead of deleting it', async () => {
+    const aliceIdentity = { username: '@alice', userId: 1, generation: 1 }
+    const queueRepository = new InMemoryQueueRepository(new QueueState({
+      searching: ['@alice'],
+      searchingIdentities: { '@alice': aliceIdentity },
+      ownership: { '@alice': { ...aliceIdentity, status: 'active' } },
+    }))
+    const botResult = createBot('token', {
+      queueRepository,
+      autoStartPolling: false,
+    })
+    const fakeBot = instances[0]
+    const callbackHandler = fakeBot.eventHandlers.get('callback_query')
+
+    await callbackHandler({
+      id: 'cancel-search-inline',
+      from: { id: 1, username: 'alice' },
+      data: 'i_want_to_cancel:@alice',
+      inline_message_id: 'inline-search-message',
+    })
+
+    expect(fakeBot.deleteMessage).not.toHaveBeenCalled()
+    expect(fakeBot.editMessageText).toHaveBeenCalledWith(
+      expect.any(String),
+      { inline_message_id: 'inline-search-message', reply_markup: { inline_keyboard: [] } }
     )
     await botResult.dispose()
   })

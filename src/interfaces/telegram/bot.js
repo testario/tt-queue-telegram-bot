@@ -689,6 +689,7 @@ const createBot = (
     return {
       ...baseMessages,
       searchAdded: (player) => baseMessages.searchAdded(formatPlayerForMessage(player)),
+      searchAccepted: (player) => baseMessages.searchAccepted(formatPlayerForMessage(player)),
       searchAlready: (player) => baseMessages.searchAlready(formatPlayerForMessage(player)),
       searchInQueue: (player) => baseMessages.searchInQueue(formatPlayerForMessage(player)),
       searchPlayed: (player) => baseMessages.searchPlayed(formatPlayerForMessage(player)),
@@ -981,15 +982,35 @@ const createBot = (
     });
 
   const notifyDirectInviteInitiator = async (chatId, invite, replyToMessageId) => {
-    try {
-      await bot.sendMessage(
+    // Прямое приглашение — личное дело двоих, в общий чат его не анонсируем.
+    // Подтверждение отправляем инициатору в ЛС, чат — только запасной вариант.
+    const text = messages.directInviteSent({ from: invite.player, to: invite.opponent });
+    const replyMarkup = buildDirectInviteInitiatorKeyboard(invite);
+    const initiatorUserId = invite.playerIdentity?.userId;
+
+    if (initiatorUserId != null) {
+      try {
+        await bot.sendMessage(initiatorUserId, text, { reply_markup: replyMarkup });
+        return;
+      } catch (error) {
+        log.warn("Не удалось отправить подтверждение прямого приглашения инициатору в ЛС", {
+          chatId,
+          reason: "direct_message_unavailable",
+          message: error.message,
+        });
+      }
+    } else {
+      log.warn("У инициатора прямого приглашения отсутствует Telegram userId", {
         chatId,
-        messages.directInviteSent({ from: invite.player, to: invite.opponent }),
-        {
-          reply_to_message_id: replyToMessageId,
-          reply_markup: buildDirectInviteInitiatorKeyboard(invite),
-        }
-      );
+        reason: "user_id_missing",
+      });
+    }
+
+    try {
+      await bot.sendMessage(chatId, text, {
+        reply_to_message_id: replyToMessageId,
+        reply_markup: replyMarkup,
+      });
     } catch (error) {
       log.warn("Не удалось отправить подтверждение прямого приглашения инициатору", {
         chatId,
@@ -2259,7 +2280,7 @@ const createBot = (
         });
         if (editOptions) {
           bot
-            .editMessageText(messages.searchAdded(player1), editOptions)
+            .editMessageText(messages.searchAccepted(player2), editOptions)
             .catch((error) =>
               handleEditMessageError(error, "Не удалось обновить сообщение подтверждения матча")
             );
@@ -2297,23 +2318,42 @@ const createBot = (
       }
       const cancelResult = await cancelSearch.execute(parsed.player, callbackQuery.from.identityToken);
       if (cancelResult.status === "removed") {
-        const editOptions = buildEditOptions();
-        if (editOptions) {
+        // Игрок передумал: анонс "хочет поиграть" убираем без комментариев.
+        // Inline-сообщения удалить нельзя — их можно только отредактировать.
+        if (editTarget?.inline_message_id) {
           bot
-            .editMessageText(messages.searchCancelled(), editOptions)
+            .editMessageText(
+              messages.searchCancelled(),
+              buildEditOptions({ reply_markup: { inline_keyboard: [] } })
+            )
             .catch((error) =>
-              handleEditMessageError(error, "Не удалось обновить сообщение об отмене поиска")
+              handleEditMessageError(error, "Не удалось обновить inline сообщение об отмене поиска")
             );
+        } else if (editTarget) {
+          bot
+            .deleteMessage(editTarget.chat_id, editTarget.message_id)
+            .catch((error) => {
+              log.error("Не удалось удалить сообщение об отмене поиска", { message: error.message });
+              bot
+                .editMessageText(
+                  messages.searchCancelled(),
+                  buildEditOptions({ reply_markup: { inline_keyboard: [] } })
+                )
+                .catch((editError) =>
+                  handleEditMessageError(
+                    editError,
+                    "Не удалось обновить сообщение об отмене поиска после неудачного удаления"
+                  )
+                );
+            });
         } else {
-          log.warn("Нет цели для редактирования сообщения об отмене поиска", {
+          log.warn("Нет цели для удаления сообщения об отмене поиска", {
             chatId,
             player: parsed.player,
           });
           bot
-            .sendMessage(chatId, messages.searchCancelled())
-            .catch((error) =>
-              handleEditMessageError(error, "Не удалось отправить уведомление об отмене поиска")
-            );
+            .answerCallbackQuery(callbackId, { text: messages.searchCancelled() })
+            .catch(console.error);
         }
       } else {
         context.notifier.notify(context.chatId, "", { type: "state_update" });
@@ -2445,7 +2485,7 @@ const createBot = (
         bot
           .deleteMessage(callbackQuery.message.chat?.id ?? chatId, callbackQuery.message.message_id)
           .catch((error) =>
-            handleEditMessageError(error, "Не удалось удалить сообщение с прямым приглашением")
+            log.error("Не удалось удалить сообщение с прямым приглашением", { message: error.message })
           );
         if (messageId) {
           bot

@@ -93,6 +93,7 @@
  * @typedef {Object} BotMessages
  * @property {() => string} greet
  * @property {(player: string) => string} searchAdded
+ * @property {(player: string) => string} searchAccepted
  * @property {(player: string) => string} searchAlready
  * @property {(player: string) => string} searchInQueue
  * @property {(player: string) => string} searchPlayed

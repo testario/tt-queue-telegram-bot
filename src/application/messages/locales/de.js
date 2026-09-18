@@ -41,13 +41,14 @@ const createDeMessages = ({ formatDate }) => ({
   queueList: (queue) =>
     queue.length > 0
       ? "Warteschlange:\n\n" +
-        queue.reduce(
-          (current, next, index) =>
-            (current += `Match Nr.${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
-              next.player2
-            )}\nStart - ${formatDate(next.startDate)}\nEnde - ${formatDate(next.endDate)}\n\n`),
-          ""
-        )
+        queue
+          .map(
+            (next, index) =>
+              `Match Nr.${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+                next.player2
+              )}\nStart - ${formatDate(next.startDate)}\nEnde - ${formatDate(next.endDate)}\n\n`
+          )
+          .join("")
       : "Die Warteschlange ist leer",
   playedList: (played) =>
     played.length

@@ -8,7 +8,7 @@ import AppButton from '@/shared/ui/AppButton.vue'
 import AppModal from '@/shared/ui/AppModal.vue'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
 
-const emit = defineEmits(['close'])
+defineEmits(['close'])
 const modalRef = ref(null)
 const api = useApi()
 const { state: playersState, load } = usePlayers()
@@ -127,10 +127,10 @@ const submit = async () => {
         @click="selectPlayer(p)"
       >
         <PlayerAvatar :username="p.username" :size="40" />
-        <div class="direct-match-modal__player-info">
+        <span class="direct-match-modal__player-info">
           <span class="direct-match-modal__player-name">{{ p.displayName }}</span>
           <span class="direct-match-modal__player-username">{{ p.username }}</span>
-        </div>
+        </span>
       </button>
     </div>
 

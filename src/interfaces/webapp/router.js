@@ -669,7 +669,7 @@ export const registerRoutes = async (app, deps) => {
 
   // POST /api/admin/pause — включить режим паузы
   // applyPauseMode сам отправляет сообщение в Telegram через respondEmergeMessage
-  app.post('/api/admin/pause', { preHandler: [auth, requireAdmin] }, async (req, reply) => {
+  app.post('/api/admin/pause', { preHandler: [auth, requireAdmin] }, async (req) => {
     if (isPauseModeEnabled(queueChatId)) {
       return { ok: false, reason: 'already_paused' }
     }
@@ -688,7 +688,7 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // POST /api/admin/continue — снять режим паузы
-  app.post('/api/admin/continue', { preHandler: [auth, requireAdmin] }, async (req, reply) => {
+  app.post('/api/admin/continue', { preHandler: [auth, requireAdmin] }, async () => {
     const emergeResult = await resumeEmergeAfterContinue({ chatId: queueChatId, context })
     const pauseEnabled = isPauseModeEnabled(queueChatId)
 

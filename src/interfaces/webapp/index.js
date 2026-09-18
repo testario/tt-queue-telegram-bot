@@ -113,7 +113,7 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
  * Флаг admin-mode локален процессу, а поведение текущей головы сохраняется
  * в durable queue state и передаётся bot-процессу через state-update wakeup.
  */
-export const buildLocalAdminState = ({ queueChatId, bot, messages, queueService, isDev = false, logger }) => {
+export const buildLocalAdminState = ({ bot, messages, isDev = false, logger }) => {
   const pauseModeChats = new Set()
   const emergeStateByChat = new Map()
 
@@ -330,10 +330,8 @@ export const createWebApp = async ({
     resolvedGetContext = (_chatId) => backendContext
 
     const adminState = buildLocalAdminState({
-      queueChatId,
       bot,
       messages: resolvedMessages,
-      queueService: backendContext.queueService,
       isDev: process.env.NODE_ENV !== 'production',
       logger: log,
     })

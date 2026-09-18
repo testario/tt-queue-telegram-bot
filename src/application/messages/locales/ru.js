@@ -45,15 +45,16 @@ const createRuMessages = ({ formatDate }) => ({
   queueList: (queue) =>
     queue.length > 0
       ? "Очередь:\n\n" +
-        queue.reduce(
-          (current, next, index) =>
-            (current += `Матч №${index + 1}\nИграют ${stripAt(next.player1)} и ${stripAt(
-              next.player2
-            )}\nДата начала - ${formatDate(next.startDate)}\nДата окончания - ${formatDate(
-              next.endDate
-            )}\n\n`),
-          ""
-        )
+        queue
+          .map(
+            (next, index) =>
+              `Матч №${index + 1}\nИграют ${stripAt(next.player1)} и ${stripAt(
+                next.player2
+              )}\nДата начала - ${formatDate(next.startDate)}\nДата окончания - ${formatDate(
+                next.endDate
+              )}\n\n`
+          )
+          .join("")
       : "Очередь пуста",
   playedList: (played) =>
     played.length

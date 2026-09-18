@@ -1,3 +1,4 @@
+import { jest } from "@jest/globals";
 import { formatReadyTime } from "#application/messages/locales/utils.js";
 
 describe("formatReadyTime", () => {
@@ -15,6 +16,7 @@ describe("formatReadyTime", () => {
 
   test("использует fallback при отсутствии Intl", async () => {
     const originalIntl = global.Intl;
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
 
     try {
       // Эмулируем окружение без Intl, чтобы проверить запасной форматтер.
@@ -29,6 +31,7 @@ describe("formatReadyTime", () => {
     } finally {
       // eslint-disable-next-line no-global-assign
       Intl = originalIntl;
+      errorSpy.mockRestore();
     }
   });
 });

@@ -64,7 +64,6 @@ const botResult = createBot(token, {
 })
 
 const {
-  bot,
   getContext,
   queueChatId,
   shouldHoldMatch,

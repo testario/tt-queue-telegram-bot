@@ -14,7 +14,7 @@ const cancelling = ref(false)
 
 const isMyMatch = (match) => match.player1 === player || match.player2 === player
 
-const handleCancel = async (match) => {
+const handleCancel = async () => {
   if (cancelling.value) return
   cancelling.value = true
   try {

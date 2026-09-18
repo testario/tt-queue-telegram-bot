@@ -427,29 +427,6 @@ const createBot = (
     return false;
   };
 
-  const isUsernameBanned = async (username) => {
-    if (!playersRepository || !username || typeof playersRepository.findOne !== "function") return false;
-    const player = await playersRepository.findOne(username);
-    return player?.banned === true;
-  };
-
-  const getCurrentPlayerIdentity = async (username) => {
-    if (!playersRepository || !username || typeof playersRepository.findOne !== "function") return undefined;
-    const player = await playersRepository.findOne(username);
-    if (!player) return undefined;
-    return { userId: player.userId, identityVersion: player.identityVersion };
-  };
-
-  const validateParticipantIdentities = async (identities) => {
-    for (const [username, expected] of Object.entries(identities || {})) {
-      const current = await getCurrentPlayerIdentity(username);
-      if (!current || expected?.userId == null || String(current.userId) !== String(expected.userId)) return false;
-      if (expected.identityVersion != null
-        && String(current.identityVersion) !== String(expected.identityVersion)) return false;
-    }
-    return Object.keys(identities || {}).length > 0;
-  };
-
   const isInviteParticipantAuthorized = async (invite, actor, actorUserId, role) => {
     const identity = role === "initiator" ? invite?.playerIdentity : invite?.opponentIdentity;
     return Boolean(identity?.username === actor
@@ -666,7 +643,6 @@ const createBot = (
     return disposePromise;
   };
   const MAX_TEST_MATCHES = 10;
-  const MAX_CALLBACK_DATA_BYTES = 64;
   const isTestFeatureEnabled = process.env.ENABLE_TEST_FEATURE === "true";
 
   bot.onText(/^\/start(?:@[\w_]+)?/, async (msg) => {
@@ -2382,7 +2358,7 @@ const createBot = (
     } else if (parsed.type === "direct_accept") {
       const invite = await consumeDirectInvite(context, callbackId, parsed.inviteId, player2, userId, "opponent");
       if (!invite) return;
-      const { player: player1, opponent: invited } = invite;
+      const { player: player1 } = invite;
 
       if (await isInviteParticipantBanned(invite, "initiator")
         || await isInviteParticipantBanned(invite, "opponent")) {
@@ -2429,7 +2405,7 @@ const createBot = (
     } else if (parsed.type === "direct_decline") {
       const invite = await consumeDirectInvite(context, callbackId, parsed.inviteId, player2, userId, "opponent");
       if (!invite) return;
-      const { player: player1, opponent: invited } = invite;
+      const { player: player1 } = invite;
 
       if (await isInviteParticipantBanned(invite, "initiator")) {
         await bot.answerCallbackQuery(callbackId, { text: playerBannedMessage, show_alert: true }).catch(console.error);

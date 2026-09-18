@@ -41,13 +41,14 @@ const createEnMessages = ({ formatDate }) => ({
   queueList: (queue) =>
     queue.length > 0
       ? "Queue:\n\n" +
-      queue.reduce(
-        (current, next, index) =>
-        (current += `Match #${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
-          next.player2
-        )}\nStart - ${formatDate(next.startDate)}\nEnd - ${formatDate(next.endDate)}\n\n`),
-        ""
-      )
+      queue
+        .map(
+          (next, index) =>
+            `Match #${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+              next.player2
+            )}\nStart - ${formatDate(next.startDate)}\nEnd - ${formatDate(next.endDate)}\n\n`
+        )
+        .join("")
       : "Queue is empty",
   playedList: (played) =>
     played.length

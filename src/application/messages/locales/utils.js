@@ -71,6 +71,7 @@ const formatReadyTime = (() => {
 
       return formatter.second.format(totalSeconds);
     } catch (error) {
+      console.error("Не удалось отформатировать время через Intl.NumberFormat, используется fallback", error);
       return formatFallback(ms, locale);
     }
   };

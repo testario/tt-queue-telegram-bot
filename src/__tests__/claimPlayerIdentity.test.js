@@ -1,6 +1,5 @@
 import { jest } from "@jest/globals";
 import { ClaimPlayerIdentity, PlayerIdentityClaimError } from "#application/usecases/ClaimPlayerIdentity.js";
-import { QueueState } from "#domain/entities/QueueState.js";
 import { InMemoryQueueRepository } from "#infrastructure/repositories/InMemoryQueueRepository.js";
 import { InMemoryPlayersRepository } from "#infrastructure/players/InMemoryPlayersRepository.js";
 import { updateQueueState } from "#application/usecases/queueStateCas.js";

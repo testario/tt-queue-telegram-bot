@@ -1,5 +1,5 @@
 import { MongoClient } from 'mongodb'
-import { createNullLogger } from '../logger/Logger.js'
+import { createNullLogger } from '#infrastructure'
 
 /**
  * Персистентное хранилище игроков на MongoDB.
@@ -53,7 +53,8 @@ export class MongoPlayersRepository {
       await this.collection.createIndex({ userId: 1 }, options)
     } catch (error) {
       throw new Error(
-        `Не удалось установить уникальность players.userId после миграции: ${error.message}`
+        `Не удалось установить уникальность players.userId после миграции: ${error.message}`,
+        { cause: error }
       )
     }
   }
@@ -243,7 +244,6 @@ export class MongoPlayersRepository {
 
   /**
    * Находит игрока по username (с @).
-   * @param {string} username
    * @returns {Promise<object|null>}
    */
   async migrateIdentityGenerations() {

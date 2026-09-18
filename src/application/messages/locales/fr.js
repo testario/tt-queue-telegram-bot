@@ -41,13 +41,14 @@ const createFrMessages = ({ formatDate }) => ({
   queueList: (queue) =>
     queue.length > 0
       ? "File :\n\n" +
-        queue.reduce(
-          (current, next, index) =>
-            (current += `Match n°${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
-              next.player2
-            )}\nDébut - ${formatDate(next.startDate)}\nFin - ${formatDate(next.endDate)}\n\n`),
-          ""
-        )
+        queue
+          .map(
+            (next, index) =>
+              `Match n°${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+                next.player2
+              )}\nDébut - ${formatDate(next.startDate)}\nFin - ${formatDate(next.endDate)}\n\n`
+          )
+          .join("")
       : "La file est vide",
   playedList: (played) =>
     played.length

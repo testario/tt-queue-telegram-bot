@@ -47,10 +47,8 @@ describe('backend-only pause state', () => {
     })
     const context = createContext(current, now)
     const adminState = buildLocalAdminState({
-      queueChatId: 'queue',
       bot,
       messages,
-      queueService: context.queueService,
       isDev: true,
     })
 
@@ -71,10 +69,8 @@ describe('backend-only pause state', () => {
     })
     const context = createContext(current, now)
     const adminState = buildLocalAdminState({
-      queueChatId: 'queue',
       bot,
       messages,
-      queueService: context.queueService,
       isDev: true,
     })
 
@@ -96,13 +92,11 @@ describe('backend-only pause state', () => {
     const context = createContext(current, now)
     let latestState = new QueueState({ played: ['@finished'] })
     latestState.enqueue(current)
-    let revision = 0
     context.repository.getVersioned
       .mockResolvedValueOnce({ state: context.state, revision: 0 })
       .mockResolvedValueOnce({ state: latestState, revision: 1 })
     context.repository.saveIfRevision
       .mockImplementationOnce(async () => {
-        revision = 1
         return false
       })
       .mockImplementationOnce(async (expectedRevision, nextState) => {
@@ -111,10 +105,8 @@ describe('backend-only pause state', () => {
         return true
       })
     const adminState = buildLocalAdminState({
-      queueChatId: 'queue',
       bot,
       messages,
-      queueService: context.queueService,
       isDev: true,
     })
 
@@ -141,10 +133,8 @@ describe('backend-only pause state', () => {
     }))
     context.repository.saveIfRevision.mockResolvedValue(false)
     const adminState = buildLocalAdminState({
-      queueChatId: 'queue',
       bot,
       messages,
-      queueService: context.queueService,
       isDev: true,
       logger: { warn: jest.fn() },
     })
@@ -170,10 +160,8 @@ describe('backend-only pause state', () => {
     })
     const context = createContext(current, now)
     const adminState = buildLocalAdminState({
-      queueChatId: 'queue',
       bot,
       messages,
-      queueService: context.queueService,
       isDev: true,
     })
     await adminState.applyPauseMode({ chatId: 'queue', context })

@@ -41,13 +41,14 @@ const createEsMessages = ({ formatDate }) => ({
   queueList: (queue) =>
     queue.length > 0
       ? "Cola:\n\n" +
-        queue.reduce(
-          (current, next, index) =>
-            (current += `Partido nº${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
-              next.player2
-            )}\nInicio - ${formatDate(next.startDate)}\nFin - ${formatDate(next.endDate)}\n\n`),
-          ""
-        )
+        queue
+          .map(
+            (next, index) =>
+              `Partido nº${index + 1}\n${stripAt(next.player1)} vs ${stripAt(
+                next.player2
+              )}\nInicio - ${formatDate(next.startDate)}\nFin - ${formatDate(next.endDate)}\n\n`
+          )
+          .join("")
       : "La cola está vacía",
   playedList: (played) =>
     played.length

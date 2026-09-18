@@ -31,4 +31,41 @@ describe('split-process announcement ownership', () => {
     expect(eventBus.subscribe).toBeUndefined()
   })
 
+  test('relays notifications without a match_created meta, like a match cancellation, to the chat', async () => {
+    const bot = { sendMessage: jest.fn().mockResolvedValue(undefined) }
+    const context = buildBackendContext({
+      queueRepository: {},
+      queueChatId: 'queue',
+      messages: { matchCreated: jest.fn(() => 'created') },
+      ui: { inline: { confirmNoTime: 'cancel' } },
+      bot,
+      eventBus: null,
+      log: { error: jest.fn(), info: jest.fn(), warn: jest.fn() },
+    })
+
+    // CancelMatch.execute уведомляет чат без meta.type — раньше это молча отбрасывалось.
+    context.notifier.notify('queue', 'Игрок @alice отменил запись')
+    await Promise.resolve()
+
+    expect(bot.sendMessage).toHaveBeenCalledWith('queue', 'Игрок @alice отменил запись', undefined)
+  })
+
+  test('still drops state_update notifications, which carry no user-facing text', async () => {
+    const bot = { sendMessage: jest.fn().mockResolvedValue(undefined) }
+    const context = buildBackendContext({
+      queueRepository: {},
+      queueChatId: 'queue',
+      messages: { matchCreated: jest.fn(() => 'created') },
+      ui: { inline: { confirmNoTime: 'cancel' } },
+      bot,
+      eventBus: null,
+      log: { error: jest.fn(), info: jest.fn(), warn: jest.fn() },
+    })
+
+    context.notifier.notify('queue', '', { type: 'state_update' })
+    await Promise.resolve()
+
+    expect(bot.sendMessage).not.toHaveBeenCalled()
+  })
+
 })

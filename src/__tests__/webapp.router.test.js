@@ -85,6 +85,8 @@ const createHarness = async ({ production = false, claimPlayerIdentity = undefin
   }
   const bot = {
     sendMessage: jest.fn().mockResolvedValue(undefined),
+    deleteMessage: jest.fn().mockResolvedValue(undefined),
+    editMessageText: jest.fn().mockResolvedValue(undefined),
     getChatMember: jest.fn(),
   }
   const sseManager = { addClient: jest.fn(), broadcast: jest.fn() }
@@ -96,6 +98,7 @@ const createHarness = async ({ production = false, claimPlayerIdentity = undefin
     directDeclined: jest.fn().mockReturnValue('declined'),
     directCancelled: jest.fn().mockReturnValue('cancelled'),
     searchAdded: jest.fn().mockReturnValue('search added'),
+    searchAccepted: jest.fn().mockReturnValue('search accepted'),
     searchCancelled: jest.fn().mockReturnValue('search cancelled'),
     matchAlreadyInQueue: jest.fn().mockReturnValue('invite exists'),
   }
@@ -181,10 +184,11 @@ describe('webapp REST routes', () => {
     })
 
     expect(response.statusCode).toBe(200)
+    // Прямое приглашение не анонсируется в общий чат: обе стороны получают сообщения в ЛС.
     expect(harness.bot.sendMessage).toHaveBeenCalledTimes(2)
     expect(harness.bot.sendMessage.mock.calls[0][0]).toBe(2)
     expect(harness.bot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard).toHaveLength(1)
-    expect(harness.bot.sendMessage.mock.calls[1][0]).toBe('queue-chat')
+    expect(harness.bot.sendMessage.mock.calls[1][0]).toBe(10)
     expect(harness.bot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard[0][0].callback_data)
       .toMatch(/^direct_cancel:/)
     await harness.app.close()
@@ -852,10 +856,11 @@ describe('webapp REST routes', () => {
     })
 
     expect(response.json()).toEqual({ ok: true })
+    // Прямое приглашение не анонсируется в общий чат: обе стороны получают сообщения в ЛС.
     expect(harness.bot.sendMessage).toHaveBeenCalledTimes(2)
     expect(harness.bot.sendMessage.mock.calls[0][0]).toBe(2)
     expect(harness.bot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard).toHaveLength(1)
-    expect(harness.bot.sendMessage.mock.calls[1][0]).toBe('queue-chat')
+    expect(harness.bot.sendMessage.mock.calls[1][0]).toBe(10)
     expect(harness.bot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard[0][0].callback_data)
       .toMatch(/^direct_cancel:/)
     await harness.app.close()
@@ -863,11 +868,9 @@ describe('webapp REST routes', () => {
 
   test('falls back to the queue chat when REST private delivery fails', async () => {
     const harness = await createHarness({ production: true })
-    harness.playersRepository.findOne.mockImplementation(async (username) =>
-      username === '@bob' ? { username, userId: 22, generation: 1, banned: false } : null
-    )
+    // Реальный получатель резолвится из ownership состояния (userId: 2), а не из playersRepository.
     harness.bot.sendMessage.mockImplementation((chatId) =>
-      chatId === 22 ? Promise.reject(new Error('private chat unavailable')) : Promise.resolve()
+      chatId === 2 ? Promise.reject(new Error('private chat unavailable')) : Promise.resolve()
     )
 
     const response = await harness.app.inject({
@@ -878,11 +881,13 @@ describe('webapp REST routes', () => {
     })
 
     expect(response.json()).toEqual({ ok: true })
+    // Получатель недоступен в ЛС → полное приглашение уходит в общий чат как единственный способ его увидеть.
+    // Подтверждение инициатору при этом не отправляется вовсе (sentDirect: false).
     expect(harness.bot.sendMessage).toHaveBeenCalledTimes(2)
     expect(harness.bot.sendMessage.mock.calls[0][0]).toBe(2)
     expect(harness.bot.sendMessage.mock.calls[1][0]).toBe('queue-chat')
     expect(harness.bot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard).toHaveLength(1)
-    expect(harness.bot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard).toHaveLength(1)
+    expect(harness.bot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard).toHaveLength(2)
     await harness.app.close()
   })
 
@@ -920,6 +925,144 @@ describe('webapp REST routes', () => {
     expect(response.statusCode).toBe(503)
     expect(response.json()).toEqual({ error: 'invite_storage_unavailable' })
     expect(harness.context.addMatch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('cancelling a search from the mini app deletes the announcement it created', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 'queue-chat' } })
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    const response = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    expect(response.json()).toEqual({ ok: true, status: 'removed' })
+    expect(harness.bot.deleteMessage).toHaveBeenCalledWith('queue-chat', 555)
+    // Никакого нового "передумал" сообщения поверх удалённого анонса.
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    await harness.app.close()
+  })
+
+  test('cancelling a search created outside the mini app falls back to a text notice', async () => {
+    const harness = await createHarness({ production: true })
+
+    const response = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    expect(response.json()).toEqual({ ok: true, status: 'removed' })
+    expect(harness.bot.deleteMessage).not.toHaveBeenCalled()
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith('queue-chat', 'search cancelled', undefined)
+    await harness.app.close()
+  })
+
+  test('accepting a search from the mini app replaces its announcement with the match instead of leaving it stale', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.sendMessage.mockResolvedValue({ message_id: 777, chat: { id: 'queue-chat' } })
+    const match = { player1: '@alice', player2: '@bob' }
+    harness.context.addMatch.execute.mockResolvedValue({ ok: true, match })
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/match',
+      headers: authHeader('bob', 2),
+      payload: { opponent: '@alice' },
+    })
+
+    expect(response.json()).toEqual({ ok: true })
+    expect(harness.bot.editMessageText).toHaveBeenCalledWith(
+      'search accepted',
+      expect.objectContaining({ chat_id: 'queue-chat', message_id: 777 })
+    )
+    expect(harness.bot.deleteMessage).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('falls back to a text notice when Telegram lets neither delete nor edit the announcement', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 'queue-chat' } })
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    harness.bot.deleteMessage.mockRejectedValue(new Error('message to delete not found'))
+    harness.bot.editMessageText.mockRejectedValue(new Error('message to edit not found'))
+
+    const response = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    expect(response.json()).toEqual({ ok: true, status: 'removed' })
+    expect(harness.bot.deleteMessage).toHaveBeenCalledTimes(1)
+    expect(harness.bot.editMessageText).toHaveBeenCalledTimes(1)
+    // Ни удаление, ни правка не сработали — последний рубеж: текстовое сообщение.
+    expect(harness.bot.sendMessage).toHaveBeenLastCalledWith('queue-chat', 'search cancelled', undefined)
+    await harness.app.close()
+  })
+
+  test('accepting a direct invite clears a concurrent general-search announcement for the initiator', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 'queue-chat' } })
+
+    // alice тем временем независимо ищет соперника через мини-апп — это и есть
+    // анонс, который должен быть закрыт при принятии её прямого приглашения.
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    const invite = await harness.invitesStore.create({
+      player: '@alice',
+      opponent: '@bob',
+      createdAt: Date.now(),
+    })
+    const match = { player1: '@alice', player2: '@bob' }
+    harness.context.addMatch.execute.mockResolvedValue({ ok: true, match })
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct/accept',
+      headers: authHeader('bob', 2),
+      payload: { inviteId: invite.inviteId },
+    })
+
+    expect(harness.bot.editMessageText).toHaveBeenCalledWith(
+      'search accepted',
+      expect.objectContaining({ chat_id: 'queue-chat', message_id: 555 })
+    )
+
+    // Позже alice отменяет поиск заново — это уже не должно трогать анонс,
+    // закрытый принятием прямого приглашения (иначе снесли бы чужое сообщение).
+    harness.bot.deleteMessage.mockClear()
+    await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    expect(harness.bot.deleteMessage).not.toHaveBeenCalled()
     await harness.app.close()
   })
 })

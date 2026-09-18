@@ -47,12 +47,16 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
     handleMatchFinished: async () => {},
   }
 
+  // Ретранслируем в чат любое уведомление usecase'ов (например, отмену матча из
+  // CancelMatch), кроме служебных state_update — раньше сюда попадал только
+  // анонс созданного матча, и отмена матча из мини-аппа проходила молча.
   notifier.onMessage(({ chatId, text, meta }) => {
-    if (meta?.type !== 'match_created') return
-    const replyMarkup = buildMatchCancelKeyboard(meta.match, ui)
+    if (meta?.type === 'state_update' || !text) return
+    const replyMarkup =
+      meta?.type === 'match_created' && meta.match ? buildMatchCancelKeyboard(meta.match, ui) : undefined
     bot
       .sendMessage(chatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined)
-      .catch((error) => log.error('Не удалось отправить анонс созданного матча', {
+      .catch((error) => log.error('Не удалось отправить уведомление о событии очереди', {
         chatId,
         message: error.message,
       }))

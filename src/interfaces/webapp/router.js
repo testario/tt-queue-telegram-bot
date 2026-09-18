@@ -4,11 +4,15 @@ import {
   buildDirectInviteKeyboard,
   buildDirectInviteInitiatorKeyboard,
   buildDirectInviteRecipientKeyboard,
+  buildMatchCancelKeyboard,
 } from '#interfaces/telegram/keyboards.js'
 import { QueueState } from '#domain'
 import { recoverTimers } from '#infrastructure/timers/recoverTimers.js'
 import { updateQueueState } from '#application/usecases/queueStateCas.js'
-import { sendDirectInviteNotification } from '#interfaces/telegram/directInviteNotification.js'
+import {
+  sendDirectInviteNotification,
+  notifyDirectInviteInitiator,
+} from '#interfaces/telegram/directInviteNotification.js'
 import { createTestIdentityHelper } from '#application/usecases/createTestIdentityHelper.js'
 import { isSyntheticFormerUsername, toPublicPlayer, toPublicState } from './publicDtos.js'
 
@@ -62,11 +66,94 @@ export const registerRoutes = async (app, deps) => {
       : null
 
   const notifyChat = isDev
-    ? () => {}
-    : (text, replyMarkup = undefined) =>
-        bot
-          .sendMessage(queueChatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined)
-          .catch((err) => log.error('Не удалось уведомить чат из webapp', { message: err.message }))
+    ? async () => null
+    : async (text, replyMarkup = undefined) => {
+        try {
+          return await bot.sendMessage(queueChatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined)
+        } catch (err) {
+          log.error('Не удалось уведомить чат из webapp', { message: err.message })
+          return null
+        }
+      }
+
+  // Ошибки Telegram вида "сообщение уже не то" или "уже не менялось" — не
+  // повод для log.error: анонс мог быть уже тронут другим процессом/каналом.
+  const isStaleTelegramMessageError = (err) =>
+    /message is not modified|message to (delete|edit) not found|message can't be deleted/i.test(
+      err?.response?.body?.description || err?.message || ''
+    )
+
+  const logAnnouncementError = (message, err) => {
+    log[isStaleTelegramMessageError(err) ? 'warn' : 'error'](message, { message: err.message })
+  }
+
+  // Анонс "хочет поиграть", созданный через мини-апп: помним, каким сообщением
+  // он был опубликован, чтобы при отмене/принятии поиска убрать именно его,
+  // а не плодить новые сообщения поверх старого. Живёт только в памяти этого
+  // процесса — поиск, начатый через бот-команду или inline, сюда не попадает.
+  // Запись снимается на любом пути, которым игрок покидает поиск (отмена,
+  // принятие своего поиска, а также согласие/отказ/отмена прямого
+  // приглашения — оно тоже переводит игрока в состояние поиска). Если ни
+  // один из этих путей не сработал (процесс перезапустился, поиск начат в
+  // другом канале) — используется прежний текстовый фоллбек.
+  const searchAnnouncements = new Map()
+
+  const takeSearchAnnouncement = (player) => {
+    const announcement = searchAnnouncements.get(player)
+    searchAnnouncements.delete(player)
+    return announcement
+  }
+
+  // Тихо убирает анонс без текстового фоллбека — для путей, где игрок покидает
+  // поиск не по собственной отмене (принят/отклонён/забанен), и где отдельное
+  // сообщение об этом событии уже отправляется своим текстом.
+  const discardSearchAnnouncement = async (player) => {
+    const announcement = takeSearchAnnouncement(player)
+    if (!announcement) return
+    try {
+      await bot.deleteMessage(announcement.chatId, announcement.messageId)
+    } catch (err) {
+      logAnnouncementError('Не удалось удалить устаревший анонс поиска', err)
+    }
+  }
+
+  const removeSearchAnnouncement = async (player) => {
+    const announcement = takeSearchAnnouncement(player)
+    if (!announcement) {
+      await notifyChat(messages.searchCancelled())
+      return
+    }
+    try {
+      await bot.deleteMessage(announcement.chatId, announcement.messageId)
+    } catch (err) {
+      logAnnouncementError('Не удалось удалить анонс поиска из webapp', err)
+      try {
+        await bot.editMessageText(messages.searchCancelled(), {
+          chat_id: announcement.chatId,
+          message_id: announcement.messageId,
+        })
+      } catch (editErr) {
+        logAnnouncementError('Не удалось обновить анонс поиска после неудачного удаления', editErr)
+        // Ни удалить, ни отредактировать не вышло — сообщаем хотя бы текстом,
+        // чтобы отмена не осталась вовсе без обратной связи в чате.
+        await notifyChat(messages.searchCancelled())
+      }
+    }
+  }
+
+  const resolveSearchAnnouncement = async (searcher, accepter, match) => {
+    const announcement = takeSearchAnnouncement(searcher)
+    if (!announcement) return
+    try {
+      await bot.editMessageText(messages.searchAccepted(accepter), {
+        chat_id: announcement.chatId,
+        message_id: announcement.messageId,
+        reply_markup: (match && buildMatchCancelKeyboard(match, ui)) || { inline_keyboard: [] },
+      })
+    } catch (err) {
+      logAnnouncementError('Не удалось обновить анонс поиска после принятия приглашения', err)
+    }
+  }
 
   const isUserBanned = async (user, username) => {
     if (typeof playersRepository.isBanned === 'function' && user?.id != null) {
@@ -313,6 +400,11 @@ export const registerRoutes = async (app, deps) => {
     // Уже созданные матчи намеренно не удаляются: они завершаются по обычному
     // lifecycle. Запрещаем только новые матчи и убираем игрока из поиска.
     let queueChanged = false
+    // mutate может выполниться повторно при CAS-конфликте — список набираем
+    // заново на каждой попытке, а сами Telegram-вызовы делаем уже после того,
+    // как состояние гарантированно сохранено (сайд-эффекты внутри retryable
+    // mutate недопустимы).
+    let removedPlayers = []
     if (typeof context.repository.getVersioned === 'function'
       && typeof context.repository.saveIfRevision === 'function') {
       await updateQueueState({
@@ -320,10 +412,12 @@ export const registerRoutes = async (app, deps) => {
         logger: log,
         operation: 'ban_remove_search',
         mutate: (state) => {
+          removedPlayers = []
           const before = state.searching.length
           for (const player of [...state.searching]) {
             if (matchesIdentity(state, player)) {
               state.removeStaleSearching(player, state.searchingIdentities[player])
+              removedPlayers.push(player)
             }
           }
           if (state.searching.length === before) return { state, save: false, changed: false }
@@ -333,9 +427,17 @@ export const registerRoutes = async (app, deps) => {
     } else {
       const state = await context.repository.get()
       const before = state.searching.length
+      removedPlayers = state.searching.filter((player) => matchesIdentity(state, player))
       state.searching = state.searching.filter((player) => !matchesIdentity(state, player))
       queueChanged = state.searching.length !== before
       if (queueChanged) await context.repository.save(state)
+    }
+    // Анонс "хочет поиграть" забаненного/переименованного игрока больше не
+    // актуален — убираем его так же тихо, как и сам поиск. Не ждём Telegram:
+    // это вызывается и из preHandler'а auth при смене username, где лишняя
+    // задержка ответа особенно заметна.
+    for (const player of removedPlayers) {
+      discardSearchAnnouncement(player)
     }
     return queueChanged
   }
@@ -437,10 +539,13 @@ export const registerRoutes = async (app, deps) => {
   // POST /api/search — встать в поиск
   app.post('/api/search', { preHandler: [auth] }, async (req) => {
     const result = await context.registerSearch.execute(req.player, req.identityToken)
-    if (result.status === 'added') {
-      notifyChat(messages.searchAdded(req.player), buildSearchInlineKeyboard(req.player, ui))
-    }
     sseManager.broadcast('state_update', await buildStatePayload())
+    if (result.status === 'added') {
+      const sent = await notifyChat(messages.searchAdded(req.player), buildSearchInlineKeyboard(req.player, ui))
+      if (sent?.message_id != null) {
+        searchAnnouncements.set(req.player, { chatId: queueChatId, messageId: sent.message_id })
+      }
+    }
     return { ok: true, status: result.status }
   })
 
@@ -448,7 +553,8 @@ export const registerRoutes = async (app, deps) => {
   app.delete('/api/search', { preHandler: [auth] }, async (req) => {
     const result = await context.cancelSearch.execute(req.player, req.identityToken)
     if (result.status === 'removed') {
-      notifyChat(messages.searchCancelled())
+      // Игрок передумал: анонс "хочет поиграть" убираем без комментариев.
+      await removeSearchAnnouncement(req.player)
     }
     sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: result.status === 'removed', status: result.status }
@@ -469,7 +575,12 @@ export const registerRoutes = async (app, deps) => {
         [req.player]: req.identityToken,
       },
     })
-    if (result.ok) sseManager.broadcast('state_update', await buildStatePayload())
+    if (result.ok) {
+      sseManager.broadcast('state_update', await buildStatePayload())
+      // Приглашение принято: анонс "хочет поиграть" заменяем на анонс матча.
+      // Не ждём Telegram — ответ клиенту не должен зависеть от его задержек.
+      resolveSearchAnnouncement(opponent, req.player, result.match)
+    }
     return { ok: result.ok, reason: result.reason }
   })
 
@@ -546,11 +657,15 @@ export const registerRoutes = async (app, deps) => {
         reason: 'notification_failed',
       }))
       if (delivery?.sentDirect) {
-        bot.sendMessage(
-          queueChatId,
-          messages.directInviteSent({ from: invite.player, to: invite.opponent }),
-          { reply_markup: buildDirectInviteInitiatorKeyboard(invite, ui) }
-        ).catch((error) => log.warn('Не удалось отправить подтверждение прямого приглашения инициатору', {
+        // Прямое приглашение не анонсируем в общий чат — подтверждение уходит инициатору в ЛС.
+        notifyDirectInviteInitiator({
+          bot,
+          invite,
+          text: messages.directInviteSent({ from: invite.player, to: invite.opponent }),
+          replyMarkup: buildDirectInviteInitiatorKeyboard(invite, ui),
+          fallbackChatId: queueChatId,
+          log,
+        }).catch((error) => log.warn('Не удалось отправить подтверждение прямого приглашения инициатору', {
           message: error.message,
         }))
       }
@@ -601,8 +716,12 @@ export const registerRoutes = async (app, deps) => {
       },
     })
     if (result.ok) {
-      notifyChat(messages.directAccepted({ from: invite.player, to: req.player }))
       sseManager.broadcast('state_update', await buildStatePayload())
+      // Инициатор мог параллельно висеть в общем поиске из мини-аппа — этот
+      // анонс тоже больше не актуален, раз матч уже создан через приглашение.
+      // Telegram не ждём — это не должно задерживать ответ клиенту.
+      resolveSearchAnnouncement(invite.player, req.player, result.match)
+      notifyChat(messages.directAccepted({ from: invite.player, to: req.player }))
     } else {
       sseManager.broadcast('state_update', await buildStatePayload())
     }
@@ -636,8 +755,9 @@ export const registerRoutes = async (app, deps) => {
     if (!invite) return { ok: false, reason: 'invite_not_found' }
 
     await context.cancelSearch.execute(invite.player, invite.playerIdentity)
-    notifyChat(messages.directDeclined({ from: invite.player, to: req.player }))
     sseManager.broadcast('state_update', await buildStatePayload())
+    discardSearchAnnouncement(invite.player)
+    notifyChat(messages.directDeclined({ from: invite.player, to: req.player }))
     return { ok: true }
   })
 
@@ -662,8 +782,9 @@ export const registerRoutes = async (app, deps) => {
     if (!invite) return { ok: false, reason: 'invite_not_found' }
 
     await context.cancelSearch.execute(req.player, invite.playerIdentity)
-    notifyChat(messages.directCancelled({ from: req.player, to: invite.opponent }))
     sseManager.broadcast('state_update', await buildStatePayload())
+    discardSearchAnnouncement(req.player)
+    notifyChat(messages.directCancelled({ from: req.player, to: invite.opponent }))
     return { ok: true }
   })
 

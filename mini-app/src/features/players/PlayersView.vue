@@ -49,6 +49,7 @@ const playersWithStatus = computed(() =>
       isQueued,
       isPlayed,
       canInvite: Boolean(currentPlayer)
+        && !player.banned
         && !unavailablePlayers.value.has(player.username)
         && !currentPlayerInQueue.value
         && !currentPlayerPlayed.value,
@@ -71,6 +72,7 @@ const filteredPlayers = computed(() => {
 })
 
 const statusText = (player) => {
+  if (player.banned) return 'доступ закрыт'
   if (player.username === currentPlayer) return 'это вы'
   if (player.isSearching) return 'ищет пару'
   if (player.isQueued) return 'в очереди'
@@ -153,8 +155,8 @@ const invite = async (username) => {
         >
           Позвать
         </AppButton>
-        <span v-else class="players-view__badge">
-          {{ player.isQueued ? 'В игре' : 'Недоступен' }}
+        <span v-else :class="['players-view__badge', { 'players-view__badge--banned': player.banned }]">
+          {{ player.banned ? 'Бан' : (player.isQueued ? 'В игре' : 'Недоступен') }}
         </span>
       </article>
 
@@ -297,6 +299,11 @@ const invite = async (username) => {
     color: var(--color-muted);
     font-size: 12px;
     font-weight: 800;
+
+    &--banned {
+      background: color-mix(in srgb, var(--color-danger), transparent 84%);
+      color: var(--color-danger);
+    }
   }
 
   &__hint {

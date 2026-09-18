@@ -39,20 +39,38 @@ class QueueService {
    * @param {Date} [now] Текущее время.
    * @returns {{state: QueueState, status: "added"|"already_searching"|"in_queue"|"played"|"unknown"}}
    */
-  registerSearch(state, player, now = new Date()) {
+  registerSearch(state, player, now = new Date(), { identityToken } = {}) {
     const { state: normalizedState } = this.normalizeState(state, now);
     const nextState = normalizedState.clone();
-    if (!nextState.hasPlayer(player)) {
-      nextState.addSearching(player);
+    if (!QueueState.isCompleteIdentity(identityToken)
+      || identityToken.username !== player
+      || !nextState.isActiveIdentity(identityToken, player)) {
+      return { state: nextState, status: "identity_unavailable" };
+    }
+    if (nextState.isBannedIdentity(identityToken)) {
+      return { state: nextState, status: "player_banned" };
+    }
+    if (!nextState.hasPlayer(player, identityToken)) {
+      nextState.addSearching(player, identityToken);
       return { state: nextState, status: "added" };
     }
     if (nextState.isSearching(player)) {
+      const storedIdentity = nextState.searchingIdentities?.[player];
+      if (!QueueState.sameIdentity(storedIdentity, identityToken)
+        || storedIdentity.username !== identityToken.username) {
+        if (QueueState.isCompleteIdentity(storedIdentity)) {
+          nextState.removeStaleSearching(player, storedIdentity);
+          nextState.addSearching(player, identityToken);
+          return { state: nextState, status: "added" };
+        }
+        return { state: nextState, status: "identity_unavailable" };
+      }
       return { state: nextState, status: "already_searching" };
     }
-    if (nextState.isQueued(player)) {
+    if (nextState.isQueued(player, identityToken)) {
       return { state: nextState, status: "in_queue" };
     }
-    if (nextState.isPlayed(player)) {
+    if (nextState.isPlayed(player, identityToken)) {
       return { state: nextState, status: "played" };
     }
     return { state: nextState, status: "unknown" };
@@ -65,11 +83,17 @@ class QueueService {
    * @param {Date} [now] Текущее время.
    * @returns {{state: QueueState, status: "removed"|"not_found"}}
    */
-  cancelSearch(state, player, now = new Date()) {
+  cancelSearch(state, player, now = new Date(), { identityToken } = {}) {
     const { state: normalizedState } = this.normalizeState(state, now);
     const nextState = normalizedState.clone();
-    if (nextState.isSearching(player)) {
-      nextState.removeSearching(player);
+    if (!QueueState.isCompleteIdentity(identityToken)) {
+      return { state: nextState, status: "identity_unavailable" };
+    }
+    if (identityToken.username !== player || !nextState.isActiveIdentity(identityToken, player)) {
+      return { state: nextState, status: "identity_unavailable" };
+    }
+    if (nextState.isSearching(player, identityToken)) {
+      nextState.removeSearching(player, identityToken);
       return { state: nextState, status: "removed" };
     }
     return { state: nextState, status: "not_found" };
@@ -81,25 +105,97 @@ class QueueService {
    * @param {string} player1 Первый игрок (должен быть в поиске).
    * @param {string} player2 Второй игрок.
    * @param {Date} now Текущее время.
-   * @returns {{ok: false, reason: string, state: QueueState}|{ok: true, state: QueueState, match: import("../entities/Match.js").Match}}
+   * @param {{participantIdentities: Record<string, object>, inviteIdentities?: Record<string, object>}} options
+   * @returns {{ok: false, reason: string, state: QueueState, cleanup?: boolean}|{ok: true, state: QueueState, match: import("../entities/Match.js").Match}}
    */
-  scheduleMatch(state, player1, player2, now) {
-    if (player1 === player2) {
-      return { ok: false, reason: "same_player", state };
-    }
+  scheduleMatch(
+    state,
+    player1,
+    player2,
+    now,
+    {
+      participantIdentities = {},
+      inviteIdentities = {},
+    } = {}
+  ) {
     const { state: normalizedState } = this.normalizeState(state, now);
     const nextState = normalizedState.clone();
-    if (nextState.isPlayed(player1) || nextState.isPlayed(player2)) {
-      return { ok: false, reason: "already_played", state: nextState };
+    const participantNames = [player1, player2];
+    const hasCompleteParticipantIdentities = participantNames.every((username) => {
+      const token = participantIdentities[username];
+      return QueueState.isCompleteIdentity(token) && token.username === username;
+    });
+    const expectedIdentity = (username) => participantIdentities[username];
+    const hasMatchingSearchIdentity = () => {
+      const expectedToken = expectedIdentity(player1);
+      const storedToken = nextState.searchingIdentities?.[player1];
+      return Boolean(QueueState.isCompleteIdentity(expectedToken)
+        && QueueState.isCompleteIdentity(storedToken)
+        && QueueState.sameIdentity(expectedToken, storedToken)
+        && expectedToken.username === storedToken.username);
+    };
+    const hasActiveParticipantIdentities = () => hasCompleteParticipantIdentities
+      && participantNames.every((username) => nextState.isActiveIdentity(participantIdentities[username], username));
+    const hasUnbannedParticipants = () => participantNames.every((username) =>
+      !nextState.isBannedIdentity(participantIdentities[username])
+    );
+    const hasMatchingInviteIdentities = () => Object.entries(inviteIdentities).every(([username, expected]) => {
+      const actual = expectedIdentity(username);
+      return QueueState.isCompleteIdentity(expected)
+        && expected.username === username
+        && QueueState.sameIdentity(actual, expected)
+        && actual.username === expected.username
+        && nextState.isActiveIdentity(expected, username);
+    });
+    if (!hasCompleteParticipantIdentities) {
+      return { ok: false, reason: "identity_unavailable", state: nextState };
     }
-    if (nextState.isQueued(player1) || nextState.isQueued(player2)) {
-      return { ok: false, reason: "already_in_queue", state: nextState };
+    if (!hasUnbannedParticipants()) {
+      return { ok: false, reason: "player_banned", state: nextState };
     }
-    if (!nextState.isSearching(player1)) {
+    const rejectStaleSearch = () => {
+      if (hasCompleteParticipantIdentities
+        && hasMatchingSearchIdentity()
+        && hasActiveParticipantIdentities()
+        && hasMatchingInviteIdentities()) return null;
+      const storedIdentity = nextState.searchingIdentities?.[player1];
+      const cleanup = QueueState.isCompleteIdentity(storedIdentity)
+        && !nextState.isActiveIdentity(storedIdentity)
+        ? nextState.removeStaleSearching(player1, storedIdentity)
+        : false;
+      return { ok: false, reason: "player1_identity_mismatch", state: nextState, cleanup };
+    };
+
+    if (nextState.isSearching(player1)) {
+      const staleSearch = rejectStaleSearch();
+      if (staleSearch) return staleSearch;
+    } else {
+      if (player1 === player2) {
+        return { ok: false, reason: "same_player", state: nextState };
+      }
+      if (nextState.isPlayed(player1, participantIdentities[player1])
+        || nextState.isPlayed(player2, participantIdentities[player2])) {
+        return { ok: false, reason: "already_played", state: nextState };
+      }
+      if (nextState.isQueued(player1, participantIdentities[player1])
+        || nextState.isQueued(player2, participantIdentities[player2])) {
+        return { ok: false, reason: "already_in_queue", state: nextState };
+      }
       return { ok: false, reason: "player1_not_searching", state: nextState };
     }
 
-    nextState.removeSearching(player1);
+    if (player1 === player2) {
+      return { ok: false, reason: "same_player", state: nextState };
+    }
+    if (nextState.isPlayed(player1, participantIdentities[player1])
+      || nextState.isPlayed(player2, participantIdentities[player2])) {
+      return { ok: false, reason: "already_played", state: nextState };
+    }
+    if (nextState.isQueued(player1, participantIdentities[player1])
+      || nextState.isQueued(player2, participantIdentities[player2])) {
+      return { ok: false, reason: "already_in_queue", state: nextState };
+    }
+    nextState.removeSearching(player1, participantIdentities[player1]);
 
     const lastMatch = nextState.queue[nextState.queue.length - 1];
     const baseStart = lastMatch ? lastMatch.endDate : now;
@@ -116,6 +212,7 @@ class QueueService {
       startDate,
       endDate,
       status,
+      participantIdentities,
     });
 
     nextState.enqueue(match);
@@ -140,6 +237,10 @@ class QueueService {
 
     if (endedMatch && !isLunchTime && !isAfterWork) {
       nextState.played.push(endedMatch.player1, endedMatch.player2);
+      for (const player of [endedMatch.player1, endedMatch.player2]) {
+        const identity = endedMatch.participantIdentities?.[player];
+        if (QueueState.isCompleteIdentity(identity)) nextState.playedIdentities.push({ ...identity });
+      }
     }
 
     if (nextState.queue.length > 0 && !holdNextMatch) {
@@ -166,10 +267,21 @@ class QueueService {
    * @param {Date} now Текущее время.
    * @returns {Object} Результат отмены с новым состоянием.
    */
-  cancelMatch(state, player, now) {
+  cancelMatch(state, player, now, { identityToken } = {}) {
     const { state: normalizedState } = this.normalizeState(state, now);
     const nextState = normalizedState.clone();
-    const { match, index } = nextState.removeMatchByPlayer(player);
+    if (!QueueState.isCompleteIdentity(identityToken)
+      || identityToken.username !== player
+      || !nextState.isActiveIdentity(identityToken, player)) {
+      return { state: nextState, status: "identity_unavailable" };
+    }
+    const index = nextState.queue.findIndex((candidate) => {
+      return [candidate.player1, candidate.player2].some((participant) =>
+        QueueState.sameUser(candidate.participantIdentities?.[participant], identityToken)
+      );
+    });
+    const match = index === -1 ? null : nextState.queue[index];
+    if (index > -1) nextState.queue.splice(index, 1);
 
     if (!match) {
       return { state: nextState, status: "not_found" };
@@ -264,6 +376,7 @@ class QueueService {
 
     if (shouldResetAtDayStart || shouldResetAtLunch || shouldResetAtWorkEnd) {
       nextState.played = [];
+      nextState.playedIdentities = [];
       nextState.lastPlayedResetAt = new Date(now);
     }
 

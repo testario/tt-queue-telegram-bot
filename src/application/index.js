@@ -5,6 +5,8 @@ export { GetPlayed } from "./usecases/GetPlayed.js";
 export { GetQueue } from "./usecases/GetQueue.js";
 export { CreateDirectMatch } from "./usecases/CreateDirectMatch.js";
 export { RegisterSearch } from "./usecases/RegisterSearch.js";
+export { ClaimPlayerIdentity, PlayerIdentityClaimError } from "./usecases/ClaimPlayerIdentity.js";
+export { migrateQueueState } from "./usecases/MigrateQueueState.js";
 export { MatchOrchestrator } from "./services/MatchOrchestrator.js";
 export { UsageMetricsService } from "./services/UsageMetricsService.js";
 export { I18N_CONFIG } from "./config/i18n.js";

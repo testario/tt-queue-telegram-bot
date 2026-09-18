@@ -3,6 +3,8 @@ import {
   buildSearchInlineKeyboard as buildSearchKeyboardFn,
   buildMatchCancelKeyboard as buildMatchCancelKeyboardFn,
   buildDirectInviteKeyboard as buildDirectInviteKeyboardFn,
+  buildDirectInviteRecipientKeyboard as buildDirectInviteRecipientKeyboardFn,
+  buildDirectInviteInitiatorKeyboard as buildDirectInviteInitiatorKeyboardFn,
 } from "#interfaces/telegram/keyboards.js";
 import {
   DEFAULT_GAME_TIME,
@@ -13,6 +15,7 @@ import {
 import { createLogger } from "#infrastructure/logger/Logger.js";
 import { QueueService } from "#domain/services/QueueService.js";
 import { InMemoryQueueRepository } from "#infrastructure/repositories/InMemoryQueueRepository.js";
+import { InMemoryPlayersRepository } from "#infrastructure/players/InMemoryPlayersRepository.js";
 import { EventNotifier } from "#infrastructure/notifier/EventNotifier.js";
 import { NodeTimer } from "#infrastructure/timers/NodeTimer.js";
 import { SystemClock } from "#infrastructure/time/SystemClock.js";
@@ -24,6 +27,8 @@ import { AddMatch } from "#application/usecases/AddMatch.js";
 import { CreateDirectMatch } from "#application/usecases/CreateDirectMatch.js";
 import { CancelSearch } from "#application/usecases/CancelSearch.js";
 import { CancelMatch } from "#application/usecases/CancelMatch.js";
+import { ClaimPlayerIdentity } from "#application/usecases/ClaimPlayerIdentity.js";
+import { createTestIdentityHelper } from "#application/usecases/createTestIdentityHelper.js";
 import { GetQueue } from "#application/usecases/GetQueue.js";
 import { GetPlayed } from "#application/usecases/GetPlayed.js";
 import { parseCallbackData } from "#application/parsers/callbackData.js";
@@ -35,6 +40,8 @@ import { UsageMetricsService } from "#application/services/UsageMetricsService.j
 import { MongoUsageMetricsRepository } from "#infrastructure/metrics/MongoUsageMetricsRepository.js";
 import { InMemoryInvitesStore } from "#infrastructure/invites/InMemoryInvitesStore.js";
 import { Match } from "#domain";
+import { QueueState } from "#domain/entities/QueueState.js";
+import { sendDirectInviteNotification } from "#interfaces/telegram/directInviteNotification.js";
 
 /**
  * @typedef {import("#application/types.js").Logger} Logger
@@ -95,6 +102,7 @@ const createBot = (
   });
   const log = logger || createLogger({ prefix: "bot" });
   const directInvitesStore = invitesStore || new InMemoryInvitesStore();
+  const identityRepository = playersRepository || new InMemoryPlayersRepository();
   const playerDisplayNames = new Map();
 
   const composeDisplayName = ({ username, firstName, lastName }) => {
@@ -104,7 +112,7 @@ const createBot = (
     return fullName ? `${handle} (${fullName})` : handle;
   };
 
-  const rememberUserDisplayName = (user) => {
+  const rememberUserDisplayName = async (user, identityToken = null) => {
     const username = user?.username;
     if (!username) return null;
     const displayName = composeDisplayName({
@@ -113,17 +121,8 @@ const createBot = (
       lastName: user?.last_name,
     });
     const key = `@${username}`;
+    if (identityToken) user.identityToken = identityToken;
     playerDisplayNames.set(key, displayName);
-    if (playersRepository) {
-      playersRepository
-        .upsert({
-          username: key,
-          userId: user.id,
-          firstName: user.first_name,
-          lastName: user.last_name,
-        })
-        .catch(() => {});
-    }
     return displayName;
   };
 
@@ -200,7 +199,10 @@ const createBot = (
   const resolveChatIdFromCallback = (callbackQuery) => {
     const messageChatId = callbackQuery?.message?.chat?.id;
     if (messageChatId !== null && messageChatId !== undefined) {
-      return resolveQueueChatId(messageChatId);
+      const isDirectInvite = /^(direct_accept|direct_decline|direct_cancel):/.test(
+        callbackQuery?.data || ""
+      );
+      return isDirectInvite ? resolveQueueChatId() : resolveQueueChatId(messageChatId);
     }
     return resolveQueueChatId();
   };
@@ -406,6 +408,199 @@ const createBot = (
     return admin;
   };
 
+  const playerBannedMessage = "Доступ запрещён: вы заблокированы администратором.";
+  const playerStatusUnavailableMessage = "Не удалось проверить доступ, попробуйте позже.";
+
+  const isPlayerBanned = async (user) => {
+    if (!playersRepository) return false;
+    if (typeof playersRepository.isBanned === "function" && user?.id != null) {
+      return playersRepository.isBanned(user.id);
+    }
+    if (typeof playersRepository.findByUserId === "function" && user?.id != null) {
+      const player = await playersRepository.findByUserId(user.id);
+      return player?.banned === true;
+    }
+    if (typeof playersRepository.findOne === "function" && user?.username) {
+      const player = await playersRepository.findOne(`@${user.username}`);
+      return player?.banned === true;
+    }
+    return false;
+  };
+
+  const isUsernameBanned = async (username) => {
+    if (!playersRepository || !username || typeof playersRepository.findOne !== "function") return false;
+    const player = await playersRepository.findOne(username);
+    return player?.banned === true;
+  };
+
+  const getCurrentPlayerIdentity = async (username) => {
+    if (!playersRepository || !username || typeof playersRepository.findOne !== "function") return undefined;
+    const player = await playersRepository.findOne(username);
+    if (!player) return undefined;
+    return { userId: player.userId, identityVersion: player.identityVersion };
+  };
+
+  const validateParticipantIdentities = async (identities) => {
+    for (const [username, expected] of Object.entries(identities || {})) {
+      const current = await getCurrentPlayerIdentity(username);
+      if (!current || expected?.userId == null || String(current.userId) !== String(expected.userId)) return false;
+      if (expected.identityVersion != null
+        && String(current.identityVersion) !== String(expected.identityVersion)) return false;
+    }
+    return Object.keys(identities || {}).length > 0;
+  };
+
+  const isInviteParticipantAuthorized = async (invite, actor, actorUserId, role) => {
+    const identity = role === "initiator" ? invite?.playerIdentity : invite?.opponentIdentity;
+    return Boolean(identity?.username === actor
+      && identity.userId != null
+      && String(identity.userId) === String(actorUserId));
+  };
+
+  const isInviteParticipantBanned = async (invite, role) => {
+    const identity = role === "initiator" ? invite?.playerIdentity : invite?.opponentIdentity;
+    if (identity?.userId == null) return true;
+    return isPlayerBanned({ id: identity.userId });
+  };
+
+  /**
+   * Проверяет бан до выполнения пользовательского действия.
+   * Служебные уведомления сюда не попадают: у них нет пользователя.
+   */
+  const ensurePlayerNotBanned = async ({
+    user,
+    chatId = null,
+    replyToMessageId = undefined,
+    callbackId = undefined,
+    inlineMessageId = undefined,
+    inlineQueryId = undefined,
+  }) => {
+    const username = user?.username;
+    if (!playersRepository || (user?.id == null && !username)) return true;
+
+    let player;
+    try {
+      player = { banned: await isPlayerBanned(user) };
+    } catch (error) {
+      log.error("Не удалось проверить бан игрока в Telegram", {
+        userId: user?.id,
+        username: username ? `@${username}` : undefined,
+        message: error.message,
+      });
+      if (callbackId) {
+        await bot.answerCallbackQuery(callbackId, { text: playerStatusUnavailableMessage, show_alert: true }).catch(console.error);
+      } else if (inlineQueryId) {
+        await bot.answerInlineQuery(inlineQueryId, [], { cache_time: 1, is_personal: true }).catch(console.error);
+      } else if (chatId) {
+        await bot.sendMessage(chatId, playerStatusUnavailableMessage).catch(console.error);
+      }
+      return false;
+    }
+
+    if (player?.banned !== true) return true;
+
+    if (callbackId) {
+      await bot.answerCallbackQuery(callbackId, { text: playerBannedMessage, show_alert: true }).catch(console.error);
+    } else if (inlineQueryId) {
+      await bot.answerInlineQuery(
+        inlineQueryId,
+        [{
+          type: "article",
+          id: "player_banned",
+          title: playerBannedMessage,
+          input_message_content: { message_text: playerBannedMessage },
+        }],
+        { cache_time: 1, is_personal: true }
+      ).catch(console.error);
+    } else if (inlineMessageId) {
+      await bot.editMessageText(playerBannedMessage, { inline_message_id: inlineMessageId }).catch((error) =>
+        handleEditMessageError(error, "Не удалось показать сообщение о блокировке inline пользователя")
+      );
+    } else if (chatId) {
+      await bot.sendMessage(
+        chatId,
+        playerBannedMessage,
+        replyToMessageId ? { reply_to_message_id: replyToMessageId } : undefined
+      ).catch(console.error);
+    }
+    return false;
+  };
+
+  const ensureUserRegistered = async ({
+    user,
+    chatId = null,
+    replyToMessageId = undefined,
+    callbackId = undefined,
+    inlineMessageId = undefined,
+    inlineQueryId = undefined,
+  }) => {
+    const reportRegistrationUnavailable = async () => {
+      if (callbackId) {
+        await bot.answerCallbackQuery(callbackId, {
+          text: playerStatusUnavailableMessage,
+          show_alert: true,
+        }).catch(console.error);
+      } else if (inlineQueryId) {
+        await bot.answerInlineQuery(inlineQueryId, [], { cache_time: 1, is_personal: true }).catch(console.error);
+      } else if (inlineMessageId) {
+        await bot.editMessageText(playerStatusUnavailableMessage, {
+          inline_message_id: inlineMessageId,
+          reply_markup: { inline_keyboard: [] },
+        }).catch((editError) => handleEditMessageError(editError, "Не удалось показать ошибку регистрации inline"));
+      } else if (chatId) {
+        await bot.sendMessage(chatId, playerStatusUnavailableMessage, replyToMessageId
+          ? { reply_to_message_id: replyToMessageId }
+          : undefined).catch(console.error);
+      }
+      return false;
+    };
+
+    try {
+      if (user?.id == null) {
+        await rememberUserDisplayName(user);
+        return true;
+      }
+      const identityContext = getContext(queueChatId || chatId);
+      if (!identityContext?.claimPlayerIdentity) throw new Error("identity claim context unavailable");
+      const identityToken = await identityContext.claimPlayerIdentity.execute({
+        username: user?.username ? `@${user.username}` : null,
+        userId: user?.id,
+        firstName: user?.first_name,
+        lastName: user?.last_name,
+      });
+      if (identityToken?.transitions?.length) {
+        const cleanupSucceeded = await cleanupPlayerIdentityTransition(identityToken.transitions);
+        if (!cleanupSucceeded) return reportRegistrationUnavailable();
+      }
+      await rememberUserDisplayName(user, identityToken);
+      return true;
+    } catch (error) {
+      log.error("Пользовательское действие остановлено: регистрация не завершена", {
+        userId: user?.id,
+        username: user?.username ? `@${user.username}` : undefined,
+        message: error.message,
+      });
+      // Reserve already fenced the previous tuple. If persistence or
+      // activation then fails, remove only references carrying that exact
+      // immutable identity instead of touching a reused username.
+      if (error?.transitions?.length) {
+        const cleanupSucceeded = await cleanupPlayerIdentityTransition(error.transitions);
+        if (!cleanupSucceeded) return reportRegistrationUnavailable();
+      }
+      if (error.reason === "player_banned") {
+        return ensurePlayerNotBanned({
+          user,
+          chatId,
+          replyToMessageId,
+          callbackId,
+          inlineMessageId,
+          inlineQueryId,
+        });
+      }
+      return reportRegistrationUnavailable();
+    }
+  };
+
   let isStopped = false;
   let stopCommandStarted = false;
   let disposePromise = null;
@@ -475,10 +670,12 @@ const createBot = (
   const isTestFeatureEnabled = process.env.ENABLE_TEST_FEATURE === "true";
 
   bot.onText(/^\/start(?:@[\w_]+)?/, async (msg) => {
-    rememberUserDisplayName(msg.from);
+    if (!(await ensureUserRegistered({ user: msg.from, chatId: msg.chat?.id }))) return;
     trackUsage("command:start");
 
     if (!msg.chat?.id) return;
+
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId: msg.chat.id }))) return;
 
     try {
       await bot.sendMessage(msg.chat.id, messages.greet());
@@ -524,6 +721,11 @@ const createBot = (
         baseMessages.directOpponentPlayed(formatPlayerForMessage(player)),
       directInvite: ({ from, to }) =>
         baseMessages.directInvite({
+          from: formatPlayerForMessage(from),
+          to: formatPlayerForMessage(to),
+        }),
+      directInviteSent: ({ from, to }) =>
+        baseMessages.directInviteSent({
           from: formatPlayerForMessage(from),
           to: formatPlayerForMessage(to),
         }),
@@ -693,6 +895,11 @@ const createBot = (
       clock,
       logger: log.child(`usecase:GetPlayed:${chatId}`),
     });
+    const claimPlayerIdentity = new ClaimPlayerIdentity({
+      queueRepository: repository,
+      playersRepository: identityRepository,
+      logger: log.child(`usecase:ClaimPlayerIdentity:${chatId}`),
+    });
 
     const context = {
       chatId,
@@ -709,6 +916,7 @@ const createBot = (
       cancelMatch,
       getQueue,
       getPlayed,
+      claimPlayerIdentity,
       inlineMessageId: null,
     };
 
@@ -737,10 +945,82 @@ const createBot = (
     return context;
   };
 
+  async function cleanupPlayerIdentityTransition(identities) {
+    try {
+      for (const context of contexts.values()) {
+        await updateQueueState({
+          repository: context.repository,
+          logger: log,
+          operation: "identity_transition_cleanup",
+          mutate: (state) => {
+            let changed = false;
+            for (const searchingPlayer of [...state.searching]) {
+              const storedIdentity = state.searchingIdentities?.[searchingPlayer];
+              const matches = identities.some((identity) =>
+                storedIdentity?.username === identity?.username
+                && String(storedIdentity?.userId) === String(identity?.userId)
+                && Number(storedIdentity?.generation) === Number(identity?.generation)
+              );
+              if (matches) {
+                state.removeStaleSearching(searchingPlayer, storedIdentity);
+                changed = true;
+              }
+            }
+            return { state, changed, save: changed };
+          },
+        });
+      }
+      if (typeof directInvitesStore.deleteByParticipant === "function") {
+        await directInvitesStore.deleteByParticipant({
+          identities,
+        });
+      }
+      return true;
+    } catch (error) {
+      log.error("Не удалось очистить переход identity", {
+        message: error.message,
+      });
+      return false;
+    }
+  }
+
   // Локальные обёртки вокруг импортированных builders — захватывают ui и log из замыкания
   const buildSearchInlineKeyboard = (player) => buildSearchKeyboardFn(player, ui);
   const buildMatchCancelKeyboard = (match) => buildMatchCancelKeyboardFn(match, ui, log);
   const buildDirectInviteKeyboard = (invite) => buildDirectInviteKeyboardFn(invite, ui);
+  const buildDirectInviteRecipientKeyboard = (invite) => buildDirectInviteRecipientKeyboardFn(invite, ui);
+  const buildDirectInviteInitiatorKeyboard = (invite) => buildDirectInviteInitiatorKeyboardFn(invite, ui);
+
+  const notifyDirectInvite = (chatId, invite, text, fallbackOptions = {}) =>
+    sendDirectInviteNotification({
+      bot,
+      playersRepository,
+      invite,
+      text,
+      replyMarkup: buildDirectInviteKeyboard(invite),
+      directReplyMarkup: buildDirectInviteRecipientKeyboard(invite),
+      fallbackChatId: chatId,
+      log,
+      fallbackOptions,
+    });
+
+  const notifyDirectInviteInitiator = async (chatId, invite, replyToMessageId) => {
+    try {
+      await bot.sendMessage(
+        chatId,
+        messages.directInviteSent({ from: invite.player, to: invite.opponent }),
+        {
+          reply_to_message_id: replyToMessageId,
+          reply_markup: buildDirectInviteInitiatorKeyboard(invite),
+        }
+      );
+    } catch (error) {
+      log.warn("Не удалось отправить подтверждение прямого приглашения инициатору", {
+        chatId,
+        message: error.message,
+      });
+    }
+  };
 
   const answerStaleDirectInvite = (callbackId) =>
     bot
@@ -750,42 +1030,73 @@ const createBot = (
       })
       .catch(console.error);
 
-  const deleteDirectInvite = async (player) => {
+  const deleteDirectInvite = async (invite) => {
     try {
-      await directInvitesStore.deleteByPlayer(player);
+      if (invite?.inviteId && typeof directInvitesStore.deleteById === "function") {
+        await directInvitesStore.deleteById(invite.inviteId);
+      }
     } catch (error) {
-      log.error("Не удалось удалить прямое приглашение", { player, message: error.message });
+      log.error("Не удалось удалить прямое приглашение", {
+        inviteId: invite?.inviteId,
+        message: error.message,
+      });
     }
   };
 
-  const createDirectInvite = async (context, player, opponentRaw) => {
+  const createDirectInvite = async (context, player, opponentRaw, identityToken = undefined) => {
     const opponent = context.directMatch.normalizeOpponent(opponentRaw);
-    if (!player || !opponent) return context.directMatch.execute(player, opponentRaw);
-
-    const invite = await directInvitesStore.create({ player, opponent, createdAt: Date.now() });
+    if (!player || !opponent) return context.directMatch.execute(player, opponentRaw, { identityToken });
+    const currentState = await context.repository.get();
+    const opponentIdentity = typeof currentState.getActiveIdentity === "function"
+      ? currentState.getActiveIdentity(opponent)
+      : null;
+    if (!QueueState.isCompleteIdentity(identityToken) || !opponentIdentity) {
+      return { ok: false, reason: "identity_unavailable", text: playerStatusUnavailableMessage };
+    }
+    const invite = await directInvitesStore.create({
+      player,
+      opponent,
+      playerIdentity: identityToken,
+      opponentIdentity,
+      createdAt: Date.now(),
+    });
     if (!invite) {
       return { ok: false, reason: "invite_exists", text: messages.matchAlreadyInQueue() };
     }
 
     try {
-      const result = await context.directMatch.execute(player, opponent);
-      if (!result.ok) await deleteDirectInvite(player);
+      const result = await context.directMatch.execute(player, opponent, { identityToken, opponentIdentity });
+      if (!result.ok) await deleteDirectInvite(invite);
       if (result.ok) context.notifier.notify(context.chatId, "", { type: "state_update" });
       return result.ok ? { ...result, invite } : result;
     } catch (error) {
-      await deleteDirectInvite(player);
+      await deleteDirectInvite(invite);
       throw error;
     }
   };
 
-  const consumeDirectInvite = async (context, callbackId, inviteId, actor, role) => {
+  const consumeDirectInvite = async (context, callbackId, inviteId, actor, actorUserId, role) => {
     if (!inviteId) {
       answerStaleDirectInvite(callbackId);
       return null;
     }
 
     try {
-      const invite = await directInvitesStore.consume(inviteId, actor, role);
+      const pending = typeof directInvitesStore.getById === "function"
+        ? await directInvitesStore.getById(inviteId)
+        : null;
+      if (pending && !(await isInviteParticipantAuthorized(pending, actor, actorUserId, role))) {
+        answerStaleDirectInvite(callbackId);
+        return null;
+      }
+      const state = await context.repository.get();
+      const identity = role === "initiator" ? pending?.playerIdentity : pending?.opponentIdentity;
+      if (!pending || !state.isActiveIdentity?.(identity)
+        || !QueueState.sameIdentity(state.getActiveIdentity?.(actor), identity)) {
+        answerStaleDirectInvite(callbackId);
+        return null;
+      }
+      const invite = await directInvitesStore.consume(inviteId, { actor, actorUserId, role });
       if (!invite) {
         answerStaleDirectInvite(callbackId);
       }
@@ -1157,6 +1468,9 @@ const createBot = (
     }
 
     const { registerSearch, addMatch } = context;
+    const activateTestIdentity = createTestIdentityHelper({
+      claimPlayerIdentity: context.claimPlayerIdentity,
+    });
     const testCount = Math.min(count, MAX_TEST_MATCHES);
     const timestamp = Date.now();
     const created = [];
@@ -1165,10 +1479,16 @@ const createBot = (
     for (let i = 0; i < testCount; i += 1) {
       const searcher = ui.test.playerName({ timestamp, index: i, suffix: "A" });
       const opponent = ui.test.playerName({ timestamp, index: i, suffix: "B" });
+      const searcherIdentity = await activateTestIdentity({ username: searcher });
+      const opponentIdentity = await activateTestIdentity({ username: opponent });
 
-      await registerSearch.execute(searcher);
+      await registerSearch.execute(searcher, searcherIdentity);
       const addResult = await addMatch.execute(searcher, opponent, {
         scheduleLifecycle: !isPauseModeEnabled(chatId),
+        participantIdentities: {
+          [searcher]: searcherIdentity,
+          [opponent]: opponentIdentity,
+        },
       });
 
       if (addResult.ok) {
@@ -1224,6 +1544,8 @@ const createBot = (
       log.warn("Команда /stop вне основного чата", { username });
       return;
     }
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
     trackUsage("command:stop");
     await stopBot(chatId, username);
   });
@@ -1232,7 +1554,7 @@ const createBot = (
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
-    rememberUserDisplayName(msg.from);
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     trackUsage("command:pause");
 
@@ -1240,6 +1562,7 @@ const createBot = (
       log.warn("Команда /pause без chatId", { userId, username });
       return;
     }
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     const context = getContext(chatId);
     if (!context) {
@@ -1275,7 +1598,7 @@ const createBot = (
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
-    rememberUserDisplayName(msg.from);
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     trackUsage("command:continue");
 
@@ -1283,6 +1606,7 @@ const createBot = (
       log.warn("Команда /continue без chatId", { userId, username });
       return;
     }
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     const context = getContext(chatId);
     if (!context) {
@@ -1379,7 +1703,7 @@ const createBot = (
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
-    rememberUserDisplayName(msg.from);
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     trackUsage("command:emerge");
 
@@ -1387,6 +1711,7 @@ const createBot = (
       log.warn("Команда /emerge без chatId", { userId, username });
       return;
     }
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     const context = getContext(chatId);
     if (!context) {
@@ -1405,6 +1730,9 @@ const createBot = (
 
   bot.onText(/\/metrics(?:@[\w_]+)?(?:\s+(.+))?/, async (msg, match) => {
     const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
     const rangeRaw = (match && match[1]) || "";
 
     trackUsage("command:metrics", { hasRange: Boolean(rangeRaw.trim()) });
@@ -1455,7 +1783,7 @@ const createBot = (
     const userId = msg.from?.id;
     const username = msg.from?.username;
     const player = username ? `@${username}` : null;
-    rememberUserDisplayName(msg.from);
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     trackUsage("command:search");
 
@@ -1468,6 +1796,7 @@ const createBot = (
       await bot.sendMessage(chatId, messages.usernameRequired());
       return;
     }
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     const context = getContext(chatId);
     if (!context) {
@@ -1477,7 +1806,7 @@ const createBot = (
     }
 
     try {
-      const searchResult = await context.registerSearch.execute(player);
+      const searchResult = await context.registerSearch.execute(player, msg.from.identityToken);
       const replyMarkup =
         searchResult.status === "added" || searchResult.status === "already_searching"
           ? buildSearchInlineKeyboard(player)
@@ -1497,7 +1826,7 @@ const createBot = (
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
-    rememberUserDisplayName(msg.from);
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     trackUsage("command:queue");
 
@@ -1505,6 +1834,7 @@ const createBot = (
       log.warn("Команда /queue без chatId", { userId, username });
       return;
     }
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     const context = getContext(chatId);
     if (!context) {
@@ -1526,7 +1856,7 @@ const createBot = (
     const chatId = resolveChatIdFromMessage(msg);
     const userId = msg.from?.id;
     const username = msg.from?.username;
-    rememberUserDisplayName(msg.from);
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     trackUsage("command:played");
 
@@ -1534,6 +1864,7 @@ const createBot = (
       log.warn("Команда /played без chatId", { userId, username });
       return;
     }
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     const context = getContext(chatId);
     if (!context) {
@@ -1556,7 +1887,7 @@ const createBot = (
     const userId = msg.from?.id;
     const username = msg.from?.username;
     const player = username ? `@${username}` : null;
-    rememberUserDisplayName(msg.from);
+    if (!(await ensureUserRegistered({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
     const opponentRaw = (match && match[1]) || "";
 
     trackUsage("command:play", { hasOpponent: Boolean(opponentRaw.trim()) });
@@ -1565,6 +1896,7 @@ const createBot = (
       log.warn("Команда /play без chatId", { userId, username });
       return;
     }
+    if (!(await ensurePlayerNotBanned({ user: msg.from, chatId, replyToMessageId: msg.message_id }))) return;
 
     const context = getContext(chatId);
     if (!context) {
@@ -1578,7 +1910,7 @@ const createBot = (
     log.info("Получена команда /play", { chatId, player, opponentRaw });
 
     try {
-      const result = await createDirectInvite(context, player, opponentRaw);
+      const result = await createDirectInvite(context, player, opponentRaw, msg.from.identityToken);
       trackUsage("usecase:direct_match", { ok: result.ok, reason: result.reason });
       if (!result.ok) {
         await bot.sendMessage(chatId, result.text, {
@@ -1588,10 +1920,10 @@ const createBot = (
       }
 
       const { invite } = result;
-      await bot.sendMessage(chatId, result.text, {
+      const delivery = await notifyDirectInvite(chatId, invite, result.text, {
         reply_to_message_id: msg.message_id,
-        reply_markup: buildDirectInviteKeyboard(invite),
       });
+      if (delivery?.sentDirect) await notifyDirectInviteInitiator(chatId, invite, msg.message_id);
     } catch (error) {
       log.error("Ошибка при прямом создании матча через /play", {
         chatId,
@@ -1610,7 +1942,8 @@ const createBot = (
     const opponentRaw = (query.query || "").trim();
     const encodedOpponent = opponentRaw ? encodeURIComponent(opponentRaw) : "";
     const chatId = resolveChatIdFromUser();
-    rememberUserDisplayName(query.from);
+    if (!(await ensureUserRegistered({ user: query.from, inlineQueryId: query.id }))) return;
+    if (!(await ensurePlayerNotBanned({ user: query.from, inlineQueryId: query.id }))) return;
     log.info("Получен inline запрос", { player, chatId });
     trackUsage("inline:query", { hasOpponent: Boolean(opponentRaw) });
 
@@ -1759,7 +2092,8 @@ const createBot = (
     const player = "@" + result.from.username;
     const userId = result.from?.id;
     const chatId = resolveChatIdFromUser();
-    rememberUserDisplayName(result.from);
+    if (!(await ensureUserRegistered({ user: result.from, inlineMessageId: result.inline_message_id }))) return;
+    if (!(await ensurePlayerNotBanned({ user: result.from, chatId, inlineMessageId: result.inline_message_id }))) return;
     const context = chatId ? getContext(chatId) : null;
     if (!context) {
       log.warn("Игрок выбрал inline результат без привязки к чату", { player, userId });
@@ -1780,7 +2114,7 @@ const createBot = (
     context.inlineMessageId = inlineMessageId || context.inlineMessageId;
     if (resultId === "1") {
       try {
-        const searchResult = await registerSearch.execute(player);
+        const searchResult = await registerSearch.execute(player, result.from.identityToken);
         log.debug("Статус регистрации после выбора inline", { player, status: searchResult.status });
 
         if (inlineMessageId) {
@@ -1801,7 +2135,7 @@ const createBot = (
       const opponentRaw = decodeURIComponent(resultId.replace("direct:", ""));
       let directResult;
       try {
-        directResult = await createDirectInvite(context, player, opponentRaw);
+        directResult = await createDirectInvite(context, player, opponentRaw, result.from.identityToken);
       } catch (error) {
         log.error("Ошибка создания прямого приглашения из inline", { message: error.message });
         if (inlineMessageId) {
@@ -1814,12 +2148,9 @@ const createBot = (
 
       // Всегда отправляем приглашение в общий чат
       const sendInvite = (text, invite) =>
-        bot.sendMessage(chatId, text, {
-          reply_markup:
-            invite && invite.player && invite.opponent
-              ? buildDirectInviteKeyboard(invite)
-              : undefined,
-        });
+        invite && invite.player && invite.opponent
+          ? notifyDirectInvite(chatId, invite, text)
+          : bot.sendMessage(chatId, text, { reply_markup: undefined });
 
       if (!directResult.ok) {
         await sendInvite(directResult.text);
@@ -1834,17 +2165,25 @@ const createBot = (
       }
 
       const { invite } = directResult;
-      await sendInvite(directResult.text, invite);
+      const delivery = await sendInvite(directResult.text, invite);
 
       if (inlineMessageId) {
+        const editText = delivery?.sentDirect
+          ? messages.directInviteSent({ from: invite.player, to: invite.opponent })
+          : directResult.text;
+        const editOptions = delivery?.sentDirect
+          ? {
+              inline_message_id: inlineMessageId,
+              reply_markup: buildDirectInviteInitiatorKeyboard(invite),
+            }
+          : { inline_message_id: inlineMessageId, reply_markup: { inline_keyboard: [] } };
         bot
-          .editMessageText(" ", {
-            inline_message_id: inlineMessageId,
-            reply_markup: { inline_keyboard: [] },
-          })
+          .editMessageText(editText, editOptions)
           .catch((error) =>
-            handleEditMessageError(error, "Не удалось очистить inline сообщение после отправки приглашения")
+            handleEditMessageError(error, "Не удалось обновить inline сообщение после отправки приглашения")
           );
+      } else if (delivery?.sentDirect) {
+        await notifyDirectInviteInitiator(chatId, invite);
       }
     }
   });
@@ -1854,8 +2193,14 @@ const createBot = (
     const messageId = callbackQuery.inline_message_id;
     const player2 = "@" + callbackQuery.from.username;
     const chatId = resolveChatIdFromCallback(callbackQuery);
-    rememberUserDisplayName(callbackQuery.from);
+    if (!(await ensureUserRegistered({
+      user: callbackQuery.from,
+      chatId,
+      callbackId,
+      inlineMessageId: callbackQuery.inline_message_id,
+    }))) return;
     const userId = callbackQuery.from?.id;
+    if (!(await ensurePlayerNotBanned({ user: callbackQuery.from, callbackId }))) return;
     if (!chatId) {
       bot
         .answerCallbackQuery(callbackId, {
@@ -1890,14 +2235,37 @@ const createBot = (
       messageId != null
         ? { inline_message_id: messageId }
         : callbackQuery.message?.message_id != null
-        ? { chat_id: chatId, message_id: callbackQuery.message.message_id }
+        ? {
+            chat_id: callbackQuery.message.chat?.id ?? chatId,
+            message_id: callbackQuery.message.message_id,
+          }
         : null;
     const buildEditOptions = (extra = {}) => (editTarget ? { ...editTarget, ...extra } : null);
+    const queueReplyMessageId =
+      callbackQuery.message?.chat?.id != null
+        && String(callbackQuery.message.chat.id) === String(queueChatId)
+        ? callbackQuery.message.message_id
+        : undefined;
 
     if (parsed.type === "play_with") {
       const player1 = parsed.player;
+      const currentState = await context.repository.get();
+      const player1Identity = currentState.searchingIdentities?.[player1];
+      const player2Identity = callbackQuery.from.identityToken;
+      const player1Banned = player1Identity?.userId != null
+        && await isPlayerBanned({ id: player1Identity.userId });
+      const player2Banned = player2Identity?.userId != null
+        && await isPlayerBanned({ id: player2Identity.userId });
+      if (player1Banned || player2Banned) {
+        await bot.answerCallbackQuery(callbackId, { text: playerBannedMessage, show_alert: true }).catch(console.error);
+        return;
+      }
       const addResult = await addMatch.execute(player1, player2, {
         scheduleLifecycle: !isPauseModeEnabled(chatId),
+        participantIdentities: {
+          [player1]: player1Identity,
+          [player2]: player2Identity,
+        },
       });
       if (addResult.ok) {
         log.info("Матч принят через callback", { player1, player2 });
@@ -1926,7 +2294,7 @@ const createBot = (
             player2,
           });
         }
-        await notifyQueuePausedIfNeeded(chatId, callbackQuery.message?.message_id);
+        await notifyQueuePausedIfNeeded(chatId, queueReplyMessageId);
       } else {
         log.warn("Не удалось создать матч через callback", {
           player1,
@@ -1951,7 +2319,7 @@ const createBot = (
           .catch(console.error);
         return;
       }
-      const cancelResult = await cancelSearch.execute(parsed.player);
+      const cancelResult = await cancelSearch.execute(parsed.player, callbackQuery.from.identityToken);
       if (cancelResult.status === "removed") {
         const editOptions = buildEditOptions();
         if (editOptions) {
@@ -1981,18 +2349,7 @@ const createBot = (
           .catch(console.error);
       }
     } else if (parsed.type === "cancel_match") {
-      const playersInQueue = parsed.players;
-      if (!playersInQueue.includes(player2)) {
-        log.warn("Попытка отменить чужой матч", { requester: player2, playersInQueue });
-        bot
-          .answerCallbackQuery(callbackId, {
-            text: ui.callback.cancelForeignMatch,
-            show_alert: true,
-          })
-          .catch(console.error);
-        return;
-      }
-      const cancelResult = await cancelMatch.execute(player2);
+      const cancelResult = await cancelMatch.execute(player2, callbackQuery.from.identityToken);
       if (!cancelResult.ok) {
         log.warn("Матч для отмены не найден", { player: player2 });
         bot
@@ -2023,12 +2380,26 @@ const createBot = (
         }
       }
     } else if (parsed.type === "direct_accept") {
-      const invite = await consumeDirectInvite(context, callbackId, parsed.inviteId, player2, "opponent");
+      const invite = await consumeDirectInvite(context, callbackId, parsed.inviteId, player2, userId, "opponent");
       if (!invite) return;
       const { player: player1, opponent: invited } = invite;
 
+      if (await isInviteParticipantBanned(invite, "initiator")
+        || await isInviteParticipantBanned(invite, "opponent")) {
+        await bot.answerCallbackQuery(callbackId, { text: playerBannedMessage, show_alert: true }).catch(console.error);
+        return;
+      }
+
       const addResult = await addMatch.execute(player1, player2, {
         scheduleLifecycle: !isPauseModeEnabled(chatId),
+        participantIdentities: {
+          [player1]: invite.playerIdentity,
+          [player2]: callbackQuery.from.identityToken,
+        },
+        inviteIdentities: {
+          [player1]: invite.playerIdentity,
+          [player2]: invite.opponentIdentity,
+        },
       });
       if (addResult.ok) {
         const editOptions = buildEditOptions();
@@ -2046,7 +2417,7 @@ const createBot = (
               handleEditMessageError(error, "Не удалось отправить сообщение о принятии прямого матча")
             );
         }
-        await notifyQueuePausedIfNeeded(chatId, callbackQuery.message?.message_id);
+        await notifyQueuePausedIfNeeded(chatId, queueReplyMessageId);
       } else {
         bot
           .answerCallbackQuery(callbackId, {
@@ -2056,11 +2427,16 @@ const createBot = (
           .catch(console.error);
       }
     } else if (parsed.type === "direct_decline") {
-      const invite = await consumeDirectInvite(context, callbackId, parsed.inviteId, player2, "opponent");
+      const invite = await consumeDirectInvite(context, callbackId, parsed.inviteId, player2, userId, "opponent");
       if (!invite) return;
       const { player: player1, opponent: invited } = invite;
 
-      await cancelSearch.execute(player1);
+      if (await isInviteParticipantBanned(invite, "initiator")) {
+        await bot.answerCallbackQuery(callbackId, { text: playerBannedMessage, show_alert: true }).catch(console.error);
+        return;
+      }
+
+      await cancelSearch.execute(player1, invite.playerIdentity);
       context.notifier.notify(context.chatId, "", { type: "state_update" });
       const editOptions = buildEditOptions();
       if (editOptions) {
@@ -2083,15 +2459,15 @@ const createBot = (
         callbackQuery.message?.chat?.id !== undefined &&
         callbackQuery.message?.message_id !== undefined;
 
-      const invite = await consumeDirectInvite(context, callbackId, inviteId, player2, "initiator");
+      const invite = await consumeDirectInvite(context, callbackId, inviteId, player2, userId, "initiator");
       if (!invite) return;
       const { player: player1, opponent: invited } = invite;
 
-      await cancelSearch.execute(player1);
+      await cancelSearch.execute(player1, invite.playerIdentity);
       context.notifier.notify(context.chatId, "", { type: "state_update" });
       if (canDelete) {
         bot
-          .deleteMessage(chatId, callbackQuery.message.message_id)
+          .deleteMessage(callbackQuery.message.chat?.id ?? chatId, callbackQuery.message.message_id)
           .catch((error) =>
             handleEditMessageError(error, "Не удалось удалить сообщение с прямым приглашением")
           );

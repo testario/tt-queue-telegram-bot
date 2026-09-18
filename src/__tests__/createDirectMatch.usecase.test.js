@@ -41,8 +41,10 @@ describe("CreateDirectMatch use case", () => {
     });
   });
 
+  const identity = { username: "@p1", userId: 1, generation: 1, status: "active" };
+
   test("требует указать оппонента", async () => {
-    const result = await directMatch.execute("@p1", "");
+    const result = await directMatch.execute("@p1", "", { identityToken: identity });
 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("opponent_required");
@@ -52,7 +54,11 @@ describe("CreateDirectMatch use case", () => {
   test("останавливается, если игрок уже играл", async () => {
     repository.state = new QueueState({ played: ["@p1"] });
 
-    const result = await directMatch.execute("@p1", "@p2");
+    repository.state = new QueueState({
+      played: ["@p1"],
+      ownership: { "@p1": { userId: 1, generation: 1, status: "active" } },
+    });
+    const result = await directMatch.execute("@p1", "@p2", { identityToken: identity });
 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("played");
@@ -62,20 +68,48 @@ describe("CreateDirectMatch use case", () => {
   test("останавливается, если оппонент уже играл", async () => {
     repository.state = new QueueState({ played: ["@p2"] });
 
-    const result = await directMatch.execute("@p1", "@p2");
+    repository.state = new QueueState({
+      played: ["@p2"],
+      ownership: { "@p1": { userId: 1, generation: 1, status: "active" } },
+    });
+    const result = await directMatch.execute("@p1", "@p2", { identityToken: identity });
 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("opponent_played");
     expect(result.text).toBe(templates.directOpponentPlayed("@p2"));
   });
 
-  test("создает матч и планирует жизненный цикл при успешном сценарии", async () => {
-    const result = await directMatch.execute("@p1", "p2");
+  test("allows a new owner to reuse a username from a played match", async () => {
+    const opponentIdentity = { username: "@p2", userId: 2, generation: 2, status: "active" };
+    repository.state = new QueueState({
+      played: ["@p2"],
+      playedIdentities: [{ username: "@p2", userId: 1, generation: 1 }],
+      ownership: {
+        "@p1": { userId: 10, generation: 1, status: "active" },
+        "@p2": { userId: 2, generation: 2, status: "active" },
+      },
+    });
+
+    const result = await directMatch.execute("@p1", "@p2", {
+      identityToken: { username: "@p1", userId: 10, generation: 1, status: "active" },
+      opponentIdentity,
+    });
 
     expect(result.ok).toBe(true);
-    expect(result.invite).toEqual({ player: "@p1", opponent: "@p2" });
+  });
+
+  test("создает матч и планирует жизненный цикл при успешном сценарии", async () => {
+    repository.state = new QueueState({
+      ownership: { "@p1": { userId: 1, generation: 1, status: "active" } },
+    });
+    const result = await directMatch.execute("@p1", "p2", { identityToken: identity });
+
+    expect(result.ok).toBe(true);
+    expect(result.invite).toEqual({
+      player: "@p1",
+      opponent: "@p2",
+      playerIdentity: identity,
+    });
     expect(repository.state.searching).toContain("@p1");
   });
 });
-
-

@@ -10,6 +10,7 @@ import { SystemClock } from '#infrastructure/time/SystemClock.js'
 import { EventNotifier } from '#infrastructure/notifier/EventNotifier.js'
 import { RegisterSearch } from '#application/usecases/RegisterSearch.js'
 import { CancelSearch } from '#application/usecases/CancelSearch.js'
+import { ClaimPlayerIdentity } from '#application/usecases/ClaimPlayerIdentity.js'
 import { AddMatch } from '#application/usecases/AddMatch.js'
 import { CancelMatch } from '#application/usecases/CancelMatch.js'
 import { CreateDirectMatch } from '#application/usecases/CreateDirectMatch.js'
@@ -21,6 +22,7 @@ import { DEFAULT_GAME_TIME, TIME_READY, WORK_SCHEDULE } from '#application/confi
 import { Match } from '#domain'
 import { buildMatchCancelKeyboard } from '#interfaces/telegram/keyboards.js'
 import { updateQueueState, QueueStateConflictError } from '#application/usecases/queueStateCas.js'
+import { toPublicState } from './publicDtos.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -29,7 +31,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * Вместо MatchOrchestrator использует null-объект: lifecycle-таймеры ставит bot-процесс,
  * а backend отправляет Telegram-анонс созданного матча.
  */
-export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui, bot, eventBus, log }) => {
+export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui, bot, eventBus, log, playersRepository }) => {
   const queueService = new QueueService({
     readyMs: TIME_READY,
     gameMs: DEFAULT_GAME_TIME,
@@ -85,6 +87,7 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
   })
   const getQueue = new GetQueue({ repository: queueRepository, messages })
   const getPlayed = new GetPlayed({ repository: queueRepository, queueService, messages, clock })
+  const claimPlayerIdentity = new ClaimPlayerIdentity({ queueRepository, playersRepository, logger: log })
 
   return {
     chatId: queueChatId,
@@ -100,6 +103,7 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
     cancelMatch,
     getQueue,
     getPlayed,
+    claimPlayerIdentity,
     inlineMessageId: null,
   }
 }
@@ -282,7 +286,7 @@ export const createWebApp = async ({
   await app.register(cors, {
     origin: '*',
     allowedHeaders: ['Content-Type', 'X-Telegram-Init-Data'],
-    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
   })
 
   // Раздача статики собранного Mini App
@@ -321,6 +325,7 @@ export const createWebApp = async ({
       bot,
       eventBus,
       log,
+      playersRepository,
     })
     resolvedGetContext = (_chatId) => backendContext
 
@@ -348,17 +353,15 @@ export const createWebApp = async ({
   const buildStatePayload = async () => {
     if (!resolvedContext) return {}
     const state = await resolvedContext.repository.get()
-    return {
-      queue: state.queue,
-      searching: state.searching,
-      played: state.played,
+    return toPublicState({
+      state,
       paused: resolvedIsPauseModeEnabled ? resolvedIsPauseModeEnabled(queueChatId) : false,
       emergeActive: resolvedEmergeStateByChat
         ? resolvedEmergeStateByChat.has(String(queueChatId))
         : false,
       serverTime: resolvedContext.clock.now().toISOString(),
       pendingInvites: invitesStore ? await invitesStore.getAll() : [],
-    }
+    })
   }
 
   // Подписываемся на источник событий:

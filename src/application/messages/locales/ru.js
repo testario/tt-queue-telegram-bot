@@ -20,6 +20,8 @@ const createRuMessages = ({ formatDate }) => ({
     "Не удалось определить твой Telegram username. Установи его в настройках и повтори команду.",
   directInvite: ({ from, to }) =>
     `${from} приглашает ${to} на игру. Принять приглашение?`,
+  directInviteSent: ({ from, to }) =>
+    `Приглашение для ${to} отправлено от имени ${from}.`,
   directAccepted: ({ from, to }) =>
     `${to} принял приглашение от ${from}. Матч создан.`,
   directAcceptedShort: () => "Приглашение принято",

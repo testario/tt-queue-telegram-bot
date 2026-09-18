@@ -1,4 +1,15 @@
 import { useTelegram } from './useTelegram.js'
+import { reactive, readonly } from 'vue'
+
+const banState = reactive({ isBanned: false })
+
+export function useBanStatus() {
+  return readonly(banState)
+}
+
+export const markPlayerBanned = () => {
+  banState.isBanned = true
+}
 
 export function useApi() {
   const { initData } = useTelegram()
@@ -15,6 +26,7 @@ export function useApi() {
 
     if (!res.ok) {
       const error = await res.json().catch(() => ({ error: 'unknown' }))
+      if (error.error === 'player_banned') markPlayerBanned()
       throw new Error(error.error || `HTTP ${res.status}`)
     }
 
@@ -24,6 +36,7 @@ export function useApi() {
   return {
     get: (path) => request('GET', path),
     post: (path, body) => request('POST', path, body),
+    patch: (path, body) => request('PATCH', path, body),
     del: (path, body) => request('DELETE', path, body),
   }
 }

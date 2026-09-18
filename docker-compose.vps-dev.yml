@@ -34,8 +34,13 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379
+      PLAYERS_MONGODB_URI: mongodb://mongodb:27017
+      PLAYERS_MONGODB_DB: tt-queue-bot
+      PLAYERS_MONGODB_COLLECTION: players
     depends_on:
       redis:
+        condition: service_healthy
+      mongodb:
         condition: service_healthy
     networks:
       - internal
@@ -50,6 +55,7 @@ services:
       REDIS_URL: redis://redis:6379
       PLAYERS_MONGODB_URI: mongodb://mongodb:27017
       PLAYERS_MONGODB_DB: tt-queue-bot
+      PLAYERS_MONGODB_COLLECTION: players
       WEBAPP_PORT: 3000
     depends_on:
       redis:

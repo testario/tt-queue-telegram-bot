@@ -113,12 +113,39 @@ TG_BOT_API_TOKEN=<токен отдельного dev-бота из @BotFather>
 TG_CHAT_ID=<id тестового группового чата, обычно -100...>
 WEBAPP_URL=https://tt-bot.dev.liffesteel.ru
 NODE_ENV=production
+PLAYERS_MONGODB_URI=mongodb://mongodb:27017
+PLAYERS_MONGODB_DB=tt-queue-bot
+PLAYERS_MONGODB_COLLECTION=players
 ```
+
+`PLAYERS_MONGODB_URI` обязателен в production, включая all-in-one запуск через
+`src/index.js`. Workflow проверяет его перед запуском PM2; без URI процесс
+завершается вместо незаметного перехода на in-memory игроков.
 
 Не добавляйте `.env` в Git. `VITE_APP_URL` не нужен: frontend этого проекта не
 читает его, а API и SSE вызываются по относительным путям того же домена.
 
 ## 4. Запустить Docker-стек
+
+### Обязательный coordinated rollout для QueueState v2
+
+QueueState v2 несовместим с уже работающими старыми bot/backend-бинарями.
+Перед первой миграцией обязательно остановите **всех** bot/backend writers (включая
+PM2, отдельные worktree и ручные процессы), затем обновите и разверните все
+экземпляры до одной v2-версии. Только после этого запустите стек: v2 migration
+выполнится до HTTP, polling и timer recovery. На legacy Redis state migration
+безопасно очистит queue/search/played/matches, потому что старую identity доказать
+нельзя.
+
+```bash
+docker compose -f docker-compose.vps-dev.yml stop bot backend
+git pull --ff-only
+docker compose -f docker-compose.vps-dev.yml up -d --build bot backend frontend
+```
+
+Не откатывайте v2 Redis state на старые бинарии и не запускайте старый bot/backend
+параллельно с миграцией. Код не может остановить уже запущенный старый writer, поэтому
+координация остановки является обязательной частью rollout.
 
 `docker-compose.vps-dev.yml` использует отдельное имя проекта
 `tt-queue-bot-dev`. Его Redis и MongoDB получат отдельные named volumes, что

@@ -47,9 +47,10 @@ class CancelMatch {
   /**
    * Отменяет матч для игрока, уведомляет чат и управляет таймерами.
    * @param {string} player
+   * @param {object} [identityToken]
    * @returns {Promise<{ ok: true, status: "removed_waiting" | "removed_current" } | { ok: false, reason: "not_found" }>}
    */
-  async execute(player) {
+  async execute(player, identityToken = undefined) {
     this.logger.info("Отмена матча запрошена", { player });
     const now = this.clock.now();
     const { result } = await updateQueueState({
@@ -57,12 +58,12 @@ class CancelMatch {
       logger: this.logger,
       operation: "cancel_match",
       mutate: (state) => {
-        const result = this.queueService.cancelMatch(state, player, now);
-        return { state: result.state, result };
+        const result = this.queueService.cancelMatch(state, player, now, { identityToken });
+        return { state: result.state, result, save: result.status !== "identity_unavailable" };
       },
     });
 
-    if (result.status === "not_found") {
+    if (result.status === "not_found" || result.status === "identity_unavailable") {
       this.logger.warn("Матч для отмены не найден", { player });
       return { ok: false, reason: "not_found" };
     }

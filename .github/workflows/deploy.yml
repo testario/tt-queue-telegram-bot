@@ -74,7 +74,14 @@ jobs:
 
           command -v pm2 >/dev/null 2>&1 || npm i -g pm2
 
+          if [ -f .env ]; then
+            set -a
+            . ./.env
+            set +a
+          fi
+          : "${PLAYERS_MONGODB_URI:?PLAYERS_MONGODB_URI must be set for the production all-in-one process}"
+
           pm2 stop tt-queue-bot || true
 
-          NODE_ENV=production pm2 start -a -l pm2.log -o out.log -e err.log --name tt-queue-bot src/index.js
+          NODE_ENV=production PLAYERS_MONGODB_URI="$PLAYERS_MONGODB_URI" pm2 start -a -l pm2.log -o out.log -e err.log --name tt-queue-bot src/index.js
           EOF

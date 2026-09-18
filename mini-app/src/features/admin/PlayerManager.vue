@@ -3,37 +3,47 @@ import { ref, onMounted } from 'vue'
 import { useApi } from '@/composables/useApi.js'
 import { usePlayers } from '@/composables/usePlayers.js'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
-import AppButton from '@/shared/ui/AppButton.vue'
 
 const api = useApi()
-const { state, load, remove } = usePlayers()
+const { state, load, setBanned } = usePlayers()
 
 const deletingUsername = ref(null)  // username игрока, которого удаляем прямо сейчас
 
 onMounted(() => load())
 
-const confirmDelete = (username) => {
+const confirmBan = (username) => {
   const tg = window.Telegram?.WebApp
-  const message = `Удалить ${username} из списка игроков?`
+  const message = `Заблокировать ${username}? Игрок останется в списке, но не сможет пользоваться функциями.`
 
   if (tg?.showPopup) {
     tg.showPopup(
-      { message, buttons: [{ id: 'ok', text: 'Удалить' }, { type: 'cancel' }] },
-      (buttonId) => { if (buttonId === 'ok') deletePlayer(username) }
+      { message, buttons: [{ id: 'ok', text: 'Заблокировать' }, { type: 'cancel' }] },
+      (buttonId) => { if (buttonId === 'ok') banPlayer(username) }
     )
   } else {
-    if (window.confirm(message)) deletePlayer(username)
+    if (window.confirm(message)) banPlayer(username)
   }
 }
 
-const deletePlayer = async (username) => {
+const restorePlayer = async (username) => {
+  deletingUsername.value = username
+  try {
+    await api.patch(`/players/${username.replace('@', '')}`, { banned: false })
+    setBanned(username, false)
+  } catch {
+    // Ошибка — ничего не делаем, список остаётся как есть
+  } finally {
+    deletingUsername.value = null
+  }
+}
+
+const banPlayer = async (username) => {
   deletingUsername.value = username
   try {
     await api.del(`/players/${username.replace('@', '')}`)
-    // Обновить кеш: удалить локально без повторного запроса
-    remove(username)
+    setBanned(username, true)
   } catch {
-    // Ошибка — ничего не делаем, список остаётся как есть
+    // Ошибка — список остаётся без изменений
   } finally {
     deletingUsername.value = null
   }
@@ -61,12 +71,14 @@ const deletePlayer = async (username) => {
           <span class="player-manager__name">{{ p.displayName }}</span>
           <span class="player-manager__username">{{ p.username }}</span>
         </div>
+        <span v-if="p.banned" class="player-manager__ban">Бан</span>
         <button
-          class="player-manager__delete"
+          :class="['player-manager__action', { 'player-manager__action--restore': p.banned }]"
           :disabled="deletingUsername === p.username"
-          @click="confirmDelete(p.username)"
+          :aria-label="p.banned ? `Вернуть ${p.username}` : `Заблокировать ${p.username}`"
+          @click="p.banned ? restorePlayer(p.username) : confirmBan(p.username)"
         >
-          ✕
+          {{ p.banned ? 'Вернуть' : 'Бан' }}
         </button>
       </div>
     </div>
@@ -131,23 +143,35 @@ const deletePlayer = async (username) => {
     color: var(--color-hint);
   }
 
-  &__delete {
+  &__action {
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 0 8px;
     border: none;
-    background: var(--color-surface-soft);
-    color: var(--color-hint);
-    font-size: 16px;
+    background: transparent;
+    color: var(--color-danger);
+    font-size: 13px;
+    font-weight: 850;
     cursor: pointer;
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
-    flex-shrink: 0;
 
     &:hover {
-      color: var(--color-danger);
       background: color-mix(in srgb, var(--color-danger), transparent 90%);
+      border-radius: 10px;
     }
 
     &:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    &--restore { color: var(--color-button); }
+  }
+
+  &__ban {
+    flex: 0 0 auto;
+    padding: 5px 8px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-danger), transparent 84%);
+    color: var(--color-danger);
+    font-size: 11px;
+    font-weight: 900;
   }
 }
 </style>

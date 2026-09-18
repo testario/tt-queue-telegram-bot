@@ -43,13 +43,7 @@ export const buildMatchCancelKeyboard = (match, ui, log = null) => {
   }
 }
 
-/**
- * Клавиатура для прямого приглашения (принять / отклонить / отменить).
- * @param {{ inviteId: string }} invite
- * @param {{ inline: { directAccept: string, directDecline: string, directCancel: string } }} ui
- * @returns {{ inline_keyboard: Array }}
- */
-export const buildDirectInviteKeyboard = (invite, ui) => {
+export const buildDirectInviteRecipientKeyboard = (invite, ui) => {
   if (!invite?.inviteId) return undefined
 
   return {
@@ -58,9 +52,37 @@ export const buildDirectInviteKeyboard = (invite, ui) => {
         { text: ui.inline.directAccept, callback_data: `direct_accept:${invite.inviteId}` },
         { text: ui.inline.directDecline, callback_data: `direct_decline:${invite.inviteId}` },
       ],
+    ],
+  }
+}
+
+export const buildDirectInviteInitiatorKeyboard = (invite, ui) => {
+  if (!invite?.inviteId) return undefined
+
+  return {
+    inline_keyboard: [
       [
         { text: ui.inline.directCancel, callback_data: `direct_cancel:${invite.inviteId}` },
       ],
+    ],
+  }
+}
+
+/**
+ * Клавиатура для fallback-уведомления в общем чате.
+ * @param {{ inviteId: string }} invite
+ * @param {{ inline: { directAccept: string, directDecline: string, directCancel: string } }} ui
+ * @returns {{ inline_keyboard: Array }}
+ */
+export const buildDirectInviteKeyboard = (invite, ui) => {
+  const recipientKeyboard = buildDirectInviteRecipientKeyboard(invite, ui)
+  const initiatorKeyboard = buildDirectInviteInitiatorKeyboard(invite, ui)
+  if (!recipientKeyboard || !initiatorKeyboard) return undefined
+
+  return {
+    inline_keyboard: [
+      ...recipientKeyboard.inline_keyboard,
+      ...initiatorKeyboard.inline_keyboard,
     ],
   }
 }

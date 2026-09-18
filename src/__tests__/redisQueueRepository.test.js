@@ -5,6 +5,14 @@ import { QueueState } from '#domain/entities/QueueState.js'
 
 describe('RedisQueueRepository', () => {
   let client, repo
+  const searchingState = (username) => {
+    const identity = { username, userId: `user:${username}`, generation: 1, status: 'active' }
+    return new QueueState({
+      searching: [username],
+      searchingIdentities: { [username]: identity },
+      ownership: { [username]: { ...identity } },
+    })
+  }
 
   beforeEach(async () => {
     client = new RedisMock()
@@ -19,8 +27,7 @@ describe('RedisQueueRepository', () => {
   })
 
   it('сохраняет и восстанавливает состояние', async () => {
-    const state = QueueState.createEmpty()
-    state.addSearching('@player1')
+    const state = searchingState('@player1')
     await repo.save(state)
     const loaded = await repo.get()
     expect(loaded.searching).toContain('@player1')
@@ -42,8 +49,7 @@ describe('RedisQueueRepository', () => {
 
   it('читает revision и сохраняет его атомарно вместе с состоянием', async () => {
     const initial = await repo.getVersioned()
-    const state = QueueState.createEmpty()
-    state.addSearching('@player1')
+    const state = searchingState('@player1')
 
     await repo.save(state)
 
@@ -52,13 +58,11 @@ describe('RedisQueueRepository', () => {
   })
 
   it('отклоняет stale CAS и сохраняет unrelated changes', async () => {
-    const first = QueueState.createEmpty()
-    first.addSearching('@first')
+    const first = searchingState('@first')
     await repo.save(first)
     const versioned = await repo.getVersioned()
 
-    const changed = QueueState.createEmpty()
-    changed.addSearching('@second')
+    const changed = searchingState('@second')
     await repo.save(changed)
 
     expect(await repo.saveIfRevision(versioned.revision, QueueState.createEmpty())).toBe(false)
@@ -66,8 +70,7 @@ describe('RedisQueueRepository', () => {
   })
 
   it('считает legacy state версией 0', async () => {
-    const state = QueueState.createEmpty()
-    state.addSearching('@legacy')
+    const state = searchingState('@legacy')
     await client.set('queue:state', JSON.stringify(state))
 
     const versioned = await repo.getVersioned()

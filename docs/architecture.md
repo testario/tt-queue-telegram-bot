@@ -48,3 +48,13 @@ flowchart TD
 - Jest (`npm test`): покрытие доменного сервиса `QueueService` и use-case `AddMatch`.
 - Дополнительные тесты можно добавлять в `src/__tests__/` (используются реальные реализации без Telegram API).
 
+## Identity state и rollout
+- QueueState v2 владеет identity mirror через тот же Redis CAS: claim проходит
+  `pending → persist player generation → active`; старые поколения сохраняются
+  как tombstones и не переиспользуются.
+- До запуска HTTP, polling и timer recovery выполняется idempotent migration.
+  Legacy queue/search/played/matches очищаются, поскольку их participant identity
+  нельзя доказать; epoch поднимается выше известных player generations.
+- Rollout должен быть coordinated: сначала остановить всех bot/backend writers,
+  затем развернуть v2 на всех экземплярах и только после этого запускать migration.
+  Нельзя откатывать v2 Redis state на старые бинарии.

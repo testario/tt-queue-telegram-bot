@@ -17,6 +17,16 @@ const normalizeConsumeArgs = (inviteId, actorOrOptions, role) =>
     ? { inviteId, ...actorOrOptions }
     : { inviteId, actor: actorOrOptions, role }
 
+const hasIdentity = (identity, requireGeneration = false) => Boolean(
+  identity?.username && identity.userId !== undefined && identity.userId !== null
+  && (!requireGeneration || Number.isSafeInteger(Number(identity.generation)))
+)
+
+const isVerifiableInvite = (invite) => hasIdentity(invite?.playerIdentity, true)
+  && hasIdentity(invite?.opponentIdentity, true)
+  && ![invite?.player, invite?.opponent, invite?.playerIdentity?.username, invite?.opponentIdentity?.username]
+    .some((username) => /^@__former_/.test(username || ''))
+
 /**
  * Одноразовое in-memory хранилище прямых приглашений с TTL.
  * Записи без expiresAt (legacy) считаются просроченными.
@@ -44,10 +54,19 @@ export class InMemoryInvitesStore {
     }
   }
 
+  _isVerifiable(invite) {
+    if (isVerifiableInvite(invite)) return true
+    if (invite?.inviteId) this._purge(invite.inviteId)
+    return false
+  }
+
   async create(input, opponent, createdAt = this._now()) {
     const { player, opponent: target, createdAt: timestamp = createdAt } =
       normalizeCreateArgs(input, opponent, createdAt)
     if (!player || !target) return null
+    if (!hasIdentity(input?.playerIdentity, true) || !hasIdentity(input?.opponentIdentity, true)) return null
+    const playerIdentity = input.playerIdentity
+    const opponentIdentity = input.opponentIdentity
 
     const existingId = this._byPlayer.get(player)
     if (existingId) {
@@ -66,6 +85,14 @@ export class InMemoryInvitesStore {
       opponent: target,
       createdAt: timestamp,
       expiresAt: timestamp + this.ttlMs,
+      playerIdentity: { ...playerIdentity, username: player },
+      opponentIdentity: { ...opponentIdentity, username: target },
+      playerUserId: playerIdentity.userId,
+      opponentUserId: opponentIdentity.userId,
+    }
+    if (input && typeof input === 'object') {
+      if (input.playerUserId !== undefined && input.playerUserId !== null) invite.playerUserId = input.playerUserId
+      if (input.opponentUserId !== undefined && input.opponentUserId !== null) invite.opponentUserId = input.opponentUserId
     }
     this._byId.set(inviteId, invite)
     this._byPlayer.set(player, inviteId)
@@ -76,8 +103,17 @@ export class InMemoryInvitesStore {
     const inviteId = this._byPlayer.get(player)
     if (!inviteId) return null
     const invite = this._byId.get(inviteId) ?? null
-    if (!invite || this._isExpired(invite)) {
+    if (!invite || this._isExpired(invite) || !this._isVerifiable(invite)) {
       this._purge(inviteId)
+      return null
+    }
+    return invite
+  }
+
+  async getById(inviteId) {
+    const invite = this._byId.get(inviteId) ?? null
+    if (!invite || this._isExpired(invite) || !this._isVerifiable(invite)) {
+      if (invite) this._purge(inviteId)
       return null
     }
     return invite
@@ -87,7 +123,7 @@ export class InMemoryInvitesStore {
     const live = []
     const expiredIds = []
     for (const invite of this._byId.values()) {
-      if (this._isExpired(invite)) expiredIds.push(invite.inviteId)
+      if (this._isExpired(invite) || !isVerifiableInvite(invite)) expiredIds.push(invite.inviteId)
       else live.push(invite)
     }
     expiredIds.forEach((inviteId) => this._purge(inviteId))
@@ -95,7 +131,7 @@ export class InMemoryInvitesStore {
   }
 
   async consume(inviteId, actorOrOptions, role) {
-    const { actor, role: inviteRole } = normalizeConsumeArgs(inviteId, actorOrOptions, role)
+    const { actor, role: inviteRole, actorUserId } = normalizeConsumeArgs(inviteId, actorOrOptions, role)
     const invite = this._byId.get(inviteId)
     if (!invite) return null
 
@@ -104,7 +140,11 @@ export class InMemoryInvitesStore {
       return null
     }
 
-    const expectedActor = inviteRole === 'initiator' ? invite.player : invite.opponent
+    if (!this._isVerifiable(invite)) return null
+    const identity = inviteRole === 'initiator' ? invite.playerIdentity : invite.opponentIdentity
+    const expectedActor = identity.username
+    if (actorUserId !== undefined && actorUserId !== null
+      && String(identity.userId) !== String(actorUserId)) return null
     if (!['initiator', 'opponent'].includes(inviteRole) || expectedActor !== actor) return null
 
     this._purge(inviteId)
@@ -118,6 +158,35 @@ export class InMemoryInvitesStore {
     this._byPlayer.delete(player)
     this._byId.delete(inviteId)
     return invite
+  }
+
+  async deleteById(inviteId) {
+    const invite = this._byId.get(inviteId) ?? null
+    if (!invite) return false
+    this._purge(inviteId)
+    return true
+  }
+
+  async deleteByParticipant(player) {
+    const options = player && typeof player === 'object' && !Array.isArray(player) ? player : {}
+    const userIds = new Set((options.userIds || []).map(String))
+    const identities = options.identities || []
+    const invites = await this.getAll()
+    const affected = invites.filter((invite) => {
+      const identityMatches = identities.some((identity) =>
+        [invite.playerIdentity, invite.opponentIdentity].some((participant) =>
+          participant?.username === identity?.username
+          && String(participant?.userId) === String(identity?.userId)
+          && Number(participant?.generation) === Number(identity?.generation)
+        )
+      )
+      if (identities.length > 0) return identityMatches
+      const playerMatches = userIds.has(String(invite.playerIdentity?.userId))
+      const opponentMatches = userIds.has(String(invite.opponentIdentity?.userId))
+      return playerMatches || opponentMatches
+    })
+    for (const invite of affected) await this.deleteById(invite.inviteId)
+    return affected.length
   }
 
   async clear() {

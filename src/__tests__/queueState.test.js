@@ -77,5 +77,90 @@ describe("QueueState", () => {
     expect(match.player1).toBe("@c");
     expect(state.queue).toEqual([match1]);
   });
-});
 
+  test("identity generations are monotonic and prevent ABA", () => {
+    const state = QueueState.createEmpty();
+    const first = state.reserveIdentity("@player", 1);
+    expect(state.activateIdentity(first).ok).toBe(true);
+
+    const second = state.reserveIdentity("@player", 2);
+    expect(second.generation).toBe(first.generation + 1);
+    expect(state.activateIdentity(second).ok).toBe(true);
+
+    const third = state.reserveIdentity("@player", 1);
+    expect(third.generation).toBe(second.generation + 1);
+    expect(state.activateIdentity(first)).toEqual({ ok: false, reason: "identity_token_mismatch" });
+    expect(state.identityEpoch).toBe(3);
+    expect(state.identityTombstones["@player"].map(({ generation }) => generation)).toEqual([1, 2]);
+  });
+
+  test("same pending or active tuple is idempotent", () => {
+    const state = QueueState.createEmpty();
+    const pending = state.reserveIdentity("@player", 1);
+    expect(state.reserveIdentity("@player", 1)).toEqual(pending);
+    expect(state.identityEpoch).toBe(1);
+    expect(state.activateIdentity(pending).ok).toBe(true);
+    expect(state.activateIdentity(pending)).toEqual({ ok: true, idempotent: true, save: false });
+  });
+
+  test("unrelated claims activate independently", () => {
+    const state = QueueState.createEmpty();
+    const first = state.reserveIdentity("@first", 1);
+    const second = state.reserveIdentity("@second", 2);
+
+    expect(first.generation).toBe(1);
+    expect(second.generation).toBe(2);
+    expect(state.activateIdentity(first).ok).toBe(true);
+    expect(state.activateIdentity(second).ok).toBe(true);
+    expect(state.isActiveIdentity(first)).toBe(true);
+    expect(state.isActiveIdentity(second)).toBe(true);
+  });
+
+  test("renaming after unrelated claims uses the next global generation", () => {
+    const state = QueueState.createEmpty();
+    const first = state.reserveIdentity("@old", 1);
+    const unrelated = state.reserveIdentity("@other", 2);
+    const renamed = state.reserveIdentity("@new", 1);
+
+    expect(first.generation).toBe(1);
+    expect(unrelated.generation).toBe(2);
+    expect(renamed.generation).toBe(3);
+    expect(state.getOwnership("@old")).toMatchObject({ userId: 1, status: "inactive" });
+    expect(state.getOwnership("@new")).toMatchObject({ userId: 1, generation: 3, status: "pending" });
+  });
+
+  test("identity transition preserves playing and waiting matches", () => {
+    const state = new QueueState({
+      queue: [
+        {
+          player1: "@player",
+          player2: "@opponent",
+          status: "playing",
+          participantIdentities: {
+            "@player": { username: "@player", userId: 1, generation: 1 },
+            "@opponent": { username: "@opponent", userId: 2, generation: 2 },
+          },
+        },
+        {
+          player1: "@next",
+          player2: "@other",
+          status: "waiting",
+          participantIdentities: {
+            "@next": { username: "@next", userId: 3, generation: 3 },
+            "@other": { username: "@other", userId: 4, generation: 4 },
+          },
+        },
+      ],
+      ownership: {
+        "@player": { userId: 1, generation: 1, status: "active" },
+      },
+    });
+    const previousQueue = state.queue;
+
+    const replacement = state.reserveIdentity("@player", 5);
+
+    expect(state.queue).toEqual(previousQueue);
+    expect(state.queue.map(({ status }) => status)).toEqual(["playing", "waiting"]);
+    expect(state.activateIdentity(replacement).ok).toBe(true);
+  });
+});

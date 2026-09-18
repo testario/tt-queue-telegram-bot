@@ -16,6 +16,12 @@ const createRepo = (state = {}) => ({
   saveIfRevision: jest.fn().mockResolvedValue(true),
 });
 
+const identity = (username, userId) => ({ username, userId, generation: 1, status: "active" });
+const matchIdentities = {
+  "@p1": identity("@p1", 1),
+  "@p2": identity("@p2", 2),
+};
+
 const baseDeps = ({ matchStatus = Match.statuses.playing } = {}) => {
   const repository = createRepo();
   const queueService = {
@@ -51,7 +57,7 @@ describe("AddMatch use case", () => {
       clock,
     });
 
-    const result = await useCase.execute("@p1", "@p2");
+    const result = await useCase.execute("@p1", "@p2", { participantIdentities: matchIdentities });
 
     expect(result.ok).toBe(true);
     expect(queueService.scheduleMatch).toHaveBeenCalled();
@@ -77,7 +83,10 @@ describe("AddMatch use case", () => {
       clock,
     });
 
-    const result = await useCase.execute("@p1", "@p2", { scheduleLifecycle: false });
+    const result = await useCase.execute("@p1", "@p2", {
+      scheduleLifecycle: false,
+      participantIdentities: matchIdentities,
+    });
 
     expect(result.ok).toBe(true);
     expect(result.match.status).toBe(Match.statuses.waiting);
@@ -140,23 +149,112 @@ describe("AddMatch use case", () => {
   });
 
   test("returns error when player not searching", async () => {
-    const result = await addMatch.execute("@p1", "@p2");
+    const result = await addMatch.execute("@p1", "@p2", { participantIdentities: matchIdentities });
 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("player1_not_searching");
   });
 
   test("creates match when player is searching", async () => {
+    repository.state.ownership = {
+      "@p1": { userId: 1, generation: 1, status: "active" },
+      "@p2": { userId: 2, generation: 1, status: "active" },
+    };
     const { state } = queueService.registerSearch(
       repository.state,
-      "@p1"
+      "@p1",
+      undefined,
+      { identityToken: matchIdentities["@p1"] }
     );
     repository.state = state;
 
-    const result = await addMatch.execute("@p1", "@p2");
+    const result = await addMatch.execute("@p1", "@p2", { participantIdentities: matchIdentities });
 
     expect(result.ok).toBe(true);
     expect(notifier.messages.length).toBe(1);
+    expect(orchestrator.scheduled).not.toBeNull();
+  });
+
+  test("atomically removes a stale search when its stored userId differs", async () => {
+    repository.state = new QueueState({
+      searching: ["@old"],
+      searchingUserIds: { "@old": 42 },
+      searchingIdentities: { "@old": identity("@old", 42) },
+      ownership: {
+        "@old": { userId: 99, generation: 2, status: "active" },
+        "@opponent": { userId: 7, generation: 1, status: "active" },
+      },
+    });
+
+    const result = await addMatch.execute("@old", "@opponent", {
+      participantIdentities: {
+        "@old": identity("@old", 99),
+        "@opponent": identity("@opponent", 7),
+      },
+    });
+
+    expect(result).toEqual(expect.objectContaining({ ok: false, reason: "player1_identity_mismatch" }));
+    expect(repository.state.searching).toEqual([]);
+    expect(repository.state.searchingUserIds).toEqual({});
+    expect(notifier.messages).toHaveLength(0);
+    expect(orchestrator.scheduled).toBeNull();
+  });
+
+  test("does not accept a participant token under another username", async () => {
+    repository.state = new QueueState({
+      searching: ["@victim"],
+      searchingIdentities: { "@victim": identity("@victim", 2) },
+      ownership: {
+        "@victim": { userId: 2, generation: 1, status: "active" },
+        "@opponent": { userId: 7, generation: 1, status: "active" },
+        "@alice": { userId: 1, generation: 1, status: "active" },
+      },
+    });
+
+    const result = await addMatch.execute("@victim", "@opponent", {
+      participantIdentities: {
+        "@victim": identity("@alice", 1),
+        "@opponent": identity("@opponent", 7),
+      },
+    });
+
+    expect(result).toEqual(expect.objectContaining({ ok: false, reason: "identity_unavailable" }));
+    expect(repository.state.searching).toEqual(["@victim"]);
+    expect(notifier.messages).toHaveLength(0);
+  });
+
+  test("does not perform post-save ownership validation", async () => {
+    repository.state.ownership = {
+      "@p1": { userId: 42, generation: 1, status: "active" },
+      "@p2": { userId: 7, generation: 1, status: "active" },
+    };
+    const { state } = queueService.registerSearch(
+      repository.state,
+      "@p1",
+      clock.now(),
+      { identityToken: { username: "@p1", userId: 42, generation: 1, status: "active" } }
+    );
+    repository.state = state;
+    let currentIdentity = { userId: 42, identityVersion: 1 };
+    const validateParticipantIdentities = jest.fn(async () => {
+      currentIdentity = { userId: 99, identityVersion: 2 };
+      return false;
+    });
+
+    const result = await addMatch.execute("@p1", "@p2", {
+      participantIdentities: {
+        "@p1": { username: "@p1", userId: 42, generation: 1, status: "active" },
+        "@p2": { username: "@p2", userId: 7, generation: 1, status: "active" },
+      },
+      validateParticipantIdentities,
+    });
+
+    expect(currentIdentity).toEqual({ userId: 42, identityVersion: 1 });
+    expect(validateParticipantIdentities).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(repository.state.queue).toHaveLength(1);
+    expect(repository.state.searching).toEqual([]);
+    expect(notifier.messages).toHaveLength(1);
     expect(orchestrator.scheduled).not.toBeNull();
   });
 

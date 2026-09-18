@@ -49,10 +49,18 @@ class AddMatch {
    * Добавляет матч между двумя игроками, уведомляет чат и при необходимости планирует таймеры.
    * @param {string} player1
    * @param {string} player2
-   * @param {{ scheduleLifecycle?: boolean }} [options]
+   * @param {{ scheduleLifecycle?: boolean, participantIdentities: Record<string, object>, inviteIdentities?: Record<string, object> }} options
    * @returns {Promise<{ ok: true, match: Match, text: string } | { ok: false, reason?: string, text: string }>}
    */
-  async execute(player1, player2, { scheduleLifecycle = true } = {}) {
+  async execute(
+    player1,
+    player2,
+    {
+      scheduleLifecycle = true,
+      participantIdentities = {},
+      inviteIdentities = {},
+    } = {}
+  ) {
     this.logger.info("Попытка создать матч", { player1, player2 });
     const now = this.clock.now();
     const { result, match } = await updateQueueState({
@@ -60,8 +68,14 @@ class AddMatch {
       logger: this.logger,
       operation: "add_match",
       mutate: (state) => {
-        const result = this.queueService.scheduleMatch(state, player1, player2, now);
-        if (!result.ok) return { state: result.state, result, match: null, save: false };
+        const result = this.queueService.scheduleMatch(
+          state,
+          player1,
+          player2,
+          now,
+          { participantIdentities, inviteIdentities }
+        );
+        if (!result.ok) return { state: result.state, result, match: null, save: result.cleanup === true };
 
         const { match } = result;
         if (!scheduleLifecycle && match.status === Match.statuses.playing) {
@@ -116,6 +130,12 @@ class AddMatch {
         return this.messages.matchPlayerNotSearching();
       case "same_player":
         return this.messages.matchSamePlayer();
+      case "player1_identity_mismatch":
+        return this.messages.matchPlayerNotSearching();
+      case "identity_unavailable":
+        return this.messages.matchPlayerNotSearching();
+      case "identity_changed":
+        return this.messages.matchPlayerNotSearching();
       default:
         return this.messages.matchAlreadyInQueue();
     }

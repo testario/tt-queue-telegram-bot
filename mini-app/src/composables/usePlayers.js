@@ -1,5 +1,7 @@
 import { reactive, readonly } from 'vue'
 import { useApi } from './useApi.js'
+import { useTelegram } from './useTelegram.js'
+import { markPlayerBanned } from './useApi.js'
 
 const state = reactive({
   players: [],
@@ -25,6 +27,7 @@ const mockAvatarUrl = (username) => {
 
 export function usePlayers() {
   const { get } = useApi()
+  const { player: currentPlayer } = useTelegram()
 
   const load = async () => {
     if (state.loaded || state.loading) return
@@ -32,6 +35,9 @@ export function usePlayers() {
     try {
       const data = await get('/players')
       state.players = data.players ?? []
+      if (state.players.some((player) => player.username === currentPlayer && player.banned)) {
+        markPlayerBanned()
+      }
       state.loaded = true
     } finally {
       state.loading = false
@@ -49,5 +55,10 @@ export function usePlayers() {
     if (idx !== -1) state.players.splice(idx, 1)
   }
 
-  return { state: readonly(state), load, avatarUrl, remove }
+  const setBanned = (username, banned) => {
+    const player = state.players.find((item) => item.username === username)
+    if (player) player.banned = banned
+  }
+
+  return { state: readonly(state), load, avatarUrl, remove, setBanned }
 }

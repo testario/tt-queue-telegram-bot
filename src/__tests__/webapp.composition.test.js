@@ -20,6 +20,12 @@ describe('all-in-one webapp composition', () => {
   test('composes resumeQueueAfterPause into /api/admin/continue', async () => {
     const context = {
       chatId: 'queue',
+      testIdentityActivation: jest.fn().mockResolvedValue({
+        username: '@dev_user',
+        userId: 123456,
+        generation: 1,
+        status: 'active',
+      }),
       repository: {
         get: jest.fn().mockResolvedValue({ queue: [], searching: [], played: [] }),
       },

@@ -3,6 +3,8 @@ import Fastify from 'fastify'
 import { jest } from '@jest/globals'
 import { registerRoutes } from '#interfaces/webapp/router.js'
 import { InMemoryInvitesStore } from '#infrastructure/invites/InMemoryInvitesStore.js'
+import { QueueState } from '#domain/entities/QueueState.js'
+import { createTestIdentityHelper } from '#application/usecases/createTestIdentityHelper.js'
 
 const token = 'webapp-test-token'
 
@@ -18,14 +20,53 @@ const initDataFor = (user) => {
   return params.toString()
 }
 
-const createHarness = async ({ production = false } = {}) => {
+const createHarness = async ({ production = false, claimPlayerIdentity = undefined } = {}) => {
   process.env.NODE_ENV = production ? 'production' : 'test'
 
-  const state = { queue: [], searching: [], played: [] }
+  let currentState = new QueueState({
+    queue: [],
+    searching: [],
+    played: [],
+    ownership: { '@bob': { userId: 2, generation: 1, status: 'active' } },
+  })
+  let revision = 0
+  const repository = {
+    get: jest.fn(async () => currentState),
+    save: jest.fn(async (nextState) => { currentState = nextState }),
+    getVersioned: jest.fn(async () => ({ state: currentState, revision })),
+    saveIfRevision: jest.fn(async (expectedRevision, nextState) => {
+      if (expectedRevision !== revision) return false
+      currentState = nextState
+      revision += 1
+      return true
+    }),
+  }
   const invitesStore = new InMemoryInvitesStore()
-  const playersRepository = { upsert: jest.fn().mockResolvedValue(undefined) }
+  const rawInviteCreate = invitesStore.create.bind(invitesStore)
+  invitesStore.create = (input, opponent, createdAt) => {
+    if (input && typeof input === 'object' && !input.playerIdentity && !input.opponentIdentity) {
+      const userIdFor = (username) => ({ '@alice': 1, '@bob': 2, '@banned': 3, '@old': 42, '@new': 42 }[username] || `test:${username}`)
+      input = {
+        ...input,
+        playerIdentity: { username: input.player, userId: userIdFor(input.player), generation: 1 },
+        opponentIdentity: { username: input.opponent, userId: userIdFor(input.opponent), generation: 1 },
+      }
+    }
+    return rawInviteCreate(input, opponent, createdAt)
+  }
+  const playersRepository = {
+    upsert: jest.fn().mockResolvedValue(undefined),
+    isBanned: jest.fn().mockResolvedValue(false),
+    findOne: jest.fn().mockResolvedValue(null),
+    getAliases: jest.fn().mockResolvedValue([]),
+    setBanned: jest.fn().mockResolvedValue(true),
+    findAll: jest.fn().mockResolvedValue([]),
+  }
+  const activateIdentity = createTestIdentityHelper({ queueRepository: repository, playersRepository })
+  const testIdentityActivation = jest.fn((input) => activateIdentity(input))
   const context = {
-    repository: { get: jest.fn().mockResolvedValue(state), save: jest.fn() },
+    testIdentityActivation,
+    repository,
     clock: { now: () => new Date('2026-01-01T00:00:00.000Z') },
     queueService: { readyMs: 0, gameMs: 0 },
     orchestrator: { cancelAll: jest.fn() },
@@ -40,6 +81,7 @@ const createHarness = async ({ production = false } = {}) => {
         invite: { player: '@alice', opponent: '@bob' },
       }),
     },
+    ...(claimPlayerIdentity ? { claimPlayerIdentity } : {}),
   }
   const bot = {
     sendMessage: jest.fn().mockResolvedValue(undefined),
@@ -49,6 +91,7 @@ const createHarness = async ({ production = false } = {}) => {
   const log = { error: jest.fn(), warn: jest.fn(), info: jest.fn() }
   const messages = {
     directInvite: jest.fn().mockReturnValue('invite'),
+    directInviteSent: jest.fn().mockReturnValue('invite sent'),
     directAccepted: jest.fn().mockReturnValue('accepted'),
     directDeclined: jest.fn().mockReturnValue('declined'),
     directCancelled: jest.fn().mockReturnValue('cancelled'),
@@ -77,7 +120,17 @@ const createHarness = async ({ production = false } = {}) => {
     invitesStore,
   })
 
-  return { app, bot, context, invitesStore, log, messages, playersRepository, state, sseManager }
+  return {
+    app,
+    bot,
+    context,
+    invitesStore,
+    log,
+    messages,
+    playersRepository,
+    get state() { return currentState },
+    sseManager,
+  }
 }
 
 const authHeader = (username, id = 1) => ({
@@ -100,7 +153,7 @@ describe('webapp REST routes', () => {
     else process.env.NODE_ENV = previousNodeEnv
   })
 
-  test('upserts a Telegram user before granting route access', async () => {
+  test('activates a test identity before granting route access', async () => {
     const harness = await createHarness()
     const response = await harness.app.inject({
       method: 'POST',
@@ -110,25 +163,247 @@ describe('webapp REST routes', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(harness.playersRepository.upsert).toHaveBeenCalledWith({
-      username: '@alice',
-      userId: 10,
-      firstName: 'alice',
-      lastName: '',
-    })
+    expect(harness.context.testIdentityActivation).toHaveBeenCalledWith({ username: '@alice', userId: 10 })
     await harness.app.close()
   })
 
-  test('upserts the development fallback user', async () => {
+  test('sends recipient controls privately and a separate cancel confirmation to the initiator', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 42, generation: 1 } : null
+    )
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(2)
+    expect(harness.bot.sendMessage.mock.calls[0][0]).toBe(2)
+    expect(harness.bot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard).toHaveLength(1)
+    expect(harness.bot.sendMessage.mock.calls[1][0]).toBe('queue-chat')
+    expect(harness.bot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard[0][0].callback_data)
+      .toMatch(/^direct_cancel:/)
+    await harness.app.close()
+  })
+
+  test('does not cancel another concurrent direct request search', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, generation: 1 } : null
+    )
+    harness.context.directMatch.execute
+      .mockResolvedValueOnce({ ok: true, searchStatus: 'added' })
+      .mockResolvedValueOnce({ ok: true, searchStatus: 'already_searching' })
+
+    const [first, second] = await Promise.all([
+      harness.app.inject({
+        method: 'POST',
+        url: '/api/direct',
+        headers: authHeader('alice', 10),
+        payload: { opponent: '@bob' },
+      }),
+      harness.app.inject({
+        method: 'POST',
+        url: '/api/direct',
+        headers: authHeader('alice', 10),
+        payload: { opponent: '@bob' },
+      }),
+    ])
+
+    expect(first.statusCode).toBe(200)
+    expect(second.statusCode).toBe(200)
+    expect(harness.context.cancelSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('does not cancel an existing search when invite storage fails', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, generation: 1 } : null
+    )
+    harness.state.searching.push('@alice')
+    harness.state.searchingIdentities = {
+      '@alice': { username: '@alice', userId: 10, generation: 1 },
+    }
+    harness.context.directMatch.execute.mockResolvedValue({
+      ok: true,
+      searchStatus: 'already_searching',
+    })
+    jest.spyOn(harness.invitesStore, 'create').mockRejectedValue(new Error('storage unavailable'))
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+
+    expect(response.statusCode).toBe(503)
+    expect(harness.context.cancelSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('activates the development fallback user', async () => {
     const harness = await createHarness()
     const response = await harness.app.inject({ method: 'POST', url: '/api/search' })
 
     expect(response.statusCode).toBe(200)
-    expect(harness.playersRepository.upsert).toHaveBeenCalledWith({
-      username: '@dev_user',
-      userId: 123456,
-      firstName: 'Dev',
-      lastName: '',
+    expect(harness.context.testIdentityActivation).toHaveBeenCalledWith({ username: '@dev_user', userId: 123456 })
+    await harness.app.close()
+  })
+
+  test('cleans only the old identity token after a username transition', async () => {
+    const harness = await createHarness({ production: true })
+    harness.state.ownership['@old'] = { userId: 10, generation: 1, status: 'active' }
+    harness.state.ownership['@new'] = { userId: 10, generation: 2, status: 'active' }
+    harness.state.searching.push('@old', '@new')
+    harness.state.searchingIdentities = {
+      '@old': { username: '@old', userId: 10, generation: 1 },
+      '@new': { username: '@new', userId: 10, generation: 2 },
+    }
+    await harness.invitesStore.create({
+      inviteId: 'old-token-invite',
+      player: '@old',
+      opponent: '@bob',
+      playerIdentity: { username: '@old', userId: 10, generation: 1 },
+      opponentIdentity: { username: '@bob', userId: 2, generation: 1 },
+      createdAt: Date.now(),
+    })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('new', 10),
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    expect(harness.state.searching).toEqual(['@new'])
+    expect(harness.state.ownership['@old'].status).toBe('inactive')
+    expect(harness.state.ownership['@new']).toMatchObject({ userId: 10, status: 'active' })
+    await harness.app.close()
+  })
+
+  test('projects internal state and invite identities into a public REST/SSE DTO', async () => {
+    const harness = await createHarness({ production: true })
+    harness.state.queue.push({
+      player1: '@alice',
+      player2: '@bob',
+      startDate: new Date('2026-01-01T12:00:00.000Z'),
+      endDate: new Date('2026-01-01T12:30:00.000Z'),
+      status: 'playing',
+      participantIdentities: {
+        '@alice': { username: '@alice', userId: 10, generation: 8 },
+        '@bob': { username: '@bob', userId: 2, generation: 9 },
+      },
+    })
+    harness.state.searching.push('@alice')
+    harness.state.searchingIdentities = {
+      '@alice': { username: '@alice', userId: 10, generation: 8 },
+    }
+    harness.state.played.push('@played')
+    const invite = await harness.invitesStore.create({
+      player: '@alice',
+      opponent: '@bob',
+      playerIdentity: { username: '@alice', userId: 10, generation: 8 },
+      opponentIdentity: { username: '@bob', userId: 2, generation: 9 },
+    })
+
+    const response = await harness.app.inject({ method: 'GET', url: '/api/state' })
+    const publicState = response.json()
+
+    expect(publicState).toEqual({
+      queue: [{
+        player1: '@alice',
+        player2: '@bob',
+        startDate: '2026-01-01T12:00:00.000Z',
+        endDate: '2026-01-01T12:30:00.000Z',
+        status: 'playing',
+      }],
+      searching: ['@alice'],
+      played: ['@played'],
+      paused: false,
+      emergeActive: false,
+      serverTime: '2026-01-01T00:00:00.000Z',
+      pendingInvites: [{
+        inviteId: invite.inviteId,
+        player: '@alice',
+        opponent: '@bob',
+        createdAt: expect.any(Number),
+        expiresAt: expect.any(Number),
+      }],
+    })
+    expect(JSON.stringify(publicState)).not.toMatch(
+      /userId|generation|participantIdentities|playerIdentity|opponentIdentity/
+    )
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+    const emittedState = harness.sseManager.broadcast.mock.calls.at(-1)[1]
+    expect(JSON.parse(JSON.stringify(emittedState))).toEqual(publicState)
+    await harness.app.close()
+  })
+
+  test('whitelists public player fields and strips repository internals', async () => {
+    const harness = await createHarness()
+    harness.playersRepository.findAll.mockResolvedValue([{
+      username: '@alice',
+      displayName: 'Alice',
+      firstName: 'Alice',
+      lastName: 'Player',
+      lastSeenAt: '2026-01-01T00:00:00.000Z',
+      banned: true,
+      userId: 10,
+      generation: 4,
+      identityVersion: 4,
+      usernames: ['@old-alice'],
+      claimToken: 'private',
+      _id: 'mongo-id',
+    }, {
+      username: '@__former_42',
+      userId: 42,
+      banned: true,
+    }])
+
+    const response = await harness.app.inject({ method: 'GET', url: '/api/players' })
+
+    expect(response.json()).toEqual({
+      players: [{
+        username: '@alice',
+        displayName: 'Alice',
+        firstName: 'Alice',
+        lastName: 'Player',
+        lastSeenAt: '2026-01-01T00:00:00.000Z',
+        banned: true,
+      }],
+    })
+    expect(JSON.stringify(response.json())).not.toMatch(
+      /userId|generation|identityVersion|usernames|claimToken|_id/
+    )
+    await harness.app.close()
+  })
+
+  test('returns a normalized ban flag without userId in the player list', async () => {
+    const harness = await createHarness()
+    harness.playersRepository.findAll.mockResolvedValue([
+      { username: '@alice', userId: 10, banned: true },
+      { username: '@bob', userId: 11 },
+    ])
+
+    const response = await harness.app.inject({ method: 'GET', url: '/api/players' })
+
+    expect(response.json()).toEqual({
+      players: [
+        { username: '@alice', banned: true },
+        { username: '@bob', banned: false },
+      ],
     })
     await harness.app.close()
   })
@@ -136,7 +411,7 @@ describe('webapp REST routes', () => {
   test('does not grant access when player registration fails', async () => {
     const harness = await createHarness()
     const error = new Error('database unavailable')
-    harness.playersRepository.upsert.mockRejectedValue(error)
+    harness.context.testIdentityActivation.mockRejectedValue(error)
 
     const response = await harness.app.inject({
       method: 'POST',
@@ -146,12 +421,335 @@ describe('webapp REST routes', () => {
     })
 
     expect(response.statusCode).toBe(503)
-    expect(response.json()).toEqual({ error: 'player_registration_failed' })
+    expect(response.json()).toEqual({ error: 'player_identity_unavailable' })
     expect(harness.context.directMatch.execute).not.toHaveBeenCalled()
     expect(harness.log.error).toHaveBeenCalledWith(
-      'Не удалось зарегистрировать игрока из webapp',
+      'Не удалось подтвердить identity игрока из webapp',
       { username: '@alice', message: error.message }
     )
+    await harness.app.close()
+  })
+
+  test('returns retriable 503 when failed claim transition cleanup fails', async () => {
+    const error = Object.assign(new Error('database unavailable'), {
+      transitions: [{ username: '@old', userId: 10, generation: 1 }],
+    })
+    const claimPlayerIdentity = { execute: jest.fn().mockRejectedValue(error) }
+    const harness = await createHarness({ claimPlayerIdentity })
+    harness.invitesStore.deleteByParticipant = jest.fn().mockRejectedValue(new Error('redis unavailable'))
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('new', 10),
+    })
+
+    expect(response.statusCode).toBe(503)
+    expect(response.json()).toEqual({ error: 'identity_cleanup_unavailable' })
+    expect(harness.context.registerSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('cleans exact transition references before returning failed claim status', async () => {
+    const transition = { username: '@old', userId: 10, generation: 1 }
+    const error = Object.assign(new Error('database unavailable'), { transitions: [transition] })
+    const claimPlayerIdentity = { execute: jest.fn().mockRejectedValue(error) }
+    const harness = await createHarness({ claimPlayerIdentity })
+    await harness.invitesStore.create({
+      player: '@old',
+      opponent: '@bob',
+      playerIdentity: transition,
+      opponentIdentity: { username: '@bob', userId: 2, generation: 1 },
+    })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('new', 10),
+    })
+
+    expect(response.statusCode).toBe(503)
+    expect(response.json()).toEqual({ error: 'player_identity_unavailable' })
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    expect(harness.context.registerSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('returns retriable 503 when successful claim transition cleanup fails', async () => {
+    const claimPlayerIdentity = {
+      execute: jest.fn().mockResolvedValue({
+        ok: true,
+        username: '@new',
+        userId: 10,
+        generation: 2,
+        transitions: [{ username: '@old', userId: 10, generation: 1 }],
+      }),
+    }
+    const harness = await createHarness({ claimPlayerIdentity })
+    harness.invitesStore.deleteByParticipant = jest.fn().mockRejectedValue(new Error('redis unavailable'))
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('new', 10),
+    })
+
+    expect(response.statusCode).toBe(503)
+    expect(response.json()).toEqual({ error: 'identity_cleanup_unavailable' })
+    expect(harness.context.registerSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('returns player_banned before executing an authenticated use case', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.isBanned.mockResolvedValue(true)
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({ error: 'player_banned' })
+    expect(harness.context.testIdentityActivation).toHaveBeenCalled()
+    expect(harness.playersRepository.isBanned).toHaveBeenCalledWith(10)
+    expect(harness.context.registerSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('DELETE bans and PATCH unbans only existing players for admins', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.setBanned.mockImplementation(async (username, banned) =>
+      username === '@alice' && typeof banned === 'boolean'
+    )
+
+    const banResponse = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+    const unbanResponse = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: false },
+    })
+    const missingResponse = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/missing',
+      headers: authHeader('admin', 10),
+      payload: { banned: false },
+    })
+
+    expect(banResponse.statusCode).toBe(200)
+    expect(banResponse.json()).toEqual({ ok: true })
+    expect(unbanResponse.statusCode).toBe(200)
+    expect(unbanResponse.json()).toEqual({ ok: true, banned: false })
+    expect(missingResponse.statusCode).toBe(404)
+    expect(missingResponse.json()).toEqual({ error: 'player_not_found' })
+    expect(harness.playersRepository.setBanned).toHaveBeenNthCalledWith(1, '@alice', true)
+    expect(harness.playersRepository.setBanned).toHaveBeenNthCalledWith(2, '@alice', false)
+    await harness.app.close()
+  })
+
+  test('PATCH ban removes the player from search and pending invites', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: false } : null
+    )
+    harness.state.searching.push('@alice')
+    harness.state.searchingIdentities = {
+      '@alice': { username: '@alice', userId: 42, generation: 1 },
+    }
+    harness.state.ownership['@alice'] = { userId: 42, generation: 1, status: 'active' }
+    await harness.invitesStore.create({
+      inviteId: 'alice-invite',
+      player: '@alice',
+      opponent: '@bob',
+      playerIdentity: { username: '@alice', userId: 42, generation: 1 },
+      opponentIdentity: { username: '@bob', userId: 2, generation: 1 },
+      createdAt: Date.now(),
+    })
+
+    const response = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: true },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.state.searching).not.toContain('@alice')
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    expect(harness.sseManager.broadcast).toHaveBeenCalledWith('state_update', expect.any(Object))
+    await harness.app.close()
+  })
+
+  test('returns retriable 503 when ban cleanup fails after persistence', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: false } : null
+    )
+    harness.invitesStore.deleteByParticipant = jest.fn().mockRejectedValue(new Error('redis unavailable'))
+
+    const failed = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+
+    expect(failed.statusCode).toBe(503)
+    expect(failed.json()).toEqual({ error: 'ban_cleanup_unavailable' })
+    expect(harness.playersRepository.setBanned).toHaveBeenCalledWith('@alice', true)
+
+    harness.invitesStore.deleteByParticipant.mockResolvedValue(0)
+    const retried = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+    expect(retried.statusCode).toBe(200)
+    await harness.app.close()
+  })
+
+  test('rejects a match with a banned opponent before executing the use case', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@banned' ? { username, banned: true } : null
+    )
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/match',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@banned' },
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({ error: 'player_banned' })
+    expect(harness.context.addMatch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('passes current participant identities to atomic match acceptance', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@old' ? { username, userId: 99, banned: false } : null
+    )
+    harness.state.searching.push('@old')
+    harness.state.searchingIdentities = { '@old': { username: '@old', userId: 99, generation: 1 } }
+    harness.state.ownership['@old'] = { userId: 99, generation: 1, status: 'active' }
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/match',
+      headers: authHeader('alice', 7),
+      payload: { opponent: '@old' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.context.addMatch.execute).toHaveBeenCalledWith('@old', '@alice', {
+      scheduleLifecycle: true,
+      participantIdentities: {
+        '@old': { username: '@old', userId: 99, generation: 1 },
+        '@alice': expect.objectContaining({ username: '@alice', userId: 7, generation: 2 }),
+      },
+    })
+    await harness.app.close()
+  })
+
+  test('rejects an invite from a banned initiator before creating a match', async () => {
+    const harness = await createHarness({ production: true })
+    const invite = await harness.invitesStore.create({ player: '@banned', opponent: '@bob' })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@banned' ? { username, banned: true } : null
+    )
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct/accept',
+      headers: authHeader('bob', 2),
+      payload: { inviteId: invite.inviteId },
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({ error: 'player_banned' })
+    expect(harness.context.addMatch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('removes a banned player from search and pending invites but keeps existing matches', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.state.searching.push('@alice')
+    harness.state.searchingIdentities = { '@alice': { username: '@alice', userId: 1, generation: 1 } }
+    harness.state.ownership['@alice'] = { userId: 1, generation: 1, status: 'active' }
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 1 } : null
+    )
+    await harness.invitesStore.create({ player: '@alice', opponent: '@bob' })
+
+    const response = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.state.searching).toEqual([])
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    expect(harness.state.queue).toEqual([])
+    await harness.app.close()
+  })
+
+  test('cleans stale aliases and blocks old invites after a username rename and ban', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.getAliases.mockResolvedValue(['@new', '@old'])
+    harness.playersRepository.setBanned.mockResolvedValue(true)
+    harness.state.searching.push('@old')
+    harness.state.searchingIdentities = { '@old': { username: '@old', userId: 42, generation: 1 } }
+    harness.state.ownership['@old'] = { userId: 42, generation: 1, status: 'active' }
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@new' ? { username, userId: 42 } : null
+    )
+    await harness.invitesStore.create({ player: '@old', opponent: '@bob' })
+
+    const banResponse = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/new',
+      headers: authHeader('admin', 10),
+    })
+
+    expect(banResponse.statusCode).toBe(200)
+    expect(harness.state.searching).toEqual([])
+    expect(await harness.invitesStore.getAll()).toEqual([])
+
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      ['@new', '@old'].includes(username) ? { username: '@new', banned: true } : null
+    )
+    harness.playersRepository.isBanned.mockImplementation(async (userId) => userId === 42)
+    const staleInvite = await harness.invitesStore.create({ player: '@old', opponent: '@bob' })
+
+    const acceptResponse = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct/accept',
+      headers: authHeader('bob', 2),
+      payload: { inviteId: staleInvite.inviteId },
+    })
+    const createResponse = await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('new', 42),
+    })
+
+    expect(acceptResponse.statusCode).toBe(403)
+    expect(createResponse.statusCode).toBe(403)
+    expect(harness.context.addMatch.execute).not.toHaveBeenCalled()
     await harness.app.close()
   })
 
@@ -188,6 +786,7 @@ describe('webapp REST routes', () => {
 
   test('accepts an invite only for its target', async () => {
     const harness = await createHarness({ production: true })
+    harness.state.ownership['@bob'] = { userId: 2, generation: 1, status: 'active' }
     const invite = await harness.invitesStore.create({
       player: '@alice',
       opponent: '@bob',
@@ -202,9 +801,13 @@ describe('webapp REST routes', () => {
     })
 
     expect(response.json()).toEqual({ ok: true })
-    expect(harness.context.addMatch.execute).toHaveBeenCalledWith('@alice', '@bob', {
+    expect(harness.context.addMatch.execute).toHaveBeenCalledWith('@alice', '@bob', expect.objectContaining({
       scheduleLifecycle: true,
-    })
+      participantIdentities: expect.objectContaining({
+        '@bob': expect.objectContaining({ username: '@bob', userId: 2, generation: 1 }),
+      }),
+      inviteIdentities: expect.any(Object),
+    }))
     expect(await harness.invitesStore.getAll()).toEqual([])
     expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
     await harness.app.close()
@@ -231,7 +834,55 @@ describe('webapp REST routes', () => {
     expect(second.json()).toEqual({ ok: false, reason: 'invite_exists' })
     expect(harness.context.directMatch.execute).toHaveBeenCalledTimes(1)
     expect(await harness.invitesStore.getAll()).toEqual(storedAfterFirst)
-    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(2)
+    await harness.app.close()
+  })
+
+  test('sends REST direct invite to the recipient private chat', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 22, generation: 1, banned: false } : null
+    )
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+
+    expect(response.json()).toEqual({ ok: true })
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(2)
+    expect(harness.bot.sendMessage.mock.calls[0][0]).toBe(2)
+    expect(harness.bot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard).toHaveLength(1)
+    expect(harness.bot.sendMessage.mock.calls[1][0]).toBe('queue-chat')
+    expect(harness.bot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard[0][0].callback_data)
+      .toMatch(/^direct_cancel:/)
+    await harness.app.close()
+  })
+
+  test('falls back to the queue chat when REST private delivery fails', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 22, generation: 1, banned: false } : null
+    )
+    harness.bot.sendMessage.mockImplementation((chatId) =>
+      chatId === 22 ? Promise.reject(new Error('private chat unavailable')) : Promise.resolve()
+    )
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+
+    expect(response.json()).toEqual({ ok: true })
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(2)
+    expect(harness.bot.sendMessage.mock.calls[0][0]).toBe(2)
+    expect(harness.bot.sendMessage.mock.calls[1][0]).toBe('queue-chat')
+    expect(harness.bot.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard).toHaveLength(1)
+    expect(harness.bot.sendMessage.mock.calls[1][2].reply_markup.inline_keyboard).toHaveLength(1)
     await harness.app.close()
   })
 
@@ -256,13 +907,14 @@ describe('webapp REST routes', () => {
 
   test('does not treat invite storage failure as not found or mutate the queue', async () => {
     const harness = await createHarness({ production: true })
+    const invite = await harness.invitesStore.create({ player: '@alice', opponent: '@bob' })
     harness.invitesStore.consume = jest.fn().mockRejectedValue(new Error('redis unavailable'))
 
     const response = await harness.app.inject({
       method: 'POST',
       url: '/api/direct/accept',
       headers: authHeader('bob', 2),
-      payload: { inviteId: 'Abcdefgh12345678' },
+      payload: { inviteId: invite.inviteId },
     })
 
     expect(response.statusCode).toBe(503)

@@ -104,6 +104,23 @@ const GET_ALL_SCRIPT = `
   return redis.call('HVALS', KEYS[1])
 `
 
+// Deletes one exact invite and removes the player index only when it still
+// points at that invite. This is safe when a newer invite was created after a
+// reader observed the old record.
+const DELETE_BY_ID_SCRIPT = `
+  local raw = redis.call('HGET', KEYS[1], ARGV[1])
+  if not raw then return 0 end
+  local player = redis.call('HGET', KEYS[3], ARGV[1])
+  redis.call('HDEL', KEYS[1], ARGV[1])
+  redis.call('HDEL', KEYS[3], ARGV[1])
+  redis.call('HDEL', KEYS[4], ARGV[1])
+  redis.call('HDEL', KEYS[5], ARGV[1])
+  if player and redis.call('HGET', KEYS[2], player) == ARGV[1] then
+    redis.call('HDEL', KEYS[2], player)
+  end
+  return 1
+`
+
 const DELETE_BY_PLAYER_SCRIPT = `
   local inviteId = redis.call('HGET', KEYS[2], ARGV[1])
   if not inviteId then return {0, ''} end
@@ -127,6 +144,16 @@ const normalizeConsumeArgs = (inviteId, actorOrOptions, role) =>
   typeof actorOrOptions === 'object'
     ? { inviteId, ...actorOrOptions }
     : { inviteId, actor: actorOrOptions, role }
+
+const hasIdentity = (identity, requireGeneration = false) => Boolean(
+  identity?.username && identity.userId !== undefined && identity.userId !== null
+  && (!requireGeneration || Number.isSafeInteger(Number(identity.generation)))
+)
+
+const isVerifiableInvite = (invite) => hasIdentity(invite?.playerIdentity, true)
+  && hasIdentity(invite?.opponentIdentity, true)
+  && ![invite?.player, invite?.opponent, invite?.playerIdentity?.username, invite?.opponentIdentity?.username]
+    .some((username) => /^@__former_/.test(username || ''))
 
 /**
  * Атомарное Redis-хранилище одноразовых прямых приглашений с TTL.
@@ -152,13 +179,30 @@ export class RedisInvitesStore {
     const { player, opponent: target, createdAt: timestamp = createdAt } =
       normalizeCreateArgs(input, opponent, createdAt)
     if (!player || !target) return null
+    if (!hasIdentity(input?.playerIdentity, true) || !hasIdentity(input?.opponentIdentity, true)) return null
+    const playerIdentity = input.playerIdentity
+    const opponentIdentity = input.opponentIdentity
 
     const nowMs = this._now()
     const expiresAt = timestamp + this.ttlMs
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const inviteId = createInviteId()
-      const invite = { inviteId, player, opponent: target, createdAt: timestamp, expiresAt }
+      const invite = {
+        inviteId,
+        player,
+        opponent: target,
+        createdAt: timestamp,
+        expiresAt,
+        playerIdentity: { ...playerIdentity, username: player },
+        opponentIdentity: { ...opponentIdentity, username: target },
+        playerUserId: playerIdentity.userId,
+        opponentUserId: opponentIdentity.userId,
+      }
+      if (input && typeof input === 'object') {
+        if (input.playerUserId !== undefined && input.playerUserId !== null) invite.playerUserId = input.playerUserId
+        if (input.opponentUserId !== undefined && input.opponentUserId !== null) invite.opponentUserId = input.opponentUserId
+      }
       const result = await this.client.eval(
         CREATE_SCRIPT,
         5,
@@ -194,7 +238,23 @@ export class RedisInvitesStore {
       this._now()
     )
     if (Number(status) !== 1) return null
-    return JSON.parse(raw)
+    const invite = JSON.parse(raw)
+    if (!isVerifiableInvite(invite)) {
+      await this.deleteById(invite.inviteId)
+      return null
+    }
+    return invite
+  }
+
+  async getById(inviteId) {
+    const raw = await this.client.hget(this.recordsKey, inviteId)
+    if (!raw) return null
+    const invite = JSON.parse(raw)
+    if (!invite.expiresAt || invite.expiresAt <= this._now() || !isVerifiableInvite(invite)) {
+      await this.deleteById(inviteId)
+      return null
+    }
+    return invite
   }
 
   async getAll() {
@@ -208,12 +268,38 @@ export class RedisInvitesStore {
       this.expiresKey,
       this._now()
     )
-    return raw.map((value) => JSON.parse(value))
+    const invites = raw.map((value) => JSON.parse(value))
+    for (const invite of invites.filter((candidate) => !isVerifiableInvite(candidate))) {
+      await this.deleteById(invite.inviteId)
+    }
+    return invites.filter(isVerifiableInvite)
+  }
+
+  async deleteById(inviteId) {
+    if (!inviteId) return false
+    const result = await this.client.eval(
+      DELETE_BY_ID_SCRIPT,
+      5,
+      this.recordsKey,
+      this.byPlayerKey,
+      this.playersKey,
+      this.opponentsKey,
+      this.expiresKey,
+      inviteId
+    )
+    return Number(result) === 1
   }
 
   async consume(inviteId, actorOrOptions, role) {
-    const { actor, role: inviteRole } = normalizeConsumeArgs(inviteId, actorOrOptions, role)
+    const { actor, role: inviteRole, actorUserId } = normalizeConsumeArgs(inviteId, actorOrOptions, role)
     if (!inviteId || !actor || !['initiator', 'opponent'].includes(inviteRole)) return null
+
+    const pending = await this.getById(inviteId)
+    if (!pending || !isVerifiableInvite(pending)) return null
+    const identity = inviteRole === 'initiator' ? pending.playerIdentity : pending.opponentIdentity
+    if (identity.username !== actor) return null
+    if (actorUserId !== undefined && actorUserId !== null
+      && String(identity.userId) !== String(actorUserId)) return null
 
     const result = await this.client.eval(
       CONSUME_SCRIPT,
@@ -246,6 +332,28 @@ export class RedisInvitesStore {
     )
     const [status, raw] = result
     return Number(status) === 1 && raw ? JSON.parse(raw) : null
+  }
+
+  async deleteByParticipant(player) {
+    const options = player && typeof player === 'object' && !Array.isArray(player) ? player : {}
+    const userIds = new Set((options.userIds || []).map(String))
+    const identities = options.identities || []
+    const invites = await this.getAll()
+    const affected = invites.filter((invite) => {
+      const identityMatches = identities.some((identity) =>
+        [invite.playerIdentity, invite.opponentIdentity].some((participant) =>
+          participant?.username === identity?.username
+          && String(participant?.userId) === String(identity?.userId)
+          && Number(participant?.generation) === Number(identity?.generation)
+        )
+      )
+      if (identities.length > 0) return identityMatches
+      const playerMatches = userIds.has(String(invite.playerIdentity?.userId))
+      const opponentMatches = userIds.has(String(invite.opponentIdentity?.userId))
+      return playerMatches || opponentMatches
+    })
+    for (const invite of affected) await this.deleteById(invite.inviteId)
+    return affected.length
   }
 
   async clear() {

@@ -53,7 +53,7 @@ class CreateDirectMatch {
    *   | { ok: false, reason: string, text: string }
    * >}
    */
-  async execute(player, opponentRaw) {
+  async execute(player, opponentRaw, { identityToken, opponentIdentity } = {}) {
     const opponent = this.normalizeOpponent(opponentRaw);
 
     if (!player) {
@@ -76,7 +76,7 @@ class CreateDirectMatch {
       }),
     });
 
-    if (normalizedState.isPlayed(opponent)) {
+    if (normalizedState.isPlayed(opponent, opponentIdentity)) {
       this.logger.info("Прямое создание матча прервано: оппонент уже играл", {
         player,
         opponent,
@@ -87,8 +87,16 @@ class CreateDirectMatch {
         text: this.messages.directOpponentPlayed(opponent),
       };
     }
+    if (normalizedState.isBannedIdentity(identityToken)
+      || normalizedState.isBannedIdentity(opponentIdentity)) {
+      return {
+        ok: false,
+        reason: "player_banned",
+        text: this.messages.searchUnknown(player),
+      };
+    }
 
-    const searchResult = await this.registerSearch.execute(player);
+    const searchResult = await this.registerSearch.execute(player, identityToken);
     if (!["added", "already_searching"].includes(searchResult.status)) {
       this.logger.info("Прямое создание матча прервано: игрок не в поиске", {
         player,
@@ -100,11 +108,15 @@ class CreateDirectMatch {
     this.logger.info("Создано приглашение на прямой матч", { player, opponent });
     return {
       ok: true,
-      invite: { player, opponent },
+      invite: {
+        player,
+        opponent,
+        playerIdentity: identityToken,
+      },
+      searchStatus: searchResult.status,
       text: this.messages.directInvite({ from: player, to: opponent }),
     };
   }
 }
 
 export { CreateDirectMatch };
-

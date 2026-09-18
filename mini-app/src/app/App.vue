@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useTelegram } from '@/composables/useTelegram.js'
 import { useQueue } from '@/composables/useQueue.js'
 import { useAdmin } from '@/composables/useAdmin.js'
+import { useBanStatus } from '@/composables/useApi.js'
+import { usePlayers } from '@/composables/usePlayers.js'
 import QueueView from '@/features/queue/QueueView.vue'
 
 import PlayersView from '@/features/players/PlayersView.vue'
@@ -13,6 +15,8 @@ import BottomNavigation from '@/shared/ui/BottomNavigation.vue'
 const { ready, expand } = useTelegram()
 const { init } = useQueue()
 const { isAdmin, checkAdmin } = useAdmin()
+const { load: loadPlayers } = usePlayers()
+const banStatus = useBanStatus()
 const activeTab = ref('queue')
 const isMockMode =
   import.meta.env.DEV &&
@@ -52,6 +56,10 @@ onMounted(async () => {
   expand()
   ready()
   await init()
+  // Проверяем banned даже на стартовой вкладке очереди, где список игроков ещё не виден.
+  await loadPlayers().catch((error) => {
+    console.error('Не удалось загрузить список игроков', error)
+  })
   await checkAdmin()
 })
 </script>
@@ -60,9 +68,17 @@ onMounted(async () => {
   <div class="app">
     <MockToolbar v-if="isMockMode" />
     <main class="app__content">
-      <component :is="activeView" />
+      <section v-if="banStatus.isBanned" class="blocked-state" aria-live="polite">
+        <span class="blocked-state__icon" aria-hidden="true">!</span>
+        <p class="blocked-state__eyebrow">Доступ ограничен</p>
+        <h1>Вы заблокированы</h1>
+        <p class="blocked-state__text">
+          Функции очереди и приглашения недоступны. Если это ошибка, обратитесь к администратору.
+        </p>
+      </section>
+      <component v-else :is="activeView" />
     </main>
-    <div class="app__nav">
+    <div v-if="!banStatus.isBanned" class="app__nav">
       <BottomNavigation
         :active-tab="activeTab"
         :tabs="navigationTabs"
@@ -160,6 +176,47 @@ input {
     bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
     left: max(16px, calc((100vw - 430px) / 2 + 16px));
     z-index: 20;
+  }
+}
+
+.blocked-state {
+  min-height: min(68dvh, 520px);
+  padding: 48px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+
+  &__icon {
+    width: 58px;
+    height: 58px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 20px;
+    border-radius: 20px;
+    background: color-mix(in srgb, var(--color-danger), transparent 86%);
+    color: var(--color-danger);
+    font-size: 28px;
+    font-weight: 900;
+  }
+
+  &__eyebrow {
+    margin-bottom: 8px;
+    color: var(--color-danger);
+    font-size: 12px;
+    font-weight: 850;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  h1 { font-size: 25px; font-weight: 900; }
+  &__text {
+    max-width: 310px;
+    margin-top: 12px;
+    color: var(--color-text-secondary);
+    font-size: 15px;
+    line-height: 1.45;
   }
 }
 </style>

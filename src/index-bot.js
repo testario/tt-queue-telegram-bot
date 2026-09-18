@@ -9,6 +9,8 @@ import { RedisInvitesStore } from '#infrastructure/invites/RedisInvitesStore.js'
 import { MongoPlayersRepository } from '#infrastructure/players/MongoPlayersRepository.js'
 import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlayersRepository.js'
 import { LifecycleReconciler } from '#infrastructure/timers/LifecycleReconciler.js'
+import { getPlayersMongoConfig } from '#infrastructure/players/config.js'
+import { migrateQueueState } from '#application/usecases/MigrateQueueState.js'
 
 const token = process.env.TG_BOT_API_TOKEN
 const redisUrl = process.env.REDIS_URL
@@ -26,18 +28,23 @@ const queueRepository = new RedisQueueRepository({ client: stateClient })
 const invitesStore = new RedisInvitesStore({ client: stateClient })
 
 // Хранилище игроков: те же MongoDB defaults, что и в backend-процессе.
-const playersMongoUri = process.env.PLAYERS_MONGODB_URI || process.env.MONGODB_URI || null
+const { uri: playersMongoUri, dbName: playersMongoDb, collectionName: playersMongoCollection } =
+  getPlayersMongoConfig()
 const playersRepository = playersMongoUri
   ? new MongoPlayersRepository({
       uri: playersMongoUri,
-      dbName: process.env.PLAYERS_MONGODB_DB || process.env.MONGODB_DB || 'tt-queue-bot',
-      collectionName: process.env.PLAYERS_MONGODB_COLLECTION || 'players',
+      dbName: playersMongoDb,
+      collectionName: playersMongoCollection,
     })
   : new InMemoryPlayersRepository()
 
 if (playersMongoUri && playersRepository.connect) {
   await playersRepository.connect()
 }
+
+// Legacy participant identity cannot be proved. Migrate durable state before
+// createBot installs handlers, lifecycle recovery, or polling.
+await migrateQueueState({ repository: queueRepository, playersRepository })
 
 // eventBus для публикации событий из бота в Redis (subscriber не нужен боту как publisher)
 const eventBus = new RedisEventBus({ publisher, subscriber: null })

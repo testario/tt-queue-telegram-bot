@@ -19,6 +19,7 @@ const createEnMessages = ({ formatDate }) => ({
   usernameRequired: () =>
     "Could not detect your Telegram username. Set it in your profile and retry.",
   directInvite: ({ from, to }) => `${from} invites ${to} to play. Accept the match?`,
+  directInviteSent: ({ from, to }) => `Invitation for ${to} was sent by ${from}.`,
   directAccepted: ({ from, to }) => `${to} accepted the invite from ${from}. Match created.`,
   directAcceptedShort: () => "Invitation accepted",
   directDeclined: ({ from, to }) => `${to} declined the invite from ${from}.`,
@@ -183,4 +184,3 @@ const en = {
 };
 
 export { en };
-

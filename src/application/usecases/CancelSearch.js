@@ -1,5 +1,6 @@
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 import { updateQueueState } from "./queueStateCas.js";
+import { QueueState } from "#domain/entities/QueueState.js";
 
 /**
  * @typedef {import("#application/types.js").QueueRepository} QueueRepository
@@ -30,16 +31,24 @@ class CancelSearch {
   /**
    * Удаляет игрока из поиска, сохраняет новое состояние и возвращает статус.
    * @param {string} player
+   * @param {object} [identityToken]
    * @returns {Promise<{ status: "removed" | "not_found" | "not_searching", text: string | null }>}
    */
-  async execute(player) {
+  async execute(player, identityToken = undefined) {
     this.logger.info("Запрошена отмена поиска", { player });
     const now = this.clock.now();
     const { status } = await updateQueueState({
       repository: this.repository,
       logger: this.logger,
       operation: "cancel_search",
-      mutate: (state) => this.queueService.cancelSearch(state, player, now),
+      mutate: (state) => {
+        if (!QueueState.isCompleteIdentity(identityToken)
+          || identityToken.username !== player
+          || !state.isActiveIdentity(identityToken, player)) {
+          return { state, status: "identity_unavailable", save: false };
+        }
+        return this.queueService.cancelSearch(state, player, now, { identityToken });
+      },
     });
 
     if (status === "removed") {

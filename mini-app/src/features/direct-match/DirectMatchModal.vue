@@ -34,6 +34,7 @@ const unavailable = computed(() => new Set([
 const filteredPlayers = computed(() => {
   const q = search.value.toLowerCase().trim()
   return playersState.players.filter((p) => {
+    if (p.banned) return false
     if (unavailable.value.has(p.username)) return false
     if (!q) return true
     return (
@@ -68,8 +69,17 @@ const submit = async () => {
   const opponent = resolvedOpponent.value
   if (!opponent) return
 
-  loading.value = true
   error.value = null
+
+  const knownPlayer = playersState.players.find(
+    (player) => player.username.toLowerCase() === opponent.toLowerCase()
+  )
+  if (knownPlayer?.banned) {
+    error.value = 'Этого игрока нельзя пригласить: он заблокирован'
+    return
+  }
+
+  loading.value = true
 
   try {
     const result = await api.post('/direct', { opponent })

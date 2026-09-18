@@ -8,6 +8,8 @@ import { RedisQueueRepository } from '#infrastructure/repositories/RedisQueueRep
 import { RedisEventBus } from '#infrastructure/events/RedisEventBus.js'
 import { RedisInvitesStore } from '#infrastructure/invites/RedisInvitesStore.js'
 import { createLogger } from '#infrastructure/logger/Logger.js'
+import { getPlayersMongoConfig } from '#infrastructure/players/config.js'
+import { migrateQueueState } from '#application/usecases/MigrateQueueState.js'
 
 const log = createLogger({ prefix: 'backend' })
 const redisUrl = process.env.REDIS_URL
@@ -27,18 +29,22 @@ const eventBus = new RedisEventBus({ publisher, subscriber })
 const invitesStore = new RedisInvitesStore({ client: stateClient })
 
 // MongoDB для списка игроков (нужен для /api/players и аватаров)
-const playersMongoUri = process.env.PLAYERS_MONGODB_URI || process.env.MONGODB_URI || null
+const { uri: playersMongoUri, dbName: playersMongoDb, collectionName: playersMongoCollection } =
+  getPlayersMongoConfig()
 const playersRepository = playersMongoUri
   ? new MongoPlayersRepository({
       uri: playersMongoUri,
-      dbName: process.env.PLAYERS_MONGODB_DB || process.env.MONGODB_DB || 'tt-queue-bot',
-      collectionName: process.env.PLAYERS_MONGODB_COLLECTION || 'players',
+      dbName: playersMongoDb,
+      collectionName: playersMongoCollection,
     })
   : new InMemoryPlayersRepository()
 
 if (playersMongoUri && playersRepository.connect) {
   await playersRepository.connect()
 }
+
+// До запуска HTTP legacy participant identity нельзя безопасно доказать.
+await migrateQueueState({ repository: queueRepository, playersRepository, logger: log })
 
 // Минимальный TelegramApi без polling — только для API-запросов:
 // getChatMember (проверка прав admin), sendMessage (уведомления в чат), getUserProfilePhotos (аватары)

@@ -19,6 +19,7 @@ const createEsMessages = ({ formatDate }) => ({
   usernameRequired: () =>
     "No pudimos detectar tu usuario de Telegram. Configúralo en tu perfil y vuelve a intentarlo.",
   directInvite: ({ from, to }) => `${from} invita a ${to} a jugar. ¿Aceptar partida?`,
+  directInviteSent: ({ from, to }) => `Invitación para ${to} enviada por ${from}.`,
   directAccepted: ({ from, to }) => `${to} aceptó la invitación de ${from}. Partido creado.`,
   directAcceptedShort: () => "Invitación aceptada",
   directDeclined: ({ from, to }) => `${to} rechazó la invitación de ${from}.`,
@@ -184,4 +185,3 @@ const es = {
 };
 
 export { es };
-

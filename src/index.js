@@ -10,6 +10,8 @@ import { recoverTimers } from "#infrastructure/timers/recoverTimers.js";
 import { RedisEventBus } from "#infrastructure/events/RedisEventBus.js";
 import { RedisInvitesStore } from "#infrastructure/invites/RedisInvitesStore.js";
 import { InMemoryInvitesStore } from "#infrastructure/invites/InMemoryInvitesStore.js";
+import { getPlayersMongoConfig } from "#infrastructure/players/config.js";
+import { migrateQueueState } from "#application/usecases/MigrateQueueState.js";
 
 const token = process.env.TG_BOT_API_TOKEN;
 const { metricsEnabled } = parseCliOptions(process.argv.slice(2));
@@ -18,13 +20,10 @@ if (!token) {
   throw new Error("TG_BOT_API_TOKEN не найден в окружении");
 }
 
-// Хранилище игроков: MongoDB если задан URI, иначе in-memory
-const playersMongoUri =
-  process.env.PLAYERS_MONGODB_URI || process.env.MONGODB_URI || null;
-const playersMongoDb =
-  process.env.PLAYERS_MONGODB_DB || process.env.MONGODB_DB || "tt-queue-bot";
-const playersMongoCollection =
-  process.env.PLAYERS_MONGODB_COLLECTION || "players";
+// В production in-memory хранилище игроков запрещено: all-in-one процесс
+// также должен использовать общий MongoDB с bot/backend entrypoints.
+const { uri: playersMongoUri, dbName: playersMongoDb, collectionName: playersMongoCollection } =
+  getPlayersMongoConfig();
 
 const playersRepository = playersMongoUri
   ? new MongoPlayersRepository({
@@ -57,6 +56,10 @@ if (redisUrl) {
   eventBus = new RedisEventBus({ publisher, subscriber });
   invitesStore = new RedisInvitesStore({ client: redisClient });
 }
+
+// Legacy participant identity cannot be proved. Migrate durable state before
+// createBot installs handlers, timer recovery, WebApp, or polling.
+if (queueRepository) await migrateQueueState({ repository: queueRepository, playersRepository });
 
 const botResult = createBot(token, {
   metricsEnabled,

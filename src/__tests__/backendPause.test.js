@@ -59,6 +59,33 @@ describe('backend-only pause state', () => {
     expect(context.notifier.notify).toHaveBeenCalledWith('queue', '', { type: 'state_update' })
   })
 
+  test('sends a real pauseModeEnabled message (not a hardcoded "none") when not in dev mode', async () => {
+    const current = new Match({
+      player1: '@current1',
+      player2: '@current2',
+      startDate: new Date('2026-01-01T11:59:00.000Z'),
+      endDate: new Date('2026-01-01T13:00:00.000Z'),
+      status: Match.statuses.playing,
+    })
+    const context = createContext(current, now)
+    const adminState = buildLocalAdminState({
+      bot,
+      messages,
+      isDev: false,
+    })
+
+    await adminState.applyPauseMode({ chatId: 'queue', context })
+
+    // Матч идёт меньше порога продолжения — должен быть остановлен ("stop"),
+    // а не смолчан под action: 'none', как было раньше.
+    expect(messages.pauseModeEnabled).toHaveBeenLastCalledWith({
+      player1: '@current1',
+      player2: '@current2',
+      action: 'stop',
+    })
+    expect(bot.sendMessage).toHaveBeenCalledWith('queue', 'paused')
+  })
+
   test('keeps a continuation-eligible current match playing', async () => {
     const current = new Match({
       player1: '@current1',

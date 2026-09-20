@@ -156,6 +156,28 @@ describe('bot ownership and shutdown', () => {
     expect(botResult.isPauseModeEnabled('queue')).toBe(true)
   })
 
+  test('/pause enables pause mode even with an empty queue, and /continue lifts it again', async () => {
+    const botResult = createBot('token', {
+      queueRepository: new InMemoryQueueRepository(new QueueState({})),
+      eventBus: { publish: jest.fn().mockResolvedValue(undefined) },
+      autoStartPolling: false,
+    })
+    const fakeBot = instances[0]
+
+    const pauseHandler = fakeBot.textHandlers.find(({ pattern }) => pattern.test('/pause')).handler
+    await pauseHandler({ chat: { id: 'queue' }, from: { id: 7, username: 'admin' }, message_id: 5 })
+
+    // Очередь пуста — заморозить нечего, но флаг паузы должен встать всё
+    // равно: он же не даёт запланировать lifecycle для матча, который
+    // создадут уже после /pause (см. scheduleLifecycle в AddMatch).
+    expect(botResult.isPauseModeEnabled('queue')).toBe(true)
+
+    const continueHandler = fakeBot.textHandlers.find(({ pattern }) => pattern.test('/continue')).handler
+    await continueHandler({ chat: { id: 'queue' }, from: { id: 7, username: 'admin' }, message_id: 6 })
+
+    expect(botResult.isPauseModeEnabled('queue')).toBe(false)
+  })
+
   test('callback path answers a friendly alert on QueueStateConflictError without crashing', async () => {
     const conflictingRepository = {
       getVersioned: jest

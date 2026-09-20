@@ -8,7 +8,7 @@ import AppIcon from '@/shared/ui/AppIcon.vue'
 import PlayerTag from '@/shared/ui/PlayerTag.vue'
 import DirectMatchModal from '@/features/direct-match/DirectMatchModal.vue'
 
-const { state } = useQueue()
+const { state, cancelMatch: cancelMatchRequest } = useQueue()
 const { player } = useTelegram()
 const api = useApi()
 
@@ -82,7 +82,7 @@ const cancelSearch = async () => {
 const cancelMatch = async () => {
   loading.value = true
   try {
-    await api.del('/match')
+    await cancelMatchRequest()
   } catch (error) {
     console.error('Не удалось отменить матч', error)
   } finally {

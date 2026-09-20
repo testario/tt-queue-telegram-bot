@@ -8,6 +8,7 @@ import {
 } from "#interfaces/telegram/keyboards.js";
 import {
   DEFAULT_GAME_TIME,
+  PAUSE_CANCEL_MATCH_MS,
   TIME_AFTER_EMERGE,
   TIME_READY,
   WORK_SCHEDULE,
@@ -244,7 +245,6 @@ const createBot = (
     }
   };
 
-  const PAUSE_CANCEL_MATCH_MS = 5 * 60 * 1000;
   const EMERGE_RESUME_MIN_MS = TIME_AFTER_EMERGE;
   const emergeStateByChat = new Map();
 
@@ -1157,10 +1157,11 @@ const createBot = (
       },
     });
 
+    onQueueChanged?.({ chatId: context.chatId, meta: { type: "state_update" } });
+
     if (!result.hasQueue) return { hasQueue: false };
 
     if (!result.currentMatchContinues) context.orchestrator.cancelAll();
-    onQueueChanged?.({ chatId: context.chatId, meta: { type: "state_update" } });
     return {
       hasQueue: true,
       nextMatch: result.state.queue[0],
@@ -1206,9 +1207,15 @@ const createBot = (
         replyToMessageId,
         inlineMessageId,
       });
-      return;
+      // Состояние не изменено из-за конкурирующей записи — вызывающая сторона
+      // (например, /api/admin/pause) должна узнать об этом, а не решить, что
+      // пауза включилась.
+      return { hasQueue: false, conflict: true };
     }
-    if (freezeResult.hasQueue) setPauseMode(chatId, true);
+    // Флаг паузы включаем независимо от того, есть ли сейчас очередь: он
+    // управляет и планированием будущих матчей (scheduleLifecycle), а не
+    // только заморозкой уже существующей очереди.
+    setPauseMode(chatId, true);
     log.info("Режим паузы включен", {
       chatId,
       username,
@@ -1223,6 +1230,7 @@ const createBot = (
       replyToMessageId,
       inlineMessageId,
     });
+    return { hasQueue: freezeResult.hasQueue };
   };
 
   const resumeQueueAfterPause = async (context) => {
@@ -1265,10 +1273,11 @@ const createBot = (
       return { hasQueue: false, conflict: true };
     }
 
-    if (!result.hasQueue) return { hasQueue: false };
-
     setPauseMode(context.chatId, false);
     onQueueChanged?.({ chatId: context.chatId, meta: { type: "state_update" } });
+
+    if (!result.hasQueue) return { hasQueue: false };
+
     if (result.currentMatchContinues) {
       return { hasQueue: true, currentMatchContinues: true, currentMatch: result.currentMatch };
     }

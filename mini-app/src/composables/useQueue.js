@@ -16,7 +16,24 @@ const state = reactive({
 
 let eventSource = null
 
+// SSE и обычные ответы API приходят по разным соединениям без гарантии
+// порядка — более старый снимок (например, устаревшее state_update,
+// отправленное параллельно чужим действием) может прийти позже свежего
+// ответа явного запроса. revision — монотонный счётчик версий состояния на
+// бэкенде, надёжный маркер порядка (в отличие от serverTime, который
+// штампуется уже после чтения состояния и может не совпасть по порядку при
+// параллельных запросах). Сбрасывается при каждом (пере)открытии SSE-канала:
+// после рестарта backend/Redis revision на сервере начинается заново, и без
+// сброса клиент навсегда отбрасывал бы уже актуальные, но "меньшие" снимки.
+let lastAppliedRevision = -1
+
 const applyState = (data) => {
+  const incomingRevision = typeof data.revision === 'number' ? data.revision : null
+  if (incomingRevision !== null) {
+    if (incomingRevision < lastAppliedRevision) return
+    lastAppliedRevision = incomingRevision
+  }
+
   state.queue = (data.queue || []).map((m) => ({
     ...m,
     startDate: new Date(m.startDate),
@@ -45,6 +62,9 @@ const connectSse = () => {
 
   eventSource.onopen = () => {
     state.error = null
+    // Переподключение могло произойти после рестарта backend/Redis — revision
+    // там мог начаться заново, поэтому не считаем прежний максимум актуальным.
+    lastAppliedRevision = -1
   }
 }
 
@@ -64,7 +84,17 @@ export function useQueue() {
     }
   }
 
-  const cancelMatch = () => del('/match')
+  // Отмена матча — не ждём отдельного SSE-события: подтягиваем свежее
+  // состояние тем же запросом, чтобы UI обновился сразу же, синхронно с
+  // ответом сервера, а не только после следующего пришедшего state_update.
+  const cancelMatch = async () => {
+    await del('/match')
+    try {
+      applyState(await get('/state'))
+    } catch {
+      // SSE рано или поздно догонит актуальное состояние — не мешаем успешной отмене.
+    }
+  }
 
   return { state: readonly(state), player, init, cancelMatch }
 }

@@ -20,7 +20,11 @@ const initDataFor = (user) => {
   return params.toString()
 }
 
-const createHarness = async ({ production = false, claimPlayerIdentity = undefined } = {}) => {
+const createHarness = async ({
+  production = false,
+  claimPlayerIdentity = undefined,
+  applyPauseMode = jest.fn(),
+} = {}) => {
   process.env.NODE_ENV = production ? 'production' : 'test'
 
   let currentState = new QueueState({
@@ -87,6 +91,7 @@ const createHarness = async ({ production = false, claimPlayerIdentity = undefin
     sendMessage: jest.fn().mockResolvedValue(undefined),
     deleteMessage: jest.fn().mockResolvedValue(undefined),
     editMessageText: jest.fn().mockResolvedValue(undefined),
+    editMessageReplyMarkup: jest.fn().mockResolvedValue(undefined),
     getChatMember: jest.fn(),
   }
   const sseManager = { addClient: jest.fn(), broadcast: jest.fn() }
@@ -112,7 +117,7 @@ const createHarness = async ({ production = false, claimPlayerIdentity = undefin
     isPauseModeEnabled: () => false,
     setPauseMode: jest.fn(),
     emergeStateByChat: new Map(),
-    applyPauseMode: jest.fn(),
+    applyPauseMode,
     resumeEmergeAfterContinue: jest.fn(),
     resumeQueueAfterPause: jest.fn(),
     handleEmerge: jest.fn(),
@@ -219,7 +224,9 @@ describe('webapp REST routes', () => {
 
     expect(cancelResponse.json()).toEqual({ ok: true })
     // Отменённое (не принятое) приглашение — личное дело двоих, в общий чат ничего не летит.
-    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    // Целевой игрок узнаёт об отмене личным сообщением от бота.
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith(2, 'cancelled')
     expect(await harness.invitesStore.getAll()).toEqual([])
     await harness.app.close()
   })
@@ -250,7 +257,9 @@ describe('webapp REST routes', () => {
     })
 
     expect(deleteResponse.json()).toEqual({ ok: true, status: 'removed' })
-    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    // Общий чат остаётся в стороне — уведомление уходит только целевому игроку в ЛС.
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith(2, 'cancelled')
     expect(await harness.invitesStore.getAll()).toEqual([])
     await harness.app.close()
   })
@@ -279,7 +288,9 @@ describe('webapp REST routes', () => {
 
     expect(declineResponse.json()).toEqual({ ok: true })
     // Отклонённое приглашение так и не стало матчем — в общий чат ничего не летит.
-    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    // Инициатор узнаёт об отказе личным сообщением от бота.
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith(10, 'declined')
     expect(await harness.invitesStore.getAll()).toEqual([])
     await harness.app.close()
   })
@@ -423,6 +434,7 @@ describe('webapp REST routes', () => {
       paused: false,
       emergeActive: false,
       serverTime: '2026-01-01T00:00:00.000Z',
+      revision: 0,
       pendingInvites: [{
         inviteId: invite.inviteId,
         player: '@alice',
@@ -440,8 +452,15 @@ describe('webapp REST routes', () => {
       url: '/api/search',
       headers: authHeader('alice', 10),
     })
-    const emittedState = harness.sseManager.broadcast.mock.calls.at(-1)[1]
-    expect(JSON.parse(JSON.stringify(emittedState))).toEqual(publicState)
+    const emittedState = JSON.parse(JSON.stringify(harness.sseManager.broadcast.mock.calls.at(-1)[1]))
+    // Тот же публичный DTO, за исключением revision: аутентификация alice
+    // между двумя снимками сама пишет identity claim в состояние очереди
+    // (см. auth-preHandler), поэтому revision закономерно продвигается вперёд
+    // даже там, где registerSearch — заглушка, не трогающая репозиторий.
+    const { revision: initialRevision, ...publicStateWithoutRevision } = publicState
+    const { revision: emittedRevision, ...emittedStateWithoutRevision } = emittedState
+    expect(emittedStateWithoutRevision).toEqual(publicStateWithoutRevision)
+    expect(emittedRevision).toBeGreaterThan(initialRevision)
     await harness.app.close()
   })
 
@@ -609,6 +628,38 @@ describe('webapp REST routes', () => {
     expect(harness.context.testIdentityActivation).toHaveBeenCalled()
     expect(harness.playersRepository.isBanned).toHaveBeenCalledWith(10)
     expect(harness.context.registerSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('POST /api/admin/pause reports a conflict instead of a false "ok" when applyPauseMode cannot commit', async () => {
+    const applyPauseMode = jest.fn().mockResolvedValue({ hasQueue: false, conflict: true })
+    const harness = await createHarness({ production: true, applyPauseMode })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/admin/pause',
+      headers: authHeader('admin', 10),
+    })
+
+    // Конфликт CAS не должен маскироваться под успех — мини-апп должен узнать,
+    // что пауза не включилась, и предложить повторить попытку.
+    expect(response.json()).toEqual({ ok: false, reason: 'conflict' })
+    await harness.app.close()
+  })
+
+  test('POST /api/admin/pause reports ok when applyPauseMode commits successfully', async () => {
+    const applyPauseMode = jest.fn().mockResolvedValue({ hasQueue: true })
+    const harness = await createHarness({ production: true, applyPauseMode })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/admin/pause',
+      headers: authHeader('admin', 10),
+    })
+
+    expect(response.json()).toEqual({ ok: true })
     await harness.app.close()
   })
 
@@ -1074,7 +1125,7 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
-  test('cancelling a search created outside the mini app falls back to a text notice', async () => {
+  test('cancelling a search created outside the mini app stays silent too (no "changed mind" text)', async () => {
     const harness = await createHarness({ production: true })
 
     const response = await harness.app.inject({
@@ -1085,7 +1136,9 @@ describe('webapp REST routes', () => {
 
     expect(response.json()).toEqual({ ok: true, status: 'removed' })
     expect(harness.bot.deleteMessage).not.toHaveBeenCalled()
-    expect(harness.bot.sendMessage).toHaveBeenCalledWith('queue-chat', 'search cancelled', undefined)
+    // DELETE /api/search приходит только из мини-аппа — независимо от того,
+    // где был создан анонс, текст "Игрок передумал" в общий чат не летит.
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
     await harness.app.close()
   })
 
@@ -1117,7 +1170,39 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
-  test('falls back to a text notice when Telegram lets neither delete nor edit the announcement', async () => {
+  test('stays silent and just strips the keyboard when Telegram refuses to delete the mini-app announcement', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 'queue-chat' } })
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    harness.bot.deleteMessage.mockRejectedValue(new Error('message can\'t be deleted'))
+
+    const response = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    expect(response.json()).toEqual({ ok: true, status: 'removed' })
+    expect(harness.bot.deleteMessage).toHaveBeenCalledTimes(1)
+    // Отмена из мини-аппа никогда не должна показывать "Игрок передумал" в
+    // чате — даже когда удалить исходный анонс не вышло, мы лишь снимаем
+    // клавиатуру, а не подменяем/шлём текст.
+    expect(harness.bot.editMessageReplyMarkup).toHaveBeenCalledWith(
+      { inline_keyboard: [] },
+      { chat_id: 'queue-chat', message_id: 555 }
+    )
+    expect(harness.bot.editMessageText).not.toHaveBeenCalled()
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    await harness.app.close()
+  })
+
+  test('skips the redundant keyboard-strip call once Telegram confirms the announcement is already gone', async () => {
     const harness = await createHarness({ production: true })
     harness.bot.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 'queue-chat' } })
 
@@ -1128,7 +1213,6 @@ describe('webapp REST routes', () => {
     })
 
     harness.bot.deleteMessage.mockRejectedValue(new Error('message to delete not found'))
-    harness.bot.editMessageText.mockRejectedValue(new Error('message to edit not found'))
 
     const response = await harness.app.inject({
       method: 'DELETE',
@@ -1138,9 +1222,10 @@ describe('webapp REST routes', () => {
 
     expect(response.json()).toEqual({ ok: true, status: 'removed' })
     expect(harness.bot.deleteMessage).toHaveBeenCalledTimes(1)
-    expect(harness.bot.editMessageText).toHaveBeenCalledTimes(1)
-    // Ни удаление, ни правка не сработали — последний рубеж: текстовое сообщение.
-    expect(harness.bot.sendMessage).toHaveBeenLastCalledWith('queue-chat', 'search cancelled', undefined)
+    // Сообщение точно не существует — второй вызов (editMessageReplyMarkup)
+    // заведомо провалится тем же образом, поэтому его не делаем.
+    expect(harness.bot.editMessageReplyMarkup).not.toHaveBeenCalled()
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
     await harness.app.close()
   })
 
@@ -1259,9 +1344,11 @@ describe('webapp REST routes', () => {
 
     expect(cancelResponse.json()).toEqual({ ok: true })
     // Анонс "хочет поиграть" тихо удаляется вместе с приглашением, без нового
-    // текстового сообщения в чат.
+    // текстового сообщения в общий чат — уведомление об отмене уходит только
+    // целевому игроку в ЛС.
     expect(harness.bot.deleteMessage).toHaveBeenCalledWith('queue-chat', 555)
-    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith(2, 'cancelled')
     await harness.app.close()
   })
 })

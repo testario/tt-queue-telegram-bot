@@ -3,6 +3,9 @@ info:
   title: TT Queue Bot — Mini App API
   version: 1.0.0
   description: HTTP API для Telegram Mini App бота управления очередью настольного тенниса.
+  license:
+    name: ISC
+    identifier: ISC
 
 servers:
   - url: http://localhost:3000
@@ -147,8 +150,7 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
-          example:
-            value: { error: username_required }
+          example: { error: username_required }
 
     Forbidden:
       description: Операция запрещена — требуются права администратора или игрок заблокирован.

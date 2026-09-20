@@ -46,12 +46,18 @@ export const registerRoutes = async (app, deps) => {
   const legacyTestContext = !context?.claimPlayerIdentity && !context?.testIdentityActivation
 
   const buildStatePayload = async () => {
-    const state = await context.repository.get()
+    // getVersioned даёт revision — монотонный маркер порядка снимков, нужный
+    // клиенту, чтобы не откатить UI устаревшим payload'ом, пришедшим позже
+    // свежего (см. toPublicState).
+    const { state, revision } = typeof context.repository.getVersioned === 'function'
+      ? await context.repository.getVersioned()
+      : { state: await context.repository.get(), revision: undefined }
     return toPublicState({
       state,
       paused: isPauseModeEnabled(queueChatId),
       emergeActive: emergeStateByChat.has(String(queueChatId)),
       serverTime: context.clock.now().toISOString(),
+      revision,
       pendingInvites: await invitesStore.getAll(),
     })
   }
@@ -76,12 +82,35 @@ export const registerRoutes = async (app, deps) => {
         }
       }
 
+  // Личное уведомление игроку в ЛС через бота — используется там, где вторая
+  // сторона прямого приглашения должна узнать об отмене/отказе, но общий чат
+  // об этом знать не должен (см. /api/direct/cancel и /api/direct/decline).
+  const notifyPlayerDirect = isDev
+    ? async () => null
+    : async (userId, text) => {
+        if (userId == null) return null
+        try {
+          return await bot.sendMessage(userId, text)
+        } catch (err) {
+          log.warn('Не удалось отправить личное уведомление игроку', { message: err.message })
+          return null
+        }
+      }
+
   // Ошибки Telegram вида "сообщение уже не то" или "уже не менялось" — не
   // повод для log.error: анонс мог быть уже тронут другим процессом/каналом.
   const isStaleTelegramMessageError = (err) =>
     /message is not modified|message to (delete|edit) not found|message can't be deleted/i.test(
       err?.response?.body?.description || err?.message || ''
     )
+
+  // Более узкая проверка: сообщения точно больше не существует. "Can't be
+  // deleted" сюда намеренно не входит (в отличие от isStaleTelegramMessageError
+  // выше) — эта ошибка может значить и "уже удалено", и "нет прав на
+  // удаление", а во втором случае сообщение всё ещё существует и
+  // editMessage* по нему всё ещё может сработать.
+  const isMessageGoneError = (err) =>
+    /message to delete not found/i.test(err?.response?.body?.description || err?.message || '')
 
   const logAnnouncementError = (message, err) => {
     log[isStaleTelegramMessageError(err) ? 'warn' : 'error'](message, { message: err.message })
@@ -90,12 +119,11 @@ export const registerRoutes = async (app, deps) => {
   // Анонс "хочет поиграть", созданный через мини-апп: помним, каким сообщением
   // он был опубликован, чтобы при отмене/принятии поиска убрать именно его,
   // а не плодить новые сообщения поверх старого. Живёт только в памяти этого
-  // процесса — поиск, начатый через бот-команду или inline, сюда не попадает.
-  // Запись снимается на любом пути, которым игрок покидает поиск (отмена,
-  // принятие своего поиска, а также согласие/отказ/отмена прямого
-  // приглашения — оно тоже переводит игрока в состояние поиска). Если ни
-  // один из этих путей не сработал (процесс перезапустился, поиск начат в
-  // другом канале) — используется прежний текстовый фоллбек.
+  // процесса — поиск, начатый через бот-команду или inline, сюда не попадает,
+  // как и любой анонс, переживший рестарт процесса. Запись снимается на любом
+  // пути, которым игрок покидает поиск (отмена, принятие своего поиска, а
+  // также согласие/отказ/отмена прямого приглашения — оно тоже переводит
+  // игрока в состояние поиска).
   const searchAnnouncements = new Map()
 
   const takeSearchAnnouncement = (player) => {
@@ -129,24 +157,37 @@ export const registerRoutes = async (app, deps) => {
   const removeSearchAnnouncement = async (player) => {
     const announcement = takeSearchAnnouncement(player)
     if (!announcement) {
-      await notifyChat(messages.searchCancelled())
+      // Анонс не найден (поиск начат вне мини-аппа, либо запись потеряна
+      // рестартом процесса) — но сам запрос на отмену всё равно пришёл из
+      // мини-аппа (это единственный клиент DELETE /api/search), поэтому
+      // текстовый "передумал" в общий чат отсюда не летит ни при каких
+      // обстоятельствах: это как раз то сообщение, которого требование
+      // альфа-теста просит не показывать.
       return
     }
     try {
       await bot.deleteMessage(announcement.chatId, announcement.messageId)
+      return
     } catch (err) {
       logAnnouncementError('Не удалось удалить анонс поиска из webapp', err)
-      try {
-        await bot.editMessageText(messages.searchCancelled(), {
-          chat_id: announcement.chatId,
-          message_id: announcement.messageId,
-        })
-      } catch (editErr) {
-        logAnnouncementError('Не удалось обновить анонс поиска после неудачного удаления', editErr)
-        // Ни удалить, ни отредактировать не вышло — сообщаем хотя бы текстом,
-        // чтобы отмена не осталась вовсе без обратной связи в чате.
-        await notifyChat(messages.searchCancelled())
-      }
+      // Сообщение уже не существует (кто-то удалил его раньше нас, или оно и
+      // так пропало) — вторая попытка тронуть тот же message_id закончится
+      // той же ошибкой, снимать клавиатуру не с чего.
+      if (isMessageGoneError(err)) return
+    }
+    // Анонс создан через мини-апп — отмена поиска из мини-аппа должна
+    // оставаться тихой, даже если удалить сообщение не вышло (например, у
+    // бота нет прав на удаление в этом чате). В отличие от анонса неизвестного
+    // происхождения (см. ветку выше), про текст "передумал" здесь речи быть
+    // не должно — вместо этого просто снимаем клавиатуру, чтобы неактуальная
+    // кнопка "Сыграть с ним" не осталась активной поверх устаревшего анонса.
+    try {
+      await bot.editMessageReplyMarkup(
+        { inline_keyboard: [] },
+        { chat_id: announcement.chatId, message_id: announcement.messageId }
+      )
+    } catch (editErr) {
+      logAnnouncementError('Не удалось снять клавиатуру анонса поиска после неудачного удаления', editErr)
     }
   }
 
@@ -585,6 +626,10 @@ export const registerRoutes = async (app, deps) => {
     if (result.status === 'removed') {
       if (consumedInvite) {
         discardSearchAnnouncement(req.player)
+        notifyPlayerDirect(
+          consumedInvite.opponentIdentity?.userId,
+          messages.directCancelled({ from: consumedInvite.player, to: consumedInvite.opponent })
+        )
       } else {
         // Игрок передумал: анонс "хочет поиграть" убираем без комментариев.
         await removeSearchAnnouncement(req.player)
@@ -802,7 +847,12 @@ export const registerRoutes = async (app, deps) => {
     sseManager.broadcast('state_update', await buildStatePayload())
     // Приглашение никто не принял — это личное дело двоих, общий чат об этом
     // знать не должен (в отличие от direct-accept, который уже создаёт матч).
+    // Инициатора уведомляем в ЛС, чтобы он не ждал ответа впустую.
     discardSearchAnnouncement(invite.player)
+    notifyPlayerDirect(
+      invite.playerIdentity?.userId,
+      messages.directDeclined({ from: invite.player, to: invite.opponent })
+    )
     return { ok: true }
   })
 
@@ -830,7 +880,12 @@ export const registerRoutes = async (app, deps) => {
     sseManager.broadcast('state_update', await buildStatePayload())
     // Приглашение никто не принял — это личное дело двоих, общий чат об этом
     // знать не должен (в отличие от direct-accept, который уже создаёт матч).
+    // Целевого игрока уведомляем в ЛС, а не в общий чат.
     discardSearchAnnouncement(req.player)
+    notifyPlayerDirect(
+      invite.opponentIdentity?.userId,
+      messages.directCancelled({ from: invite.player, to: invite.opponent })
+    )
     return { ok: true }
   })
 

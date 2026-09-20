@@ -212,7 +212,7 @@ const invite = async (username) => {
           Позвать
         </AppButton>
         <span v-else :class="['players-view__badge', { 'players-view__badge--banned': player.banned }]">
-          {{ player.banned ? 'Бан' : (player.isQueued ? 'В игре' : 'Недоступен') }}
+          {{ player.banned ? 'Бан' : (player.isQueued ? 'В игре' : (player.isInviteInitiator ? 'Ждёт ответа' : (player.isInvited ? 'Вызван' : 'Недоступен'))) }}
         </span>
       </article>
 

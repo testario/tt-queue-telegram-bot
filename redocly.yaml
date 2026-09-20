@@ -1,0 +1,16 @@
+apis:
+  webapp:
+    root: src/interfaces/webapp/openapi.yaml
+
+extends:
+  - recommended
+
+rules:
+  # Внутренний бот-инстанс без публичного домена — localhost корректен.
+  no-server-example.com: off
+  # /api/state, /api/events, /api/players не требуют авторизации и не имеют
+  # документированных ошибок валидации.
+  operation-4xx-response: off
+  # /api/players/{username}/avatar всегда отвечает либо 302, либо 404 —
+  # успешного 2xx-ответа с телом у него нет по дизайну.
+  operation-2xx-response: off

@@ -18,7 +18,7 @@ import { GetQueue } from '#application/usecases/GetQueue.js'
 import { GetPlayed } from '#application/usecases/GetPlayed.js'
 import { createLocalization } from '#application/messages/localization.js'
 import { I18N_CONFIG } from '#application/config/i18n.js'
-import { DEFAULT_GAME_TIME, TIME_READY, WORK_SCHEDULE } from '#application/config/time.js'
+import { DEFAULT_GAME_TIME, PAUSE_CANCEL_MATCH_MS, TIME_READY, WORK_SCHEDULE } from '#application/config/time.js'
 import { Match } from '#domain'
 import { buildMatchCancelKeyboard } from '#interfaces/telegram/keyboards.js'
 import { updateQueueState, QueueStateConflictError } from '#application/usecases/queueStateCas.js'
@@ -128,6 +128,17 @@ export const buildLocalAdminState = ({ bot, messages, isDev = false, logger }) =
     else pauseModeChats.delete(String(chatId))
   }
 
+  const buildPauseModeEnabledMessage = ({ hasQueue, currentMatch, currentMatchContinues }) => {
+    if (hasQueue && currentMatch?.player1 && currentMatch?.player2) {
+      return messages.pauseModeEnabled({
+        player1: currentMatch.player1,
+        player2: currentMatch.player2,
+        action: currentMatchContinues ? 'continue' : 'stop',
+      })
+    }
+    return messages.pauseModeEnabled({ action: 'none' })
+  }
+
   const applyPauseMode = async ({ chatId, context }) => {
     let result
     try {
@@ -141,13 +152,14 @@ export const buildLocalAdminState = ({ bot, messages, isDev = false, logger }) =
           const current = state.queue[0]
           const elapsedMs = now.getTime() - current.startDate.getTime()
           const currentContinues =
-            current.status === Match.statuses.playing && elapsedMs >= 5 * 60 * 1000
+            current.status === Match.statuses.playing && elapsedMs >= PAUSE_CANCEL_MATCH_MS
           state.queue.forEach((item, index) => {
             if (index === 0 && currentContinues) return
             item.status = Match.statuses.waiting
           })
           state.holdNextMatch = currentContinues
-          return { state, hasQueue: true }
+          context.queueService.recalculateWaiting(state)
+          return { state, hasQueue: true, currentMatch: current, currentMatchContinues: currentContinues }
         },
       })
     } catch (err) {
@@ -157,13 +169,14 @@ export const buildLocalAdminState = ({ bot, messages, isDev = false, logger }) =
       }
       throw err
     }
-    if (result.hasQueue) setPauseMode(chatId, true)
-    if (result.hasQueue) {
-      context.notifier.notify(context.chatId, '', { type: 'state_update' })
-    }
+    // Флаг паузы включаем независимо от наличия очереди: он также управляет
+    // планированием будущих матчей, а не только заморозкой текущей очереди.
+    setPauseMode(chatId, true)
+    context.notifier.notify(context.chatId, '', { type: 'state_update' })
     if (!isDev) {
-      bot.sendMessage(chatId, messages.pauseModeEnabled({ action: 'none' })).catch(() => {})
+      bot.sendMessage(chatId, buildPauseModeEnabledMessage(result)).catch(() => {})
     }
+    return { hasQueue: result.hasQueue }
   }
 
   const resumeQueueAfterPause = async (context) => {
@@ -199,10 +212,8 @@ export const buildLocalAdminState = ({ bot, messages, isDev = false, logger }) =
       }
       throw err
     }
-    if (result.hasQueue) setPauseMode(context.chatId, false)
-    if (result.hasQueue) {
-      context.notifier.notify(context.chatId, '', { type: 'state_update' })
-    }
+    setPauseMode(context.chatId, false)
+    context.notifier.notify(context.chatId, '', { type: 'state_update' })
     // Bot-процесс поставит таймеры, получив state_update через Redis
     return result
   }
@@ -356,7 +367,11 @@ export const createWebApp = async ({
   const resolvedContext = resolvedGetContext ? resolvedGetContext(queueChatId) : null
   const buildStatePayload = async () => {
     if (!resolvedContext) return {}
-    const state = await resolvedContext.repository.get()
+    // getVersioned даёт revision — монотонный маркер порядка снимков (см.
+    // комментарий в router.js рядом с аналогичным вызовом).
+    const { state, revision } = typeof resolvedContext.repository.getVersioned === 'function'
+      ? await resolvedContext.repository.getVersioned()
+      : { state: await resolvedContext.repository.get(), revision: undefined }
     return toPublicState({
       state,
       paused: resolvedIsPauseModeEnabled ? resolvedIsPauseModeEnabled(queueChatId) : false,
@@ -364,6 +379,7 @@ export const createWebApp = async ({
         ? resolvedEmergeStateByChat.has(String(queueChatId))
         : false,
       serverTime: resolvedContext.clock.now().toISOString(),
+      revision,
       pendingInvites: invitesStore ? await invitesStore.getAll() : [],
     })
   }

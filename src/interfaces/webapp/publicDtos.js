@@ -39,16 +39,25 @@ export const toPublicState = ({
   paused,
   emergeActive,
   serverTime,
+  revision,
   pendingInvites,
-}) => ({
-  queue: (state?.queue || []).map(toPublicMatch),
-  searching: [...(state?.searching || [])],
-  played: [...(state?.played || [])],
-  paused: Boolean(paused),
-  emergeActive: Boolean(emergeActive),
-  serverTime,
-  pendingInvites: (pendingInvites || [])
-    .filter((invite) => ![invite?.player, invite?.opponent]
-      .some(isSyntheticFormerUsername))
-    .map(toPublicInvite),
-})
+}) => {
+  const result = {
+    queue: (state?.queue || []).map(toPublicMatch),
+    searching: [...(state?.searching || [])],
+    played: [...(state?.played || [])],
+    paused: Boolean(paused),
+    emergeActive: Boolean(emergeActive),
+    serverTime,
+    pendingInvites: (pendingInvites || [])
+      .filter((invite) => ![invite?.player, invite?.opponent]
+        .some(isSyntheticFormerUsername))
+      .map(toPublicInvite),
+  }
+  // Монотонный счётчик ревизии состояния очереди — в отличие от serverTime
+  // (штампуется после чтения состояния, поэтому не гарантирует порядок при
+  // параллельных запросах) даёт клиенту надёжный маркер "какой снимок свежее",
+  // не зависящий от рассинхронизации часов между процессами.
+  addDefined(result, 'revision', revision)
+  return result
+}

@@ -696,6 +696,8 @@ const createBot = (
       searchUnknown: (player) => baseMessages.searchUnknown(formatPlayerForMessage(player)),
       directOpponentPlayed: (player) =>
         baseMessages.directOpponentPlayed(formatPlayerForMessage(player)),
+      directOpponentInvitePending: (player) =>
+        baseMessages.directOpponentInvitePending(formatPlayerForMessage(player)),
       directInvite: ({ from, to }) =>
         baseMessages.directInvite({
           from: formatPlayerForMessage(from),
@@ -834,6 +836,7 @@ const createBot = (
       messages,
       clock,
       logger: log.child(`usecase:AddMatch:${chatId}`),
+      invitesStore: directInvitesStore,
     });
     const directMatch = new CreateDirectMatch({
       registerSearch,
@@ -1049,6 +1052,14 @@ const createBot = (
       : null;
     if (!QueueState.isCompleteIdentity(identityToken) || !opponentIdentity) {
       return { ok: false, reason: "identity_unavailable", text: playerStatusUnavailableMessage };
+    }
+    // У оппонента уже есть собственное исходящее приглашение — если он примет
+    // наше, его приглашение осиротеет (тот же случай, что и с общим поиском:
+    // его "поиск" на бэкенде держится именно тем приглашением). Тот же
+    // guard стоит и в webapp-роуте POST /api/direct — оба пути пишут в одно
+    // хранилище приглашений, поэтому дыру нужно закрывать в обоих местах.
+    if (typeof directInvitesStore.getByPlayer === "function" && await directInvitesStore.getByPlayer(opponent)) {
+      return { ok: false, reason: "opponent_invite_pending", text: messages.directOpponentInvitePending(opponent) };
     }
     const invite = await directInvitesStore.create({
       player,

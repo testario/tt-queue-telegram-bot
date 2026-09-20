@@ -117,6 +117,15 @@ export const registerRoutes = async (app, deps) => {
     }
   }
 
+  // Инициаторы приглашений, которые AddMatch погасил как побочный эффект
+  // создания ЧУЖОГО матча (см. AddMatch.discardStaleInvites) — их тоже
+  // тихо снимаем, если у их поиска был свой анонс в чате. AddMatch про эти
+  // анонсы не знает (они живут только в памяти этого процесса), поэтому
+  // чистит только состояние очереди — сообщение остаётся забота роутера.
+  const discardOrphanedSearchAnnouncements = (usernames) => {
+    for (const username of usernames || []) discardSearchAnnouncement(username)
+  }
+
   const removeSearchAnnouncement = async (player) => {
     const announcement = takeSearchAnnouncement(player)
     if (!announcement) {
@@ -551,10 +560,35 @@ export const registerRoutes = async (app, deps) => {
 
   // DELETE /api/search — отменить поиск
   app.delete('/api/search', { preHandler: [auth] }, async (req) => {
+    // Инициатор прямого приглашения тоже числится в общем поиске на бэкенде
+    // (см. CreateDirectMatch) — но для него нет анонса "хочет поиграть" в
+    // чате, поэтому дефолтный текстовый фоллбек ниже ошибочно объявит об
+    // отмене приглашение, которое никто не принимал. Ловим этот случай явно
+    // и гасим приглашение так же тихо, как /api/direct/cancel, вместо того
+    // чтобы полагаться на клиент, который всегда покажет правильную кнопку.
+    const outgoingInvite = typeof invitesStore.getByPlayer === 'function'
+      ? await invitesStore.getByPlayer(req.player)
+      : null
+    let consumedInvite = null
+    if (outgoingInvite) {
+      try {
+        consumedInvite = await invitesStore.consume(outgoingInvite.inviteId, {
+          actor: req.player,
+          actorUserId: req.tgUser.id,
+          role: 'initiator',
+        })
+      } catch (err) {
+        log.error('Не удалось погасить прямое приглашение при отмене поиска', { message: err.message })
+      }
+    }
     const result = await context.cancelSearch.execute(req.player, req.identityToken)
     if (result.status === 'removed') {
-      // Игрок передумал: анонс "хочет поиграть" убираем без комментариев.
-      await removeSearchAnnouncement(req.player)
+      if (consumedInvite) {
+        discardSearchAnnouncement(req.player)
+      } else {
+        // Игрок передумал: анонс "хочет поиграть" убираем без комментариев.
+        await removeSearchAnnouncement(req.player)
+      }
     }
     sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: result.status === 'removed', status: result.status }
@@ -580,6 +614,7 @@ export const registerRoutes = async (app, deps) => {
       // Приглашение принято: анонс "хочет поиграть" заменяем на анонс матча.
       // Не ждём Telegram — ответ клиенту не должен зависеть от его задержек.
       resolveSearchAnnouncement(opponent, req.player, result.match)
+      discardOrphanedSearchAnnouncements(result.orphanedSearchers)
     }
     return { ok: result.ok, reason: result.reason }
   })
@@ -612,6 +647,14 @@ export const registerRoutes = async (app, deps) => {
     }
     if (typeof invitesStore.getByPlayer === 'function' && await invitesStore.getByPlayer(req.player)) {
       return { ok: false, reason: 'invite_exists' }
+    }
+    // У оппонента уже есть собственное исходящее приглашение — если он примет
+    // наше, его приглашение осиротеет (тот же сценарий, что и с общим поиском:
+    // его "поиск" на бэкенде держится именно тем приглашением). Список игроков
+    // в мини-аппе уже скрывает таких оппонентов, но ручной ввод username его
+    // обходит — проверяем и на бэкенде.
+    if (typeof invitesStore.getByPlayer === 'function' && await invitesStore.getByPlayer(normalizedOpponent)) {
+      return { ok: false, reason: 'opponent_invite_pending' }
     }
     let invite
     try {
@@ -721,6 +764,7 @@ export const registerRoutes = async (app, deps) => {
       // анонс тоже больше не актуален, раз матч уже создан через приглашение.
       // Telegram не ждём — это не должно задерживать ответ клиенту.
       resolveSearchAnnouncement(invite.player, req.player, result.match)
+      discardOrphanedSearchAnnouncements(result.orphanedSearchers)
       notifyChat(messages.directAccepted({ from: invite.player, to: req.player }))
     } else {
       sseManager.broadcast('state_update', await buildStatePayload())
@@ -756,8 +800,9 @@ export const registerRoutes = async (app, deps) => {
 
     await context.cancelSearch.execute(invite.player, invite.playerIdentity)
     sseManager.broadcast('state_update', await buildStatePayload())
+    // Приглашение никто не принял — это личное дело двоих, общий чат об этом
+    // знать не должен (в отличие от direct-accept, который уже создаёт матч).
     discardSearchAnnouncement(invite.player)
-    notifyChat(messages.directDeclined({ from: invite.player, to: req.player }))
     return { ok: true }
   })
 
@@ -783,8 +828,9 @@ export const registerRoutes = async (app, deps) => {
 
     await context.cancelSearch.execute(req.player, invite.playerIdentity)
     sseManager.broadcast('state_update', await buildStatePayload())
+    // Приглашение никто не принял — это личное дело двоих, общий чат об этом
+    // знать не должен (в отличие от direct-accept, который уже создаёт матч).
     discardSearchAnnouncement(req.player)
-    notifyChat(messages.directCancelled({ from: req.player, to: invite.opponent }))
     return { ok: true }
   })
 

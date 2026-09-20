@@ -194,6 +194,96 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  test('cancelling an unaccepted direct invite does not announce it in the group chat', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, generation: 1 } : null
+    )
+
+    const createResponse = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+    expect(createResponse.statusCode).toBe(200)
+    const [invite] = await harness.invitesStore.getAll()
+    harness.bot.sendMessage.mockClear()
+
+    const cancelResponse = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct/cancel',
+      headers: authHeader('alice', 10),
+      payload: { inviteId: invite.inviteId },
+    })
+
+    expect(cancelResponse.json()).toEqual({ ok: true })
+    // Отменённое (не принятое) приглашение — личное дело двоих, в общий чат ничего не летит.
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    await harness.app.close()
+  })
+
+  test('cancelling an outgoing invite through DELETE /api/search still stays silent', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, generation: 1 } : null
+    )
+
+    // Клиент может дёрнуть общий /api/search вместо /api/direct/cancel (старая
+    // сборка мини-аппа, прямой вызов API) — инициатор приглашения всё равно
+    // числится в общем поиске на бэкенде. Это не должно ни утечь в чат, ни
+    // оставить приглашение висеть.
+    const createResponse = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+    expect(createResponse.statusCode).toBe(200)
+    harness.bot.sendMessage.mockClear()
+
+    const deleteResponse = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    expect(deleteResponse.json()).toEqual({ ok: true, status: 'removed' })
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    await harness.app.close()
+  })
+
+  test('declining a direct invite does not announce it in the group chat', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, generation: 1 } : null
+    )
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+    const [invite] = await harness.invitesStore.getAll()
+    harness.bot.sendMessage.mockClear()
+
+    const declineResponse = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct/decline',
+      headers: authHeader('bob', 2),
+      payload: { inviteId: invite.inviteId },
+    })
+
+    expect(declineResponse.json()).toEqual({ ok: true })
+    // Отклонённое приглашение так и не стало матчем — в общий чат ничего не летит.
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    await harness.app.close()
+  })
+
   test('does not cancel another concurrent direct request search', async () => {
     const harness = await createHarness({ production: true })
     harness.playersRepository.findOne.mockImplementation(async (username) =>
@@ -817,6 +907,39 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  test('rejects a new invite when the opponent already has a pending invite of their own', async () => {
+    const harness = await createHarness({ production: true })
+    harness.state.ownership['@bob'] = { userId: 2, generation: 1, status: 'active' }
+    harness.state.ownership['@dave'] = { userId: 4, generation: 1, status: 'active' }
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      ['@bob', '@dave'].includes(username) ? { username, userId: username === '@bob' ? 2 : 4, generation: 1 } : null
+    )
+
+    // bob уже пригласил dave — у bob есть своё исходящее приглашение.
+    const bobInvite = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('bob', 2),
+      payload: { opponent: '@dave' },
+    })
+    expect(bobInvite.json()).toEqual({ ok: true })
+    harness.context.directMatch.execute.mockClear()
+
+    // alice пытается позвать bob напрямую — если разрешить, приглашение bob→dave осиротеет
+    // (тот же сценарий, что и с общим поиском в SearchPanel/PlayersView).
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+
+    expect(response.json()).toEqual({ ok: false, reason: 'opponent_invite_pending' })
+    expect(harness.context.directMatch.execute).not.toHaveBeenCalled()
+    expect(await harness.invitesStore.getAll()).toHaveLength(1)
+    await harness.app.close()
+  })
+
   test('does not create or overwrite an invite on a repeated request', async () => {
     const harness = await createHarness({ production: true })
     const first = await harness.app.inject({
@@ -1063,6 +1186,82 @@ describe('webapp REST routes', () => {
     })
 
     expect(harness.bot.deleteMessage).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('accepting a direct invite silently clears the announcement of a third player orphaned by AddMatch', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.sendMessage.mockResolvedValue({ message_id: 999, chat: { id: 'queue-chat' } })
+
+    // charlie тем временем независимо ищет соперника через мини-апп — это тот
+    // самый анонс, который AddMatch не видит и не может закрыть сам: он лишь
+    // сообщает роутеру, кого выкинуло из поиска как побочный эффект чужого
+    // матча (см. AddMatch.discardStaleInvites), закрывать анонс — забота роутера.
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('charlie', 30),
+    })
+
+    const invite = await harness.invitesStore.create({
+      player: '@alice',
+      opponent: '@bob',
+      createdAt: Date.now(),
+    })
+    const match = { player1: '@alice', player2: '@bob' }
+    harness.context.addMatch.execute.mockResolvedValue({ ok: true, match, orphanedSearchers: ['@charlie'] })
+
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct/accept',
+      headers: authHeader('bob', 2),
+      payload: { inviteId: invite.inviteId },
+    })
+
+    // Анонс charlie тихо удаляется — без нового текстового сообщения в чат
+    // ("Игрок передумал" ему тут совсем ни при чём). notifyChat всегда зовёт
+    // sendMessage с ровно тремя аргументами (третий — undefined без
+    // reply_markup), поэтому matcher должен бить по этой же форме — иначе
+    // expect.anything() молча пропускает undefined и проверка ничего не ловит.
+    expect(harness.bot.deleteMessage).toHaveBeenCalledWith('queue-chat', 999)
+    expect(harness.bot.sendMessage).not.toHaveBeenCalledWith('queue-chat', 'search cancelled', undefined)
+    await harness.app.close()
+  })
+
+  test('cancelling a direct invite clears a concurrent general-search announcement for the initiator', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.sendMessage.mockResolvedValue({ message_id: 555, chat: { id: 'queue-chat' } })
+
+    // alice независимо ищет соперника через мини-апп — анонс должен быть тихо
+    // закрыт при отмене её прямого приглашения, а не остаться висеть в чате.
+    await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    const invite = await harness.invitesStore.create({
+      player: '@alice',
+      opponent: '@bob',
+      playerIdentity: { username: '@alice', userId: 10, generation: 1 },
+      opponentIdentity: { username: '@bob', userId: 2, generation: 1 },
+      createdAt: Date.now(),
+    })
+    harness.bot.sendMessage.mockClear()
+    harness.bot.deleteMessage.mockClear()
+
+    const cancelResponse = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct/cancel',
+      headers: authHeader('alice', 10),
+      payload: { inviteId: invite.inviteId },
+    })
+
+    expect(cancelResponse.json()).toEqual({ ok: true })
+    // Анонс "хочет поиграть" тихо удаляется вместе с приглашением, без нового
+    // текстового сообщения в чат.
+    expect(harness.bot.deleteMessage).toHaveBeenCalledWith('queue-chat', 555)
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
     await harness.app.close()
   })
 })

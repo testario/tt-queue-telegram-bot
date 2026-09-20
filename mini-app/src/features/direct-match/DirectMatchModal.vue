@@ -23,11 +23,14 @@ const error = ref(null)
 
 onMounted(() => load())
 
-// Исключаем себя и тех, кто уже в очереди/поиске/играл
+// Исключаем себя, тех, кто уже в очереди/играл, и участников любого висящего
+// прямого приглашения — второе приглашение поверх первого осиротит его
+// (тот же сценарий, что и с общим поиском в SearchPanel).
 const unavailable = computed(() => new Set([
   currentPlayer,
   ...queueState.queue.flatMap((m) => [m.player1, m.player2]),
   ...queueState.played,
+  ...queueState.pendingInvites.flatMap((invite) => [invite.player, invite.opponent]),
 ]))
 
 // Фильтрация по строке поиска
@@ -58,11 +61,13 @@ const resolvedOpponent = computed(() => {
   return raw.startsWith('@') ? raw : `@${raw}`
 })
 
+// POST /api/direct возвращает reason от CreateDirectMatch/router.js — сюда не
+// долетают reason-ы AddMatch (already_in_queue/same_player/...), этот запрос
+// матч напрямую не создаёт.
 const reasonToText = (reason) => ({
-  already_played: 'Этот игрок уже играл сегодня',
-  already_in_queue: 'Этот игрок уже в очереди',
-  same_player: 'Нельзя пригласить себя',
-  player1_not_searching: 'Игрок не в поиске',
+  opponent_played: 'Этот игрок уже играл сегодня',
+  opponent_invite_pending: 'У этого игрока уже есть своё приглашение — дождитесь ответа на него',
+  invite_exists: 'У вас уже есть отправленное приглашение — сначала отмените его',
 }[reason] ?? 'Не удалось отправить приглашение')
 
 const submit = async () => {

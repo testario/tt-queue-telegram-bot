@@ -398,6 +398,10 @@ paths:
 
     delete:
       summary: Отменить поиск соперника
+      description: |
+        Если у игрока есть висящее исходящее прямое приглашение (он значится в
+        общем поиске только из-за него), оно тоже будет тихо отозвано — без
+        анонса в общий чат, как и /api/direct/cancel.
       operationId: cancelSearch
       tags: [Queue]
       security:
@@ -538,7 +542,7 @@ paths:
   /api/direct/accept:
     post:
       summary: Принять прямое приглашение
-      description: Авторизованный игрок принимает приглашение от `player`. Отправляет уведомление в Telegram чат.
+      description: Авторизованный игрок принимает приглашение по `inviteId`. Отправляет уведомление в Telegram чат.
       operationId: directAccept
       tags: [Direct]
       security:
@@ -549,12 +553,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [player]
+              required: [inviteId]
               properties:
-                player:
+                inviteId:
                   type: string
-                  description: Username пригласившего игрока (с `@`).
-                  example: "@ivan"
+                  description: Идентификатор приглашения.
       responses:
         "200":
           description: Результат принятия.
@@ -578,7 +581,7 @@ paths:
   /api/direct/decline:
     post:
       summary: Отклонить прямое приглашение
-      description: Авторизованный игрок отклоняет приглашение от `player`. Отправляет уведомление в Telegram чат.
+      description: Авторизованный игрок отклоняет приглашение по `inviteId`. Приглашение не было принято, поэтому в общий чат ничего не отправляется.
       operationId: directDecline
       tags: [Direct]
       security:
@@ -589,12 +592,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [player]
+              required: [inviteId]
               properties:
-                player:
+                inviteId:
                   type: string
-                  description: Username пригласившего игрока (с `@`).
-                  example: "@ivan"
+                  description: Идентификатор приглашения.
       responses:
         "200":
           description: Приглашение отклонено.
@@ -610,7 +612,7 @@ paths:
   /api/direct/cancel:
     post:
       summary: Отменить своё прямое приглашение
-      description: Авторизованный игрок отзывает своё приглашение для `opponent`. Отправляет уведомление в Telegram чат.
+      description: Авторизованный игрок отзывает своё приглашение по `inviteId`. Приглашение не было принято, поэтому в общий чат ничего не отправляется.
       operationId: directCancel
       tags: [Direct]
       security:
@@ -621,12 +623,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [opponent]
+              required: [inviteId]
               properties:
-                opponent:
+                inviteId:
                   type: string
-                  description: Username приглашённого игрока (с `@`).
-                  example: "@petr"
+                  description: Идентификатор приглашения.
       responses:
         "200":
           description: Приглашение отменено.

@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals'
-import { createWebApp } from '#interfaces/webapp/index.js'
+import { createWebApp, buildBackendContext } from '#interfaces/webapp/index.js'
 
 describe('all-in-one webapp composition', () => {
   const previousNodeEnv = process.env.NODE_ENV
@@ -70,5 +70,28 @@ describe('all-in-one webapp composition', () => {
     } finally {
       await appResult.app.close()
     }
+  })
+
+  // invitesStore не связан с AddMatch напрямую — это внутренняя проводка,
+  // и если её потерять при рефакторинге, приглашения снова начнут сиротеть
+  // (см. AddMatch.discardStaleInvites), а ни один тест этого не
+  // заметит, пока backend-only режим не соберёт контекст сам.
+  test('backend-only context wires invitesStore into AddMatch', () => {
+    const invitesStore = { getAll: jest.fn(), deleteByParticipant: jest.fn() }
+    const queueRepository = { getVersioned: jest.fn(), saveIfRevision: jest.fn() }
+    const bot = { sendMessage: jest.fn().mockResolvedValue(undefined) }
+
+    const context = buildBackendContext({
+      queueRepository,
+      queueChatId: 'queue',
+      messages: {},
+      ui: {},
+      bot,
+      log: { error: jest.fn(), warn: jest.fn(), info: jest.fn() },
+      playersRepository: {},
+      invitesStore,
+    })
+
+    expect(context.addMatch.invitesStore).toBe(invitesStore)
   })
 })

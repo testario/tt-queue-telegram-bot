@@ -4,6 +4,7 @@ import { templates } from "#application/messages/templates.js";
 import { Match } from "#domain";
 import { QueueService } from "#domain/services/QueueService.js";
 import { InMemoryQueueRepository } from "#infrastructure/repositories/InMemoryQueueRepository.js";
+import { InMemoryInvitesStore } from "#infrastructure/invites/InMemoryInvitesStore.js";
 import {
   DEFAULT_GAME_TIME,
   TIME_READY,
@@ -69,6 +70,71 @@ describe("AddMatch use case", () => {
     expect(orchestrator.scheduleLifecycle).toHaveBeenCalledWith(
       expect.objectContaining({ player1: "@p1", player2: "@p2", status: Match.statuses.playing })
     );
+  });
+
+  test("гасит приглашения обоих игроков (в любой роли) при создании матча", async () => {
+    const { repository, queueService, orchestrator, notifier, clock } = baseDeps();
+    const invitesStore = { deleteByParticipant: jest.fn().mockResolvedValue(0) };
+    const useCase = new AddMatch({
+      chatId: 42,
+      repository,
+      queueService,
+      orchestrator,
+      notifier,
+      messages: templates,
+      clock,
+      invitesStore,
+    });
+
+    const result = await useCase.execute("@p1", "@p2", { participantIdentities: matchIdentities });
+
+    expect(result.ok).toBe(true);
+    // Матч мог возникнуть, пока один из игроков был стороной ещё не решённого
+    // приглашения — сам позвал кого-то третьего, или сам принял чужое, пока
+    // звал третьего — иначе оно осиротеет (третий игрок либо инициатор при
+    // принятии упрутся в already_in_queue/тишину).
+    expect(invitesStore.deleteByParticipant).toHaveBeenCalledWith({ userIds: [1, 2] });
+  });
+
+  test("не трогает хранилище приглашений, если матч не создался", async () => {
+    const { repository, queueService, orchestrator, notifier, clock } = baseDeps();
+    queueService.scheduleMatch.mockReturnValue({ ok: false, reason: "same_player", state: {} });
+    const invitesStore = { deleteByParticipant: jest.fn() };
+    const useCase = new AddMatch({
+      chatId: 42,
+      repository,
+      queueService,
+      orchestrator,
+      notifier,
+      messages: templates,
+      clock,
+      invitesStore,
+    });
+
+    const result = await useCase.execute("@p1", "@p2", { participantIdentities: matchIdentities });
+
+    expect(result.ok).toBe(false);
+    expect(invitesStore.deleteByParticipant).not.toHaveBeenCalled();
+  });
+
+  test("не падает и всё равно возвращает созданный матч, если хранилище приглашений недоступно", async () => {
+    const { repository, queueService, orchestrator, notifier, clock } = baseDeps();
+    const invitesStore = { deleteByParticipant: jest.fn().mockRejectedValue(new Error("storage down")) };
+    const useCase = new AddMatch({
+      chatId: 42,
+      repository,
+      queueService,
+      orchestrator,
+      notifier,
+      messages: templates,
+      clock,
+      invitesStore,
+      logger: { info: jest.fn(), warn: jest.fn(), debug: jest.fn(), error: jest.fn() },
+    });
+
+    const result = await useCase.execute("@p1", "@p2", { participantIdentities: matchIdentities });
+
+    expect(result.ok).toBe(true);
   });
 
   test("не планирует жизненный цикл и переводит матч в waiting при паузе", async () => {
@@ -173,6 +239,62 @@ describe("AddMatch use case", () => {
     expect(result.ok).toBe(true);
     expect(notifier.messages.length).toBe(1);
     expect(orchestrator.scheduled).not.toBeNull();
+  });
+
+  test("гасит чужое приглашение и снимает его зависшего инициатора с поиска, даже если игрок матча в нём — получатель, а не инициатор", async () => {
+    // @third пригласил @p2 напрямую — @p2 в этом приглашении получатель, а не
+    // инициатор. deleteByPlayer (ключ по инициатору) такое приглашение не
+    // найдёт; матч всё равно делает его неактуальным, значит гасить надо
+    // и эту роль тоже. А сам @third остаётся в общем поиске только из-за
+    // этого приглашения (так же, как CreateDirectMatch регистрирует
+    // инициатора) — без него это уже призрачный поиск, который надо снять
+    // молча, а не оставлять его там до ручной отмены с ложным анонсом в чат.
+    const invitesStore = new InMemoryInvitesStore();
+    const addMatchWithInvites = new AddMatch({
+      chatId: 1,
+      repository,
+      queueService,
+      orchestrator,
+      notifier,
+      messages: templates,
+      clock,
+      invitesStore,
+    });
+    repository.state.ownership = {
+      "@p1": { userId: 1, generation: 1, status: "active" },
+      "@p2": { userId: 2, generation: 1, status: "active" },
+      "@third": { userId: 3, generation: 1, status: "active" },
+    };
+    const thirdIdentity = identity("@third", 3);
+    let state = queueService.registerSearch(
+      repository.state,
+      "@third",
+      undefined,
+      { identityToken: thirdIdentity }
+    ).state;
+    state = queueService.registerSearch(
+      state,
+      "@p1",
+      undefined,
+      { identityToken: matchIdentities["@p1"] }
+    ).state;
+    repository.state = state;
+    await invitesStore.create({
+      player: "@third",
+      opponent: "@p2",
+      playerIdentity: thirdIdentity,
+      opponentIdentity: identity("@p2", 2),
+      createdAt: Date.now(),
+    });
+
+    const result = await addMatchWithInvites.execute("@p1", "@p2", { participantIdentities: matchIdentities });
+
+    expect(result.ok).toBe(true);
+    expect(await invitesStore.getAll()).toEqual([]);
+    expect(repository.state.searching).not.toContain("@third");
+    // Роутер узнаёт, чей анонс "хочет поиграть" тоже нужно тихо убрать из
+    // чата, только по этому полю — без него дыра из round 7 вернётся молча.
+    expect(result.orphanedSearchers).toEqual(["@third"]);
   });
 
   test("atomically removes a stale search when its stored userId differs", async () => {

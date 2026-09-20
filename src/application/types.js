@@ -25,6 +25,19 @@
  */
 
 /**
+ * @typedef {Object} InvitesStore
+ * @property {(input: object, opponent?: string, createdAt?: number) => Promise<object|null>} create
+ * @property {(player: string) => Promise<object|null>} getByPlayer
+ * @property {(inviteId: string) => Promise<object|null>} getById
+ * @property {() => Promise<object[]>} getAll
+ * @property {(inviteId: string, options: { actor: string, actorUserId?: string|number, role: "initiator"|"opponent" }) => Promise<object|null>} consume
+ * @property {(player: string) => Promise<object|null>} deleteByPlayer
+ * @property {(inviteId: string) => Promise<boolean>} deleteById
+ * @property {(options: { userIds?: Array<string|number>, identities?: object[] }) => Promise<number>} deleteByParticipant
+ * @property {() => Promise<void>} clear
+ */
+
+/**
  * @typedef {Object} Notifier
  * @property {(chatId: string|number, text: string, meta?: Record<string, unknown>) => void} notify
  */
@@ -101,6 +114,7 @@
  * @property {() => string} searchCancelled
  * @property {() => string} directOpponentRequired
  * @property {(opponent: string) => string} directOpponentPlayed
+ * @property {(opponent: string) => string} directOpponentInvitePending
  * @property {() => string} usernameRequired
  * @property {(payload: { from: string, to: string }) => string} directInvite
  * @property {(payload: { from: string, to: string }) => string} directAccepted

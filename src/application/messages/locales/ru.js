@@ -16,6 +16,7 @@ const createRuMessages = ({ formatDate }) => ({
   searchCancelled: () => "Игрок передумал",
   directOpponentRequired: () => "Укажи ник оппонента, например /play @opponent",
   directOpponentPlayed: (opponent) => `${opponent} уже играл в этой половине дня`,
+  directOpponentInvitePending: (opponent) => `${opponent} уже кого-то пригласил — дождись его ответа`,
   usernameRequired: () =>
     "Не удалось определить твой Telegram username. Установи его в настройках и повтори команду.",
   directInvite: ({ from, to }) =>

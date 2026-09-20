@@ -15,7 +15,18 @@ const api = useApi()
 const loading = ref(false)
 const showDirectModal = ref(false)
 
-const isSearching = computed(() => player && state.searching.includes(player))
+// Исходящее прямое приглашение — кнопка "Отменить приглашение" для его автора.
+const myOutgoingInvite = computed(() =>
+  state.pendingInvites.find((inv) => inv.player === player) ?? null
+)
+
+// Прямое приглашение переводит инициатора в общий поиск на бэкенде (чтобы
+// работали identity-проверки), но в UI это не должно выглядеть как обычный
+// поиск — иначе кнопка "Отменить поиск" отменит не то и покажет не тот текст,
+// хотя настоящее приглашение (и его настоящая кнопка отмены) — уже отдельно.
+const isSearching = computed(() =>
+  player && state.searching.includes(player) && !myOutgoingInvite.value
+)
 const isInQueue = computed(() =>
   player && state.queue.some((m) => m.player1 === player || m.player2 === player)
 )
@@ -24,18 +35,26 @@ const isInCurrentMatch = computed(() => {
   return m && (m.player1 === player || m.player2 === player)
 })
 const isPlayed = computed(() => player && state.played.includes(player))
-const isIdle = computed(
-  () => !isSearching.value && !isInQueue.value && !isPlayed.value && !!player
+// Тот же случай: пока приглашение не отменено/принято, инициатор не свободен —
+// иначе "Сыграть с ним" на другого игрока создаст параллельный матч, а
+// зависшее приглашение потом не даст его принять (addMatch упадёт как
+// already_in_queue, и invite при этом уже будет потерян).
+const isBusy = computed(() =>
+  isSearching.value || isInQueue.value || isPlayed.value || Boolean(myOutgoingInvite.value)
+)
+const isIdle = computed(() => !isBusy.value && !!player)
+
+// Игроки, у которых уже есть висящее исходящее приглашение, не считаются
+// свободными соперниками — вызов такого игрока создал бы второй, конкурирующий
+// матч поверх его ещё не принятого приглашения.
+const invitedPlayers = computed(() =>
+  new Set(state.pendingInvites.map((inv) => inv.player))
 )
 
-// Список ищущих без себя (чтобы показать кнопку "Сыграть с ним")
+// Список ищущих без себя и без тех, кто уже кого-то пригласил напрямую
+// (чтобы показать кнопку "Сыграть с ним" только для реально свободных).
 const othersSearching = computed(() =>
-  state.searching.filter((p) => p !== player)
-)
-
-// Исходящее приглашение — кнопка "Отменить" для его автора
-const myOutgoingInvite = computed(() =>
-  state.pendingInvites?.find((inv) => inv.player === player) ?? null
+  state.searching.filter((p) => p !== player && !invitedPlayers.value.has(p))
 )
 
 const registerSearch = async () => {
@@ -156,28 +175,25 @@ const cancelInvite = async () => {
         </AppButton>
       </template>
 
+      <!-- Есть исходящее прямое приглашение (ещё не принято/отклонено) -->
+      <template v-else-if="myOutgoingInvite">
+        <p class="search-panel__hint">
+          Вы пригласили {{ myOutgoingInvite.opponent }}
+        </p>
+        <AppButton variant="ghost" :loading="loading" @click="cancelInvite">
+          Отменить приглашение
+        </AppButton>
+      </template>
+
       <!-- Свободен — показываем кнопки поиска и прямого приглашения -->
       <template v-else-if="isIdle">
-        <!-- Есть исходящее приглашение -->
-        <template v-if="myOutgoingInvite">
-          <p class="search-panel__hint">
-            Вы пригласили {{ myOutgoingInvite.opponent }}
-          </p>
-          <AppButton variant="ghost" :loading="loading" @click="cancelInvite">
-            Отменить приглашение
-          </AppButton>
-        </template>
-
-        <!-- Нет исходящего приглашения -->
-        <template v-else>
-          <AppButton class="search-panel__cta" variant="primary" :loading="loading" @click="registerSearch">
-            <AppIcon name="play" />
-            Ищу соперника
-          </AppButton>
-          <AppButton variant="ghost" @click="showDirectModal = true">
-            Пригласить конкретного игрока
-          </AppButton>
-        </template>
+        <AppButton class="search-panel__cta" variant="primary" :loading="loading" @click="registerSearch">
+          <AppIcon name="play" />
+          Ищу соперника
+        </AppButton>
+        <AppButton variant="ghost" @click="showDirectModal = true">
+          Пригласить конкретного игрока
+        </AppButton>
       </template>
 
     </div>

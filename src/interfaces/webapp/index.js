@@ -31,7 +31,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * Вместо MatchOrchestrator использует null-объект: lifecycle-таймеры ставит bot-процесс,
  * а backend отправляет Telegram-анонс созданного матча.
  */
-export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui, bot, eventBus, log, playersRepository }) => {
+export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui, bot, eventBus, log, playersRepository, invitesStore }) => {
   const queueService = new QueueService({
     readyMs: TIME_READY,
     gameMs: DEFAULT_GAME_TIME,
@@ -72,6 +72,7 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
     notifier,
     messages,
     clock,
+    invitesStore,
   })
   const cancelMatch = new CancelMatch({
     chatId: queueChatId,
@@ -330,6 +331,7 @@ export const createWebApp = async ({
       eventBus,
       log,
       playersRepository,
+      invitesStore,
     })
     resolvedGetContext = (_chatId) => backendContext
 

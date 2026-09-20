@@ -16,6 +16,7 @@ const createEsMessages = ({ formatDate }) => ({
   searchCancelled: () => "El jugador cambió de opinión",
   directOpponentRequired: () => "Indica el usuario del oponente, por ejemplo /play @opponent",
   directOpponentPlayed: (opponent) => `${opponent} ya jugó en esta mitad del día`,
+  directOpponentInvitePending: (opponent) => `${opponent} ya invitó a otra persona — espera su respuesta`,
   usernameRequired: () =>
     "No pudimos detectar tu usuario de Telegram. Configúralo en tu perfil y vuelve a intentarlo.",
   directInvite: ({ from, to }) => `${from} invita a ${to} a jugar. ¿Aceptar partida?`,

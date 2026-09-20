@@ -16,6 +16,7 @@ const { player: currentPlayer } = useTelegram()
 const search = ref('')
 const activeFilter = ref('all')
 const invitingUsername = ref(null)
+const inviteErrorText = ref('')
 
 onMounted(() => load())
 
@@ -31,10 +32,34 @@ const currentPlayerPlayed = computed(() =>
   Boolean(currentPlayer) && queueState.played.includes(currentPlayer)
 )
 
+// Участники любого висящего прямого приглашения (и тот, кто позвал, и тот,
+// кого позвали) — им сейчас не до нового приглашения: у позвавшего это
+// приглашение держит его "поиск" на бэкенде, и второе приглашение поверх
+// первого его осиротит (тот же сценарий, что и с общим поиском в SearchPanel).
+const invitedPlayers = computed(() =>
+  new Set(queueState.pendingInvites.flatMap((invite) => [invite.player, invite.opponent]))
+)
+
+// Только инициаторы — отдельно от invitedPlayers, потому что isSearching у
+// инициатора истинен именно из-за его приглашения (см. CreateDirectMatch), а
+// у простого получателя приглашения он может быть истинен и сам по себе
+// (обычный поиск + кто-то параллельно его пригласил) — эти два случая нельзя
+// путать в статусе.
+const invitedInitiators = computed(() =>
+  new Set(queueState.pendingInvites.map((invite) => invite.player))
+)
+
+// Я сам уже кого-то позвал — второе приглашение поверх первого осиротит его
+// (то же самое, что и isBusy в SearchPanel).
+const currentPlayerHasOutgoingInvite = computed(() =>
+  Boolean(currentPlayer) && queueState.pendingInvites.some((inv) => inv.player === currentPlayer)
+)
+
 const unavailablePlayers = computed(() => new Set([
   currentPlayer,
   ...queuedPlayers.value,
   ...queueState.played,
+  ...invitedPlayers.value,
 ]))
 
 const playersWithStatus = computed(() =>
@@ -42,17 +67,22 @@ const playersWithStatus = computed(() =>
     const isSearching = queueState.searching.includes(player.username)
     const isQueued = queuedPlayers.value.includes(player.username)
     const isPlayed = queueState.played.includes(player.username)
+    const isInvited = invitedPlayers.value.has(player.username)
+    const isInviteInitiator = invitedInitiators.value.has(player.username)
 
     return {
       ...player,
       isSearching,
       isQueued,
       isPlayed,
+      isInvited,
+      isInviteInitiator,
       canInvite: Boolean(currentPlayer)
         && !player.banned
         && !unavailablePlayers.value.has(player.username)
         && !currentPlayerInQueue.value
-        && !currentPlayerPlayed.value,
+        && !currentPlayerPlayed.value
+        && !currentPlayerHasOutgoingInvite.value,
     }
   })
 )
@@ -74,18 +104,39 @@ const filteredPlayers = computed(() => {
 const statusText = (player) => {
   if (player.banned) return 'доступ закрыт'
   if (player.username === currentPlayer) return 'это вы'
+  // У инициатора приглашения isSearching истинен только из-за самого
+  // приглашения (см. CreateDirectMatch) — без этой ветки он читался бы как
+  // обычный "ищет пару", хотя пригласить его в этот момент уже нельзя. Берём
+  // именно isInviteInitiator (не isInvited): обычный искатель, которого
+  // параллельно кто-то пригласил, — это другой случай, ветка isSearching
+  // ниже для него по-прежнему верна.
+  if (player.isSearching && player.isInviteInitiator) return 'кого-то позвал — ждём ответа'
   if (player.isSearching) return 'ищет пару'
   if (player.isQueued) return 'в очереди'
   if (player.isPlayed) return 'играл сегодня'
+  if (player.isInvited) return 'получил приглашение — ждём ответа'
   return 'доступен для приглашения'
 }
 
+// POST /api/direct отвечает 200 и { ok: false, reason } даже при отказе
+// (например reason: 'opponent_invite_pending', если оппонента позвал кто-то
+// ещё, пока список обновлялся) — такие отказы не бросают исключение, их
+// нужно разбирать отдельно, иначе кнопка просто гаснет без объяснения.
+const inviteReasonToText = (reason) => ({
+  opponent_invite_pending: 'У этого игрока уже есть своё приглашение — дождитесь ответа на него',
+  invite_exists: 'У вас уже есть отправленное приглашение — сначала отмените его',
+  opponent_played: 'Этот игрок уже играл сегодня',
+}[reason] ?? 'Не удалось отправить приглашение')
+
 const invite = async (username) => {
   invitingUsername.value = username
+  inviteErrorText.value = ''
   try {
-    await api.post('/direct', { opponent: username })
+    const result = await api.post('/direct', { opponent: username })
+    if (!result.ok) inviteErrorText.value = inviteReasonToText(result.reason)
   } catch (error) {
     console.error('Не удалось отправить приглашение', error)
+    inviteErrorText.value = 'Ошибка соединения'
   } finally {
     invitingUsername.value = null
   }
@@ -133,6 +184,11 @@ const invite = async (username) => {
     <div v-else-if="currentPlayerPlayed" class="players-view__played-banner">
       Вы уже играли в этой части дня — приглашения недоступны
     </div>
+    <div v-else-if="currentPlayerHasOutgoingInvite" class="players-view__played-banner">
+      Вы уже кого-то позвали — дождитесь ответа, прежде чем звать другого
+    </div>
+
+    <p v-if="inviteErrorText" class="players-view__error-banner">{{ inviteErrorText }}</p>
 
     <p v-if="playersState.loading" class="players-view__hint">Загрузка...</p>
 
@@ -235,6 +291,16 @@ const invite = async (username) => {
     border-radius: 18px;
     background: color-mix(in srgb, var(--color-warning), transparent 84%);
     color: var(--color-warning);
+    font-size: 14px;
+    font-weight: 800;
+    text-align: center;
+  }
+
+  &__error-banner {
+    padding: 12px 14px;
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--color-danger), transparent 84%);
+    color: var(--color-danger);
     font-size: 14px;
     font-weight: 800;
     text-align: center;

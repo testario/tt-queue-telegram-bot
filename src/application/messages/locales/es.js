@@ -93,6 +93,8 @@ const createEsMessages = ({ formatDate }) => ({
   emergeAlreadyActive: () => "La pausa de emergencia ya está activa. Usa /continue para reanudar.",
   emergeNoMatch: () => "No hay un partido activo para la pausa.",
   emergeNotActive: () => "La pausa de emergencia ya no está activa.",
+  playerBanned: () =>
+    "Un administrador bloqueó tu acceso a la cola. Si es un error, contacta al administrador del chat.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "partido de prueba" : "partidos de prueba");

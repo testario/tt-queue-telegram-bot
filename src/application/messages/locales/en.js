@@ -92,6 +92,8 @@ const createEnMessages = ({ formatDate }) => ({
   emergeAlreadyActive: () => "Emergency pause is already active. Use /continue to resume.",
   emergeNoMatch: () => "There is no active match to pause.",
   emergeNotActive: () => "Emergency pause is no longer active.",
+  playerBanned: () =>
+    "An administrator has blocked your access to the queue. If this is a mistake, contact the chat administrator.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "test match" : "test matches");

@@ -3,6 +3,7 @@ import Fastify from 'fastify'
 import { jest } from '@jest/globals'
 import { registerRoutes } from '#interfaces/webapp/router.js'
 import { InMemoryInvitesStore } from '#infrastructure/invites/InMemoryInvitesStore.js'
+import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlayersRepository.js'
 import { QueueState } from '#domain/entities/QueueState.js'
 import { createTestIdentityHelper } from '#application/usecases/createTestIdentityHelper.js'
 
@@ -24,6 +25,7 @@ const createHarness = async ({
   production = false,
   claimPlayerIdentity = undefined,
   applyPauseMode = jest.fn(),
+  playersRepository: playersRepositoryOverride = undefined,
 } = {}) => {
   process.env.NODE_ENV = production ? 'production' : 'test'
 
@@ -58,7 +60,7 @@ const createHarness = async ({
     }
     return rawInviteCreate(input, opponent, createdAt)
   }
-  const playersRepository = {
+  const playersRepository = playersRepositoryOverride || {
     upsert: jest.fn().mockResolvedValue(undefined),
     isBanned: jest.fn().mockResolvedValue(false),
     findOne: jest.fn().mockResolvedValue(null),
@@ -93,6 +95,7 @@ const createHarness = async ({
     editMessageText: jest.fn().mockResolvedValue(undefined),
     editMessageReplyMarkup: jest.fn().mockResolvedValue(undefined),
     getChatMember: jest.fn(),
+    getChatAdministrators: jest.fn().mockResolvedValue([]),
   }
   const sseManager = { addClient: jest.fn(), broadcast: jest.fn() }
   const log = { error: jest.fn(), warn: jest.fn(), info: jest.fn() }
@@ -106,6 +109,7 @@ const createHarness = async ({
     searchAccepted: jest.fn().mockReturnValue('search accepted'),
     searchCancelled: jest.fn().mockReturnValue('search cancelled'),
     matchAlreadyInQueue: jest.fn().mockReturnValue('invite exists'),
+    playerBanned: jest.fn().mockReturnValue('you are banned'),
   }
   const app = Fastify()
 
@@ -495,6 +499,7 @@ describe('webapp REST routes', () => {
         lastName: 'Player',
         lastSeenAt: '2026-01-01T00:00:00.000Z',
         banned: true,
+        isAdmin: false,
       }],
     })
     expect(JSON.stringify(response.json())).not.toMatch(
@@ -514,8 +519,8 @@ describe('webapp REST routes', () => {
 
     expect(response.json()).toEqual({
       players: [
-        { username: '@alice', banned: true },
-        { username: '@bob', banned: false },
+        { username: '@alice', banned: true, isAdmin: false },
+        { username: '@bob', banned: false, isAdmin: false },
       ],
     })
     await harness.app.close()
@@ -758,6 +763,210 @@ describe('webapp REST routes', () => {
       headers: authHeader('admin', 10),
     })
     expect(retried.statusCode).toBe(200)
+    await harness.app.close()
+  })
+
+  test('refuses to ban a player who is an administrator of the queue chat', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.bot.getChatAdministrators.mockResolvedValue([{ user: { id: 42 } }])
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: false } : null
+    )
+
+    const deleteResponse = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+    const patchResponse = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: true },
+    })
+
+    expect(deleteResponse.statusCode).toBe(403)
+    expect(deleteResponse.json()).toEqual({ error: 'cannot_ban_admin' })
+    expect(patchResponse.statusCode).toBe(403)
+    expect(patchResponse.json()).toEqual({ error: 'cannot_ban_admin' })
+    expect(harness.playersRepository.setBanned).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('still allows unbanning a player who is a chat administrator', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.bot.getChatAdministrators.mockResolvedValue([{ user: { id: 42 } }])
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: true } : null
+    )
+    harness.playersRepository.setBanned.mockResolvedValue(true)
+
+    const response = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: false },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.playersRepository.setBanned).toHaveBeenCalledWith('@alice', false)
+    await harness.app.close()
+  })
+
+  test('marks chat administrators in the player list', async () => {
+    const harness = await createHarness()
+    harness.bot.getChatAdministrators.mockResolvedValue([{ user: { id: 10 } }])
+    harness.playersRepository.findAll.mockResolvedValue([
+      { username: '@alice', userId: 10 },
+      { username: '@bob', userId: 11 },
+    ])
+
+    const response = await harness.app.inject({ method: 'GET', url: '/api/players' })
+
+    expect(response.json()).toEqual({
+      players: [
+        { username: '@alice', banned: false, isAdmin: true },
+        { username: '@bob', banned: false, isAdmin: false },
+      ],
+    })
+    await harness.app.close()
+  })
+
+  test('sends a Telegram DM to the banned player but not when unbanning', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: false } : null
+    )
+    harness.playersRepository.setBanned.mockResolvedValue(true)
+
+    const banResponse = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+
+    expect(banResponse.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith(42, 'you are banned')
+
+    harness.bot.sendMessage.mockClear()
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: true } : null
+    )
+
+    const unbanResponse = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: false },
+    })
+
+    expect(unbanResponse.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('does not send a duplicate DM when banning an already banned player', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: true } : null
+    )
+    harness.playersRepository.setBanned.mockResolvedValue(true)
+
+    const response = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: true },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('PATCH ban sends a DM even against a repository that mutates records in place', async () => {
+    // InMemoryPlayersRepository.findOne returns a live reference that
+    // setBanned mutates in place — reading `player.banned` after
+    // setPlayerBanned would always see the new value. A jest.fn() mock
+    // can't reproduce that aliasing, so this regression needs the real
+    // repository (this is also the fallback used in production whenever
+    // PLAYERS_MONGODB_URI is not set).
+    const playersRepository = new InMemoryPlayersRepository()
+    await playersRepository.upsert({ username: '@alice', userId: 42, firstName: 'Alice' })
+    const harness = await createHarness({ production: true, playersRepository })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+
+    const response = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: true },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith(42, 'you are banned')
+    await harness.app.close()
+  })
+
+  test('caches the chat administrators list across GET /api/players calls', async () => {
+    const harness = await createHarness()
+    harness.bot.getChatAdministrators.mockResolvedValue([{ user: { id: 10 } }])
+    harness.playersRepository.findAll.mockResolvedValue([{ username: '@alice', userId: 10 }])
+
+    await harness.app.inject({ method: 'GET', url: '/api/players' })
+    await harness.app.inject({ method: 'GET', url: '/api/players' })
+
+    expect(harness.bot.getChatAdministrators).toHaveBeenCalledTimes(1)
+    await harness.app.close()
+  })
+
+  test('fails open and allows the ban when the chat administrators lookup is unavailable', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.bot.getChatAdministrators.mockRejectedValue(new Error('Telegram API unavailable'))
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: false } : null
+    )
+    harness.playersRepository.setBanned.mockResolvedValue(true)
+
+    const response = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+
+    // Осознанный fail-open: недоступность Telegram не должна блокировать
+    // легитимные действия админа, даже когда цель на самом деле тоже админ.
+    expect(response.statusCode).toBe(200)
+    await harness.app.close()
+  })
+
+  test('ban path re-checks admin status instead of reading the cached GET /api/players list', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: false } : null
+    )
+    // Прогреваем кеш заведомо устаревшим "не админ" ответом.
+    harness.bot.getChatAdministrators.mockResolvedValueOnce([])
+    await harness.app.inject({ method: 'GET', url: '/api/players' })
+
+    // К моменту бана @alice уже назначена админом чата, но кеш из GET ещё
+    // не истёк (TTL 30с). Без fresh: true в ban-хендлере тест ловил бы 200
+    // вместо 403.
+    harness.bot.getChatAdministrators.mockResolvedValue([{ user: { id: 42 } }])
+    const response = await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({ error: 'cannot_ban_admin' })
     await harness.app.close()
   })
 

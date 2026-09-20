@@ -55,6 +55,10 @@ const currentPlayerHasOutgoingInvite = computed(() =>
   Boolean(currentPlayer) && queueState.pendingInvites.some((inv) => inv.player === currentPlayer)
 )
 
+// usePlayers() уже отфильтровывает currentPlayer при загрузке — этот пункт
+// здесь дублирующий, но бесплатный: если фильтрация в usePlayers когда-нибудь
+// уедет или список начнёт наполняться в обход неё, canInvite для собственной
+// записи не откроется молча.
 const unavailablePlayers = computed(() => new Set([
   currentPlayer,
   ...queuedPlayers.value,
@@ -103,7 +107,6 @@ const filteredPlayers = computed(() => {
 
 const statusText = (player) => {
   if (player.banned) return 'доступ закрыт'
-  if (player.username === currentPlayer) return 'это вы'
   // У инициатора приглашения isSearching истинен только из-за самого
   // приглашения (см. CreateDirectMatch) — без этой ветки он читался бы как
   // обычный "ищет пару", хотя пригласить его в этот момент уже нельзя. Берём

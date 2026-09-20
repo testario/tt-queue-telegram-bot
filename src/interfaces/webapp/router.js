@@ -323,6 +323,51 @@ export const registerRoutes = async (app, deps) => {
     }
   }
 
+  // Администраторы общего чата — их нельзя забанить через мини-апп (см.
+  // DELETE/PATCH /api/players) и они помечаются бейджем в управлении.
+  // Единый запрос списком вместо getChatMember на каждого игрока, да ещё и
+  // с коротким TTL-кешем: GET /api/players дергается без авторизации на
+  // каждый заход в мини-апп, и без кеша это была бы прямая дыра для того,
+  // чтобы выжигать лимит Telegram API на весь процесс бота.
+  // Кешируется именно промис (не результат) — иначе холодный кеш даёт N
+  // параллельных вызовов Telegram на N одновременных запросов. Неуспех тоже
+  // кешируется, но на пару секунд: иначе недоступность Telegram открывает
+  // ровно тот вектор нагрузки, от которого кеш должен защищать.
+  // Ошибка Telegram (или недоступность метода в тестовом моке) намеренно
+  // fail-open — пустой Set: бейдж админа просто не покажется, а бан не
+  // заблокируется. Это осознанный компромисс — недоступность Telegram не
+  // должна блокировать легитимные действия админа.
+  const CHAT_ADMIN_IDS_TTL_MS = 30_000
+  const CHAT_ADMIN_IDS_FAILURE_TTL_MS = 5_000
+  let chatAdminIdsCache = null // { promise: Promise<Set<string>>, expiresAt: number }
+  const getChatAdminIds = ({ fresh = false } = {}) => {
+    if (!fresh && chatAdminIdsCache && chatAdminIdsCache.expiresAt > Date.now()) {
+      return chatAdminIdsCache.promise
+    }
+    if (typeof bot.getChatAdministrators !== 'function') return Promise.resolve(new Set())
+    const promise = bot.getChatAdministrators(queueChatId)
+      .then((admins) => new Set(
+        (admins || [])
+          .filter((member) => member?.user?.id != null)
+          .map((member) => String(member.user.id))
+      ))
+      .catch((err) => {
+        log.warn('Не удалось получить список администраторов чата', { message: err.message })
+        // Затираем кеш, только если он всё ещё наш: за время запроса его мог
+        // успеть перезаписать более свежий вызов (например, fresh: true из
+        // ban-хендлера) — не хотим откатывать уже успешный результат.
+        if (chatAdminIdsCache?.promise === promise) {
+          chatAdminIdsCache = {
+            promise: Promise.resolve(new Set()),
+            expiresAt: Date.now() + CHAT_ADMIN_IDS_FAILURE_TTL_MS,
+          }
+        }
+        return new Set()
+      })
+    chatAdminIdsCache = { promise, expiresAt: Date.now() + CHAT_ADMIN_IDS_TTL_MS }
+    return promise
+  }
+
   // ==================== ROUTES ====================
 
   // GET /api/state — текущее состояние очереди (без авторизации)
@@ -358,7 +403,15 @@ export const registerRoutes = async (app, deps) => {
   // GET /api/players — список известных игроков
   app.get('/api/players', async () => {
     const players = await playersRepository.findAll()
-    return { players: players.filter((player) => !isSyntheticFormerUsername(player?.username)).map(toPublicPlayer) }
+    const adminIds = await getChatAdminIds()
+    return {
+      players: players
+        .filter((player) => !isSyntheticFormerUsername(player?.username))
+        .map((player) => ({
+          ...toPublicPlayer(player),
+          isAdmin: player?.userId != null && adminIds.has(String(player.userId)),
+        })),
+    }
   })
 
   // GET /api/players/:username/avatar — редирект на аватар игрока
@@ -543,10 +596,25 @@ export const registerRoutes = async (app, deps) => {
   // DELETE /api/players/:username — заблокировать игрока (только admin)
   app.delete('/api/players/:username', { preHandler: [auth, requireAdmin] }, async (req, reply) => {
     const atUsername = `@${req.params.username}`
+    // Защита привязана к userId из записи игрока: если репозиторий не
+    // умеет findOne или у записи ещё нет userId (игрок ни разу не
+    // авторизовался через мини-апп), проверить админство невозможно и она
+    // молча пропускается — это тот же repository-capability допущение, на
+    // котором и так держится весь файл (см. getPlayerAliasesForIdentity).
     const player = typeof playersRepository.findOne === 'function'
       ? await playersRepository.findOne(atUsername)
       : null
+    // fresh: true — бан редкая операция под requireAdmin, а не публичный
+    // листинг, здесь важнее не забанить админа по устаревшему кешу, чем
+    // сэкономить один вызов Telegram.
+    if (player?.userId != null && (await getChatAdminIds({ fresh: true })).has(String(player.userId))) {
+      return reply.code(403).send({ error: 'cannot_ban_admin' })
+    }
     const aliases = await getPlayerAliasesForIdentity(player, atUsername)
+    // Снимаем до setPlayerBanned: InMemoryPlayersRepository.findOne отдаёт
+    // живую ссылку на запись, которую setBanned мутирует на месте — если
+    // прочитать player.banned после этого вызова, там уже будет true.
+    const wasAlreadyBanned = player?.banned === true
     const banned = await setPlayerBanned(atUsername, true)
     if (!banned) return reply.code(404).send({ error: 'player_not_found' })
     if (!await setQueueBanFence(player?.userId, true)) {
@@ -557,6 +625,9 @@ export const registerRoutes = async (app, deps) => {
       usernames: aliases,
     })
     if (!cleanupSucceeded) return reply.code(503).send({ error: 'ban_cleanup_unavailable' })
+    // Не ждём Telegram, как и остальные уведомления в этом файле — ответ
+    // админу не должен зависеть от round-trip до чата с игроком.
+    if (!wasAlreadyBanned) notifyPlayerDirect(player?.userId, messages.playerBanned())
     return { ok: true }
   })
 
@@ -570,6 +641,14 @@ export const registerRoutes = async (app, deps) => {
     const player = typeof playersRepository.findOne === 'function'
       ? await playersRepository.findOne(atUsername)
       : null
+    // fresh: true — см. пояснение в DELETE-хендлере выше.
+    if (banned && player?.userId != null
+      && (await getChatAdminIds({ fresh: true })).has(String(player.userId))) {
+      return reply.code(403).send({ error: 'cannot_ban_admin' })
+    }
+    // Снимаем до setPlayerBanned — см. пояснение в DELETE-хендлере выше
+    // (InMemoryPlayersRepository мутирует запись на месте).
+    const wasAlreadyBanned = player?.banned === true
     const updated = await setPlayerBanned(atUsername, banned)
     if (!updated) return reply.code(404).send({ error: 'player_not_found' })
     if (!await setQueueBanFence(player?.userId, banned)) {
@@ -582,6 +661,9 @@ export const registerRoutes = async (app, deps) => {
         usernames: aliases,
       })
       if (!cleanupSucceeded) return reply.code(503).send({ error: 'ban_cleanup_unavailable' })
+      // Не ждём Telegram, как и остальные уведомления в этом файле; и не
+      // дублируем сообщение, если игрок уже был забанен раньше.
+      if (!wasAlreadyBanned) notifyPlayerDirect(player?.userId, messages.playerBanned())
     }
     return { ok: true, banned }
   })

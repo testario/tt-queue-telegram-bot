@@ -93,6 +93,8 @@ const createFrMessages = ({ formatDate }) => ({
   emergeAlreadyActive: () => "La pause d'urgence est déjà active. Utilisez /continue pour reprendre.",
   emergeNoMatch: () => "Aucun match actif à mettre en pause.",
   emergeNotActive: () => "La pause d'urgence n'est plus active.",
+  playerBanned: () =>
+    "Un administrateur a bloqué ton accès à la file. Si c'est une erreur, contacte l'administrateur du chat.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "match de test" : "matchs de test");

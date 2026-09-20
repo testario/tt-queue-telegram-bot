@@ -115,6 +115,9 @@ components:
         banned:
           type: boolean
           description: Игрок заблокирован и не может участвовать в новых действиях.
+        isAdmin:
+          type: boolean
+          description: Игрок является администратором общего чата — его нельзя забанить.
 
     OkResponse:
       type: object
@@ -165,6 +168,8 @@ components:
               value: { error: admin_check_failed }
             player_banned:
               value: { error: player_banned }
+            cannot_ban_admin:
+              value: { error: cannot_ban_admin }
 
     NotFound:
       description: Ресурс не найден.
@@ -284,7 +289,7 @@ paths:
   /api/players/{username}:
     delete:
       summary: Заблокировать игрока
-      description: "Устанавливает `banned: true` без удаления записи. Требует прав администратора. Уже созданные матчи не изменяются, но новые матчи с этим игроком запрещены."
+      description: "Устанавливает `banned: true` без удаления записи. Требует прав администратора. Уже созданные матчи не изменяются, но новые матчи с этим игроком запрещены. Игрока уведомляют личным сообщением от бота. Администраторов общего чата забанить нельзя (403 cannot_ban_admin)."
       operationId: banPlayer
       tags: [Players]
       security:
@@ -314,7 +319,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     patch:
       summary: Изменить статус бана игрока
-      description: "Устанавливает `banned: false` для возврата игрока или меняет статус бана. Требует прав администратора."
+      description: "Устанавливает `banned: false` для возврата игрока или меняет статус бана. Требует прав администратора. При установке `banned: true` игрока уведомляют личным сообщением от бота. Администраторов общего чата забанить нельзя (403 cannot_ban_admin)."
       operationId: setPlayerBanStatus
       security:
         - TelegramInitData: []

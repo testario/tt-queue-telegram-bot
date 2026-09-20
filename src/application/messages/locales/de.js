@@ -94,6 +94,8 @@ const createDeMessages = ({ formatDate }) => ({
   emergeAlreadyActive: () => "Notfallpause ist bereits aktiv. Mit /continue fortsetzen.",
   emergeNoMatch: () => "Kein aktives Match für eine Pause.",
   emergeNotActive: () => "Notfallpause ist nicht mehr aktiv.",
+  playerBanned: () =>
+    "Ein Administrator hat deinen Zugriff auf die Warteschlange gesperrt. Falls das ein Fehler ist, wende dich an den Chat-Administrator.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "Testmatch" : "Testmatches");

@@ -34,10 +34,16 @@ export function usePlayers() {
     state.loading = true
     try {
       const data = await get('/players')
-      state.players = data.players ?? []
-      if (state.players.some((player) => player.username === currentPlayer && player.banned)) {
+      const players = data.players ?? []
+      if (players.some((player) => player.username === currentPlayer && player.banned)) {
         markPlayerBanned()
       }
+      // Себя в списке не показываем — ни вызвать на игру, ни забанить себя
+      // всё равно нельзя, эти записи только мешают. Без username (Telegram
+      // это допускает) сравнивать не с чем — оставляем список как есть.
+      state.players = currentPlayer
+        ? players.filter((player) => player.username !== currentPlayer)
+        : players
       state.loaded = true
     } finally {
       state.loading = false

@@ -71,8 +71,10 @@ const banPlayer = async (username) => {
           <span class="player-manager__name">{{ p.displayName }}</span>
           <span class="player-manager__username">{{ p.username }}</span>
         </div>
+        <span v-if="p.isAdmin" class="player-manager__admin">Админ</span>
         <span v-if="p.banned" class="player-manager__ban">Бан</span>
         <button
+          v-if="!p.isAdmin || p.banned"
           :class="['player-manager__action', { 'player-manager__action--restore': p.banned }]"
           :disabled="deletingUsername === p.username"
           :aria-label="p.banned ? `Вернуть ${p.username}` : `Заблокировать ${p.username}`"
@@ -170,6 +172,16 @@ const banPlayer = async (username) => {
     border-radius: 8px;
     background: color-mix(in srgb, var(--color-danger), transparent 84%);
     color: var(--color-danger);
+    font-size: 11px;
+    font-weight: 900;
+  }
+
+  &__admin {
+    flex: 0 0 auto;
+    padding: 5px 8px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-success), transparent 84%);
+    color: var(--color-success);
     font-size: 11px;
     font-weight: 900;
   }

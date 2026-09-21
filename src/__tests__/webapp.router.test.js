@@ -69,6 +69,12 @@ const createHarness = async ({
     getAliases: jest.fn().mockResolvedValue([]),
     setBanned: jest.fn().mockResolvedValue(true),
     findAll: jest.fn().mockResolvedValue([]),
+    // Default true (permissive), mirroring isBanned's default false: most
+    // existing tests exercise gameplay endpoints that are now also gated by
+    // requireVerified and don't care about verification itself — only the
+    // dedicated registration/requireVerified tests override this to false.
+    isVerified: jest.fn().mockResolvedValue(true),
+    setVerified: jest.fn().mockResolvedValue(true),
   }
   const activateIdentity = createTestIdentityHelper({ queueRepository: repository, playersRepository })
   const testIdentityActivation = jest.fn((input) => activateIdentity(input))
@@ -114,6 +120,8 @@ const createHarness = async ({
     matchAlreadyInQueue: jest.fn().mockReturnValue('invite exists'),
     playerBanned: jest.fn().mockReturnValue('you are banned'),
     playerUnbanned: jest.fn().mockReturnValue('you are unbanned'),
+    registrationRequest: jest.fn().mockReturnValue('please confirm'),
+    registrationConfirmed: jest.fn().mockReturnValue('confirmed'),
   }
   // forceCloseConnections: the GET /api/events tests below open a real
   // socket via app.listen() and never end the response (it's a long-lived
@@ -134,7 +142,7 @@ const createHarness = async ({
     resumeQueueAfterPause: jest.fn(),
     handleEmerge: jest.fn(),
     messages,
-    ui: { inline: { directAccept: 'accept', directDecline: 'decline', directCancel: 'cancel' } },
+    ui: { inline: { directAccept: 'accept', directDecline: 'decline', directCancel: 'cancel', confirmRegistration: 'confirm' } },
     log,
     playersRepository,
     invitesStore,
@@ -535,6 +543,7 @@ describe('webapp REST routes', () => {
         lastName: 'Player',
         lastSeenAt: '2026-01-01T00:00:00.000Z',
         banned: true,
+        verified: false,
         isAdmin: false,
       }],
     })
@@ -555,8 +564,8 @@ describe('webapp REST routes', () => {
 
     expect(response.json()).toEqual({
       players: [
-        { username: '@alice', banned: true, isAdmin: false },
-        { username: '@bob', banned: false, isAdmin: false },
+        { username: '@alice', banned: true, verified: false, isAdmin: false },
+        { username: '@bob', banned: false, verified: false, isAdmin: false },
       ],
     })
     await harness.app.close()
@@ -690,6 +699,231 @@ describe('webapp REST routes', () => {
     expect(response.json()).toEqual({ error: 'stale_init_data' })
     expect(harness.context.registerSearch.execute).not.toHaveBeenCalled()
     await harness.app.close()
+  })
+
+  test('returns not_verified before executing an authenticated use case', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.isVerified.mockResolvedValue(false)
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: authHeader('alice', 10),
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({ error: 'not_verified' })
+    expect(harness.playersRepository.isVerified).toHaveBeenCalledWith(10)
+    expect(harness.context.registerSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('grants the METRICS_CHAT_ID owner unconditional access without checking the repository', async () => {
+    const previousOwnerId = process.env.METRICS_CHAT_ID
+    process.env.METRICS_CHAT_ID = '10'
+    try {
+      const harness = await createHarness({ production: true })
+      harness.playersRepository.isVerified.mockResolvedValue(false)
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: '/api/search',
+        headers: authHeader('owner', 10),
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(harness.playersRepository.isVerified).not.toHaveBeenCalled()
+      await harness.app.close()
+    } finally {
+      if (previousOwnerId === undefined) delete process.env.METRICS_CHAT_ID
+      else process.env.METRICS_CHAT_ID = previousOwnerId
+    }
+  })
+
+  describe('POST /api/register', () => {
+    test('sends a chat confirmation request when the player is not yet verified', async () => {
+      const harness = await createHarness({ production: true })
+      harness.playersRepository.isVerified.mockResolvedValue(false)
+      harness.bot.getChatMember.mockResolvedValue({ status: 'member' })
+      harness.bot.sendMessage.mockResolvedValue({ message_id: 1 })
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ ok: true, alreadyVerified: false, cooldown: false })
+      expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+      expect(harness.bot.sendMessage.mock.calls[0][0]).toBe('queue-chat')
+      const keyboard = harness.bot.sendMessage.mock.calls[0][2].reply_markup
+      expect(keyboard.inline_keyboard[0][0].callback_data).toBe('confirm_player:10')
+      await harness.app.close()
+    })
+
+    test('does not send a message when the player is already verified', async () => {
+      const harness = await createHarness({ production: true })
+      harness.playersRepository.isVerified.mockResolvedValue(true)
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ ok: true, alreadyVerified: true })
+      expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+      // Already verified short-circuits before the membership check too.
+      expect(harness.bot.getChatMember).not.toHaveBeenCalled()
+      await harness.app.close()
+    })
+
+    test('the METRICS_CHAT_ID owner never gets a chat message either', async () => {
+      const previousOwnerId = process.env.METRICS_CHAT_ID
+      process.env.METRICS_CHAT_ID = '10'
+      try {
+        const harness = await createHarness({ production: true })
+        harness.playersRepository.isVerified.mockResolvedValue(false)
+
+        const response = await harness.app.inject({
+          method: 'POST',
+          url: '/api/register',
+          headers: authHeader('owner', 10),
+        })
+
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({ ok: true, alreadyVerified: true })
+        expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+        await harness.app.close()
+      } finally {
+        if (previousOwnerId === undefined) delete process.env.METRICS_CHAT_ID
+        else process.env.METRICS_CHAT_ID = previousOwnerId
+      }
+    })
+
+    test('rejects a request from someone who is not a member of the chat', async () => {
+      // Otherwise anyone who has ever opened a DM with the bot — no chat
+      // membership required for that — could spam the group with requests.
+      const harness = await createHarness({ production: true })
+      harness.playersRepository.isVerified.mockResolvedValue(false)
+      harness.bot.getChatMember.mockResolvedValue({ status: 'left' })
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+
+      expect(response.statusCode).toBe(403)
+      expect(response.json()).toEqual({ error: 'not_chat_member' })
+      expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+      await harness.app.close()
+    })
+
+    test('returns 503 when the membership check itself fails', async () => {
+      const harness = await createHarness({ production: true })
+      harness.playersRepository.isVerified.mockResolvedValue(false)
+      harness.bot.getChatMember.mockRejectedValue(new Error('Telegram is down'))
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+
+      expect(response.statusCode).toBe(503)
+      expect(response.json()).toEqual({ error: 'chat_membership_check_failed' })
+      expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+      await harness.app.close()
+    })
+
+    test('does not resend within the cooldown window', async () => {
+      const harness = await createHarness({ production: true })
+      harness.playersRepository.isVerified.mockResolvedValue(false)
+      harness.bot.getChatMember.mockResolvedValue({ status: 'member' })
+      harness.bot.sendMessage.mockResolvedValue({ message_id: 1 })
+
+      const first = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+      expect(first.json()).toEqual({ ok: true, alreadyVerified: false, cooldown: false })
+
+      const second = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+
+      expect(second.statusCode).toBe(200)
+      expect(second.json()).toEqual({ ok: true, alreadyVerified: false, cooldown: true })
+      expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+      await harness.app.close()
+    })
+
+    test('returns 503 when the chat notification fails', async () => {
+      const harness = await createHarness({ production: true })
+      harness.playersRepository.isVerified.mockResolvedValue(false)
+      harness.bot.getChatMember.mockResolvedValue({ status: 'member' })
+      harness.bot.sendMessage.mockRejectedValue(new Error('Telegram is down'))
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+
+      expect(response.statusCode).toBe(503)
+      expect(response.json()).toEqual({ error: 'registration_request_failed' })
+      await harness.app.close()
+    })
+
+    test('auto-verifies in dev mode instead of requiring a real chat button press', async () => {
+      // production: false => isDev true => notifyChat is a no-op that never
+      // calls bot.sendMessage, and there is no real message for anyone to
+      // press a button on — so /api/register itself verifies the player,
+      // mirroring how /api/dev/seed does the same for mock-mode fixtures.
+      const harness = await createHarness({ production: false })
+      harness.playersRepository.isVerified.mockResolvedValue(false)
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ ok: true, alreadyVerified: true })
+      expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+      expect(harness.playersRepository.setVerified).toHaveBeenCalledWith('@alice', true)
+      // Dev auto-verify must short-circuit before any real Telegram call —
+      // a dev tunnel may have no working bot/chat to check membership on.
+      expect(harness.bot.getChatMember).not.toHaveBeenCalled()
+      await harness.app.close()
+    })
+
+    test('checks the cooldown before the chat membership, to avoid wasting a Telegram API call on a repeat tap', async () => {
+      const harness = await createHarness({ production: true })
+      harness.playersRepository.isVerified.mockResolvedValue(false)
+      harness.bot.getChatMember.mockResolvedValue({ status: 'member' })
+      harness.bot.sendMessage.mockResolvedValue({ message_id: 1 })
+
+      await harness.app.inject({ method: 'POST', url: '/api/register', headers: authHeader('alice', 10) })
+      harness.bot.getChatMember.mockClear()
+
+      const second = await harness.app.inject({
+        method: 'POST',
+        url: '/api/register',
+        headers: authHeader('alice', 10),
+      })
+
+      expect(second.json()).toEqual({ ok: true, alreadyVerified: false, cooldown: true })
+      expect(harness.bot.getChatMember).not.toHaveBeenCalled()
+      await harness.app.close()
+    })
   })
 
   test('POST /api/admin/pause reports a conflict instead of a false "ok" when applyPauseMode cannot commit', async () => {
@@ -883,11 +1117,39 @@ describe('webapp REST routes', () => {
 
     expect(response.json()).toEqual({
       players: [
-        { username: '@alice', banned: false, isAdmin: true },
-        { username: '@bob', banned: false, isAdmin: false },
+        { username: '@alice', banned: false, verified: false, isAdmin: true },
+        { username: '@bob', banned: false, verified: false, isAdmin: false },
       ],
     })
     await harness.app.close()
+  })
+
+  test('GET /api/players reports the METRICS_CHAT_ID owner as verified even without a stored record', async () => {
+    // This is the mechanism that actually keeps the login screen off the
+    // owner's screen — requireVerified (server-side gate) is defense in
+    // depth, but the mini-app decides what to render from this DTO.
+    const previousOwnerId = process.env.METRICS_CHAT_ID
+    process.env.METRICS_CHAT_ID = '10'
+    try {
+      const harness = await createHarness()
+      harness.playersRepository.findAll.mockResolvedValue([
+        { username: '@owner', userId: 10 }, // verified: false/missing in storage
+        { username: '@bob', userId: 11 },
+      ])
+
+      const response = await harness.app.inject({ method: 'GET', url: '/api/players' })
+
+      expect(response.json()).toEqual({
+        players: [
+          { username: '@owner', banned: false, verified: true, isAdmin: false },
+          { username: '@bob', banned: false, verified: false, isAdmin: false },
+        ],
+      })
+      await harness.app.close()
+    } finally {
+      if (previousOwnerId === undefined) delete process.env.METRICS_CHAT_ID
+      else process.env.METRICS_CHAT_ID = previousOwnerId
+    }
   })
 
   test('sends a Telegram DM to the banned player and another one when unbanning', async () => {
@@ -1019,6 +1281,39 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  test('GET /api/events pushes player_verified immediately for a player reconnecting after confirming elsewhere', async () => {
+    // Основной сценарий фичи: игрок уходит из мини-аппа в чат подтвердиться,
+    // возвращается — SSE-соединение успело порваться и переоткрыться, Redis
+    // pub/sub ничего не буферизовал, поэтому push мог не долететь. Эта
+    // проверка при (пере)подключении — единственная страховка от вечной
+    // блокировки логин-экраном в таком случае.
+    const harness = await createHarness({ production: true, sseManager: new SseManager() })
+    harness.playersRepository.isVerified.mockResolvedValue(true)
+
+    const chunk = await readSseChunks(
+      harness.app,
+      `/api/events?initData=${encodeURIComponent(initDataFor({ id: 77, username: 'alice', first_name: 'Alice' }))}`
+    )
+
+    expect(harness.playersRepository.isVerified).toHaveBeenCalledWith(77)
+    expect(chunk).toContain('event: player_verified')
+    await harness.app.close()
+  })
+
+  test('GET /api/events does not push player_verified for a player who has not confirmed yet', async () => {
+    const harness = await createHarness({ production: true, sseManager: new SseManager() })
+    harness.playersRepository.isVerified.mockResolvedValue(false)
+
+    const chunk = await readSseChunks(
+      harness.app,
+      `/api/events?initData=${encodeURIComponent(initDataFor({ id: 77, username: 'alice', first_name: 'Alice' }))}`
+    )
+
+    expect(chunk).toContain('event: state_update')
+    expect(chunk).not.toContain('event: player_verified')
+    await harness.app.close()
+  })
+
   test('GET /api/events ignores stale initData just like the REST auth() path', async () => {
     const harness = await createHarness({ production: true })
     harness.playersRepository.isBanned.mockResolvedValue(true)
@@ -1104,6 +1399,12 @@ describe('webapp REST routes', () => {
     // PLAYERS_MONGODB_URI is not set).
     const playersRepository = new InMemoryPlayersRepository()
     await playersRepository.upsert({ username: '@alice', userId: 42, firstName: 'Alice' })
+    // The acting admin also needs to be verified — requireVerified gates
+    // ban management too. auth() upserts @admin on the request itself, but
+    // that happens inside inject(), too late to pre-verify here — so claim
+    // it up front the same way auth() would.
+    await playersRepository.upsert({ username: '@admin', userId: 10 })
+    await playersRepository.setVerified('@admin', true)
     const harness = await createHarness({ production: true, playersRepository })
     harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
 
@@ -1127,6 +1428,8 @@ describe('webapp REST routes', () => {
     const playersRepository = new InMemoryPlayersRepository()
     await playersRepository.upsert({ username: '@alice', userId: 42, firstName: 'Alice' })
     await playersRepository.setBanned('@alice', true)
+    await playersRepository.upsert({ username: '@admin', userId: 10 })
+    await playersRepository.setVerified('@admin', true)
     const harness = await createHarness({ production: true, playersRepository })
     harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
 

@@ -92,6 +92,62 @@ describe('MongoPlayersRepository', () => {
     )
   })
 
+  it('includes verified in the findAll projection', async () => {
+    // Regression guard: findAll() uses an explicit field allow-list, so a
+    // field missing from it silently disappears from GET /api/players even
+    // after being written to Mongo — this caught exactly that bug once.
+    const repository = new MongoPlayersRepository({ uri: 'mongodb://unused', dbName: 'test' })
+    const toArray = jest.fn().mockResolvedValue([{ username: '@alice', verified: true }])
+    const sort = jest.fn(() => ({ toArray }))
+    repository.collection = { find: jest.fn(() => ({ sort })) }
+
+    await expect(repository.findAll()).resolves.toEqual([{ username: '@alice', verified: true }])
+    expect(repository.collection.find).toHaveBeenCalledWith(
+      expect.any(Object),
+      { projection: expect.objectContaining({ verified: 1 }) }
+    )
+  })
+
+  it('does not overwrite verification during upsert and changes it without deleting the document', async () => {
+    const updateOne = jest.fn()
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ matchedCount: 1 })
+      .mockResolvedValueOnce({ matchedCount: 1 })
+      .mockResolvedValueOnce({ matchedCount: 0 })
+    const repository = new MongoPlayersRepository({ uri: 'mongodb://unused', dbName: 'test' })
+    repository.collection = { updateOne, findOne: jest.fn().mockResolvedValue(null) }
+
+    await repository.upsert({ username: '@alice', userId: 1 })
+    expect(updateOne.mock.calls[0][1].$set).not.toHaveProperty('verified')
+
+    await expect(repository.setVerified('@alice', true)).resolves.toBe(true)
+    expect(updateOne.mock.calls[1]).toEqual([
+      { username: '@alice' },
+      { $set: { verified: true } },
+    ])
+    await expect(repository.setVerified('@alice', false)).resolves.toBe(true)
+    expect(updateOne.mock.calls[2]).toEqual([
+      { username: '@alice' },
+      { $set: { verified: false } },
+    ])
+    await expect(repository.setVerified('@missing', true)).resolves.toBe(false)
+  })
+
+  it('reports verified/unverified for a player looked up by userId or @username', async () => {
+    const repository = new MongoPlayersRepository({ uri: 'mongodb://unused', dbName: 'test' })
+    const findOne = jest.fn()
+      .mockResolvedValueOnce({ _id: 'x' })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ username: '@alice', verified: true })
+    repository.collection = { findOne }
+
+    await expect(repository.isVerified(42)).resolves.toBe(true)
+    await expect(repository.isVerified(43)).resolves.toBe(false)
+    await expect(repository.isVerified('@alice')).resolves.toBe(true)
+    await expect(repository.isVerified(null)).resolves.toBe(false)
+    expect(findOne).toHaveBeenNthCalledWith(1, { userId: 42, verified: true }, { projection: { _id: 1 } })
+  })
+
   it('creates a separate unbanned record when a new userId reuses a username', async () => {
     const repository = new MongoPlayersRepository({ uri: 'mongodb://unused', dbName: 'test' })
     const updateOne = jest.fn().mockResolvedValue({})

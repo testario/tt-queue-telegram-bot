@@ -69,6 +69,19 @@ export const buildDirectInviteInitiatorKeyboard = (invite, ui) => {
 }
 
 /**
+ * Клавиатура подтверждения регистрации в мини-аппе — отправляется в общий чат
+ * по запросу игрока (POST /api/register). Кнопку может нажать только тот, чей
+ * userId закодирован в callback_data (см. confirm_player-ветку в bot.js) —
+ * numeric id всегда укладывается в MAX_CALLBACK_DATA_BYTES без проверки длины.
+ * @param {string|number} userId
+ * @param {{ inline: { confirmRegistration: string } }} ui
+ * @returns {{ inline_keyboard: Array }}
+ */
+export const buildConfirmRegistrationKeyboard = (userId, ui) => ({
+  inline_keyboard: [[{ text: ui.inline.confirmRegistration, callback_data: `confirm_player:${userId}` }]],
+})
+
+/**
  * Клавиатура для fallback-уведомления в общем чате.
  * @param {{ inviteId: string }} invite
  * @param {{ inline: { directAccept: string, directDecline: string, directCancel: string } }} ui

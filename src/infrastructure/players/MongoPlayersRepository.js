@@ -235,6 +235,7 @@ export class MongoPlayersRepository {
             generation: 1,
              identityVersion: 1,
             banned: 1,
+            verified: 1,
           },
         }
       )
@@ -406,6 +407,24 @@ export class MongoPlayersRepository {
 
   async unbanOne(username) {
     return this.setBanned(username, false)
+  }
+
+  async isVerified(userId) {
+    if (typeof userId === 'string' && userId.startsWith('@')) {
+      const player = await this.findOne(userId)
+      return player?.verified === true
+    }
+    if (userId === undefined || userId === null) return false
+    return Boolean(await this.collection.findOne({ userId, verified: true }, { projection: { _id: 1 } }))
+  }
+
+  /** Устанавливает статус подтверждения регистрации, не удаляя запись игрока. */
+  async setVerified(username, verified) {
+    const result = await this.collection.updateOne(
+      { username },
+      { $set: { verified: verified === true } }
+    )
+    return result.matchedCount > 0
   }
 
   /** Безопасно закрывает MongoDB-клиент; повторный вызов ничего не делает. */

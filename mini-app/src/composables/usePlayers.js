@@ -1,7 +1,7 @@
 import { computed, reactive, readonly } from 'vue'
 import { useApi } from './useApi.js'
 import { useTelegram } from './useTelegram.js'
-import { markPlayerBanned } from './useApi.js'
+import { markPlayerBanned, markPlayerVerified } from './useApi.js'
 
 const state = reactive({
   players: [],
@@ -12,6 +12,16 @@ const state = reactive({
 const isMockMode =
   import.meta.env.DEV &&
   (import.meta.env.MODE === 'mock' || import.meta.env.VITE_USE_MOCKS === 'true')
+
+// Telegram username регистронезависим (см. тот же комментарий у computed
+// players ниже) — сравнение через ===, как в этом self-скане было раньше,
+// молча не находило себя при несовпадении регистра, и с этой фичей такой
+// промах означает не косметику, а бессрочную блокировку логин-экраном.
+const findSelf = (players, currentPlayer) => {
+  if (!currentPlayer) return null
+  const currentLower = currentPlayer.toLowerCase()
+  return players.find((player) => player.username?.toLowerCase() === currentLower) ?? null
+}
 
 const mockAvatarUrl = (username) => {
   const label = username.replace('@', '').slice(0, 1).toUpperCase()
@@ -34,10 +44,9 @@ export function usePlayers() {
     try {
       const data = await get('/players')
       const players = data.players ?? []
-      const currentPlayer = useTelegram().player
-      if (players.some((player) => player.username === currentPlayer && player.banned)) {
-        markPlayerBanned()
-      }
+      const self = findSelf(players, useTelegram().player)
+      if (self?.banned) markPlayerBanned()
+      if (self?.verified) markPlayerVerified()
       state.players = players
       state.loaded = true
     } finally {

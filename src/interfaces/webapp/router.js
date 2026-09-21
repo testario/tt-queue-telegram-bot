@@ -5,6 +5,7 @@ import {
   buildDirectInviteInitiatorKeyboard,
   buildDirectInviteRecipientKeyboard,
   buildMatchCancelKeyboard,
+  buildConfirmRegistrationKeyboard,
 } from '#interfaces/telegram/keyboards.js'
 import { QueueState } from '#domain'
 import { recoverTimers } from '#infrastructure/timers/recoverTimers.js'
@@ -70,6 +71,10 @@ export const registerRoutes = async (app, deps) => {
   // не разъехались по userId и не сломали ban-проверку в dev-режиме.
   const DEV_USER_ID = 123456
   const DEV_USERNAME = '@dev_user'
+  // Владелец METRICS_CHAT_ID (в личном чате с ботом chat_id совпадает с его
+  // userId) — доверенный владелец бота, у него безусловный доступ к мини-аппу
+  // независимо от прохождения подтверждения регистрации (см. isUserVerified).
+  const OWNER_USER_ID = process.env.METRICS_CHAT_ID || null
   const activateTestIdentity = typeof context.testIdentityActivation === 'function'
     ? context.testIdentityActivation
     : isDev && context.claimPlayerIdentity
@@ -225,6 +230,24 @@ export const registerRoutes = async (app, deps) => {
     return false
   }
 
+  const isUserVerified = async (user, username) => {
+    if (OWNER_USER_ID != null && user?.id != null && String(user.id) === String(OWNER_USER_ID)) {
+      return true
+    }
+    if (typeof playersRepository.isVerified === 'function' && user?.id != null) {
+      return playersRepository.isVerified(user.id)
+    }
+    if (typeof playersRepository.findByUserId === 'function' && user?.id != null) {
+      const player = await playersRepository.findByUserId(user.id)
+      return player?.verified === true
+    }
+    if (typeof playersRepository.findOne === 'function' && username) {
+      const player = await playersRepository.findOne(username)
+      return player?.verified === true
+    }
+    return false
+  }
+
   const isUsernameBanned = async (username) => {
     if (!username || typeof playersRepository.findOne !== 'function') return false
     const player = await playersRepository.findOne(username)
@@ -325,6 +348,25 @@ export const registerRoutes = async (app, deps) => {
       }
     } catch {
       return reply.code(403).send({ error: 'admin_check_failed' })
+    }
+  }
+
+  // Гейт доступа к геймплейным/админским действиям мини-аппа: игрок должен
+  // один раз подтвердить себя кнопкой в общем чате (см. POST /api/register и
+  // confirm_player-callback в bot.js). Не применяется к самому /api/register
+  // (иначе новый игрок никогда не смог бы запросить подтверждение) и к
+  // публичным/безобидным GET-эндпоинтам — см. комментарии у роутов.
+  const requireVerified = async (req, reply) => {
+    try {
+      if (!(await isUserVerified(req.tgUser, req.player))) {
+        return reply.code(403).send({ error: 'not_verified' })
+      }
+    } catch (err) {
+      log.error('Не удалось проверить подтверждение регистрации игрока', {
+        username: req.player,
+        message: err.message,
+      })
+      return reply.code(503).send({ error: 'player_status_unavailable' })
     }
   }
 
@@ -442,6 +484,20 @@ export const registerRoutes = async (app, deps) => {
       } catch (err) {
         log.warn('Не удалось проверить бан при подключении к SSE', { message: err.message })
       }
+      // Симметрично бану: подтверждение регистрации тоже могло произойти,
+      // пока это конкретное SSE-соединение было разорвано (типичный путь
+      // этой фичи — уйти из мини-аппа в чат и вернуться, а Redis pub/sub
+      // ничего не буферизует, так что push в момент разрыва теряется
+      // безвозвратно). Без этой проверки при реконнекте уже подтверждённый
+      // игрок навсегда застревал бы на логин-экране до полного перезапуска
+      // мини-аппа.
+      try {
+        if (await isUserVerified({ id: userId }, username)) {
+          sseManager.notifyUser(userId, 'player_verified', { verified: true })
+        }
+      } catch (err) {
+        log.warn('Не удалось проверить подтверждение регистрации при подключении к SSE', { message: err.message })
+      }
     }
   })
 
@@ -453,7 +509,7 @@ export const registerRoutes = async (app, deps) => {
       players: players
         .filter((player) => !isSyntheticFormerUsername(player?.username))
         .map((player) => ({
-          ...toPublicPlayer(player),
+          ...toPublicPlayer(player, { ownerUserId: OWNER_USER_ID }),
           isAdmin: player?.userId != null && adminIds.has(String(player.userId)),
         })),
     }
@@ -639,7 +695,7 @@ export const registerRoutes = async (app, deps) => {
   }
 
   // DELETE /api/players/:username — заблокировать игрока (только admin)
-  app.delete('/api/players/:username', { preHandler: [auth, requireAdmin] }, async (req, reply) => {
+  app.delete('/api/players/:username', { preHandler: [auth, requireVerified, requireAdmin] }, async (req, reply) => {
     const atUsername = `@${req.params.username}`
     // Защита привязана к userId из записи игрока: если репозиторий не
     // умеет findOne или у записи ещё нет userId (игрок ни разу не
@@ -682,7 +738,7 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // PATCH /api/players/:username — изменить статус бана (только admin)
-  app.patch('/api/players/:username', { preHandler: [auth, requireAdmin] }, async (req, reply) => {
+  app.patch('/api/players/:username', { preHandler: [auth, requireVerified, requireAdmin] }, async (req, reply) => {
     const { banned } = req.body || {}
     if (typeof banned !== 'boolean') {
       return reply.code(400).send({ error: 'banned_boolean_required' })
@@ -731,8 +787,68 @@ export const registerRoutes = async (app, deps) => {
     return { ok: true, banned }
   })
 
+  // Когда игрок в последний раз запрашивал подтверждение регистрации —
+  // антиспам-throttle для POST /api/register, аналогично searchAnnouncements
+  // выше: живёт только в памяти этого процесса, при рестарте просто сбрасывается.
+  const registrationRequestSentAt = new Map()
+  const REGISTRATION_COOLDOWN_MS = 30_000
+
+  // POST /api/register — запросить подтверждение доступа к мини-аппу: шлёт в
+  // общий чат сообщение с кнопкой, нажать которую может только сам игрок (см.
+  // confirm_player-callback в bot.js). Намеренно preHandler только [auth] —
+  // без requireVerified, иначе новый игрок никогда не смог бы запросить
+  // подтверждение в первый раз.
+  app.post('/api/register', { preHandler: [auth] }, async (req, reply) => {
+    if (await isUserVerified(req.tgUser, req.player)) {
+      return { ok: true, alreadyVerified: true }
+    }
+    if (isDev) {
+      // В dev-режиме нет реального сообщения с кнопкой — некому нажимать.
+      // confirm_player-callback (bot.js) для dev-туннеля недостижим, а
+      // mock-режим уже решает это через /api/dev/seed — здесь закрываем
+      // прямой dev-тоннель без mock, иначе он навсегда застревал бы на
+      // логин-экране. Проверяется раньше членства в чате и cooldown — оба
+      // требуют реального bot/чата, которых в dev может не быть вовсе.
+      // alreadyVerified: true — LoginScreen снимает экран сразу по этому же
+      // полю, которым уже обрабатывает потерянный SSE-пуш.
+      if (typeof playersRepository.setVerified === 'function') {
+        await playersRepository.setVerified(req.player, true)
+      }
+      return { ok: true, alreadyVerified: true }
+    }
+    // Дешёвая in-memory проверка раньше похода в Telegram API: не тратим
+    // getChatMember (общий rate limit бота) на повторные нажатия в пределах
+    // cooldown — они и так не приведут к отправке.
+    const key = String(req.tgUser.id)
+    const lastSentAt = registrationRequestSentAt.get(key)
+    if (lastSentAt != null && Date.now() - lastSentAt < REGISTRATION_COOLDOWN_MS) {
+      return { ok: true, alreadyVerified: false, cooldown: true }
+    }
+    // Без этой проверки любой, кто когда-либо открыл диалог с ботом (initData
+    // не требует членства в общем чате), мог бы дёргать этот эндпоинт и
+    // засыпать чат сообщениями с живой кнопкой — same getChatMember, что и в
+    // requireAdmin выше.
+    try {
+      const member = await bot.getChatMember(queueChatId, req.tgUser.id)
+      if (!member || ['left', 'kicked'].includes(member.status)) {
+        return reply.code(403).send({ error: 'not_chat_member' })
+      }
+    } catch (err) {
+      log.error('Не удалось проверить членство в чате для запроса регистрации', {
+        username: req.player,
+        message: err.message,
+      })
+      return reply.code(503).send({ error: 'chat_membership_check_failed' })
+    }
+    const keyboard = buildConfirmRegistrationKeyboard(req.tgUser.id, ui)
+    const sent = await notifyChat(messages.registrationRequest({ player: req.player }), keyboard)
+    if (!sent) return reply.code(503).send({ error: 'registration_request_failed' })
+    registrationRequestSentAt.set(key, Date.now())
+    return { ok: true, alreadyVerified: false, cooldown: false }
+  })
+
   // POST /api/search — встать в поиск
-  app.post('/api/search', { preHandler: [auth] }, async (req) => {
+  app.post('/api/search', { preHandler: [auth, requireVerified] }, async (req) => {
     const result = await context.registerSearch.execute(req.player, req.identityToken)
     sseManager.broadcast('state_update', await buildStatePayload())
     if (result.status === 'added') {
@@ -745,7 +861,7 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // DELETE /api/search — отменить поиск
-  app.delete('/api/search', { preHandler: [auth] }, async (req) => {
+  app.delete('/api/search', { preHandler: [auth, requireVerified] }, async (req) => {
     // Инициатор прямого приглашения тоже числится в общем поиске на бэкенде
     // (см. CreateDirectMatch) — но для него нет анонса "хочет поиграть" в
     // чате, поэтому дефолтный текстовый фоллбек ниже ошибочно объявит об
@@ -785,7 +901,7 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // POST /api/match — принять соперника (play_with)
-  app.post('/api/match', { preHandler: [auth] }, async (req, reply) => {
+  app.post('/api/match', { preHandler: [auth, requireVerified] }, async (req, reply) => {
     const { opponent } = req.body
     if (await isUsernameBanned(opponent)) {
       return reply.code(403).send({ error: 'player_banned' })
@@ -810,14 +926,14 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // DELETE /api/match — нет времени
-  app.delete('/api/match', { preHandler: [auth] }, async (req) => {
+  app.delete('/api/match', { preHandler: [auth, requireVerified] }, async (req) => {
     const result = await context.cancelMatch.execute(req.player, req.identityToken)
     if (result.ok) sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: result.ok, status: result.status }
   })
 
   // POST /api/direct — прямое приглашение
-  app.post('/api/direct', { preHandler: [auth] }, async (req, reply) => {
+  app.post('/api/direct', { preHandler: [auth, requireVerified] }, async (req, reply) => {
     const { opponent } = req.body
 
     const normalizedOpponent = context.directMatch.normalizeOpponent(opponent)
@@ -908,7 +1024,7 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // POST /api/direct/accept — принять прямое приглашение
-  app.post('/api/direct/accept', { preHandler: [auth] }, async (req, reply) => {
+  app.post('/api/direct/accept', { preHandler: [auth, requireVerified] }, async (req, reply) => {
     const { inviteId } = req.body || {}
     let invite
     try {
@@ -963,7 +1079,7 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // POST /api/direct/decline — отклонить прямое приглашение
-  app.post('/api/direct/decline', { preHandler: [auth] }, async (req, reply) => {
+  app.post('/api/direct/decline', { preHandler: [auth, requireVerified] }, async (req, reply) => {
     const { inviteId } = req.body || {}
     let invite
     try {
@@ -1002,7 +1118,7 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // POST /api/direct/cancel — отменить своё прямое приглашение
-  app.post('/api/direct/cancel', { preHandler: [auth] }, async (req, reply) => {
+  app.post('/api/direct/cancel', { preHandler: [auth, requireVerified] }, async (req, reply) => {
     const { inviteId } = req.body || {}
     let invite
     try {
@@ -1036,7 +1152,7 @@ export const registerRoutes = async (app, deps) => {
 
   // POST /api/admin/pause — включить режим паузы
   // applyPauseMode сам отправляет сообщение в Telegram через respondEmergeMessage
-  app.post('/api/admin/pause', { preHandler: [auth, requireAdmin] }, async (req) => {
+  app.post('/api/admin/pause', { preHandler: [auth, requireVerified, requireAdmin] }, async (req) => {
     if (isPauseModeEnabled(queueChatId)) {
       return { ok: false, reason: 'already_paused' }
     }
@@ -1055,7 +1171,7 @@ export const registerRoutes = async (app, deps) => {
   })
 
   // POST /api/admin/continue — снять режим паузы
-  app.post('/api/admin/continue', { preHandler: [auth, requireAdmin] }, async () => {
+  app.post('/api/admin/continue', { preHandler: [auth, requireVerified, requireAdmin] }, async () => {
     const emergeResult = await resumeEmergeAfterContinue({ chatId: queueChatId, context })
     const pauseEnabled = isPauseModeEnabled(queueChatId)
 
@@ -1103,7 +1219,7 @@ export const registerRoutes = async (app, deps) => {
 
   // POST /api/admin/emerge — экстренная пауза матча
   // handleEmerge сам отправляет сообщение в Telegram через respondEmergeMessage
-  app.post('/api/admin/emerge', { preHandler: [auth, requireAdmin] }, async (req) => {
+  app.post('/api/admin/emerge', { preHandler: [auth, requireVerified, requireAdmin] }, async (req) => {
     await handleEmerge({ chatId: queueChatId, context, userId: req.tgUser.id })
     sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: true }
@@ -1148,6 +1264,12 @@ export const registerRoutes = async (app, deps) => {
           username,
           userId: player.userId,
         })
+        // Dev/mock-сиды не должны застревать на логин-экране — verified
+        // выставляется отдельно от upsert() (см. isUserVerified/setVerified),
+        // сид-эндпоинт целиком под if (isDev) и никогда не работает в проде.
+        if (typeof playersRepository.setVerified === 'function') {
+          await playersRepository.setVerified(username, true)
+        }
       }
 
       const existingState = await context.repository.get()

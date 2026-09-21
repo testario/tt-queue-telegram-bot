@@ -1,5 +1,5 @@
 import { reactive, readonly } from 'vue'
-import { useApi, markPlayerBanned } from './useApi.js'
+import { useApi, markPlayerBanned, markPlayerVerified } from './useApi.js'
 import { useTelegram } from './useTelegram.js'
 
 const state = reactive({
@@ -73,6 +73,14 @@ const connectSse = () => {
     markPlayerBanned()
     eventSource?.close()
     eventSource = null
+  })
+
+  // Подтверждение регистрации из чата (см. confirm_player-callback в bot.js
+  // и релей в src/interfaces/webapp/index.js) — снимает логин-экран сразу,
+  // не дожидаясь следующего обычного запроса. В отличие от player_banned
+  // соединение не закрываем: игроку оно ещё понадобится для обычной работы.
+  eventSource.addEventListener('player_verified', () => {
+    markPlayerVerified()
   })
 
   eventSource.onerror = () => {

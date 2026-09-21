@@ -86,3 +86,45 @@ describe('InMemoryPlayersRepository bans', () => {
     ])
   })
 })
+
+describe('InMemoryPlayersRepository verification', () => {
+  test('preserves the verified flag when a player is upserted again', async () => {
+    const repository = new InMemoryPlayersRepository()
+    await repository.upsert({ username: '@alice', userId: 1 })
+
+    expect(await repository.setVerified('@alice', true)).toBe(true)
+    await repository.upsert({ username: '@alice', userId: 1, firstName: 'Alice' })
+
+    await expect(repository.findOne('@alice')).resolves.toMatchObject({
+      username: '@alice',
+      userId: 1,
+      verified: true,
+    })
+  })
+
+  test('defaults to unverified, verifies, and reports unknown players correctly', async () => {
+    const repository = new InMemoryPlayersRepository()
+    await repository.upsert({ username: '@alice', userId: 1 })
+
+    await expect(repository.isVerified(1)).resolves.toBe(false)
+    await expect(repository.isVerified('@alice')).resolves.toBe(false)
+    await expect(repository.setVerified('@alice', true)).resolves.toBe(true)
+    await expect(repository.isVerified(1)).resolves.toBe(true)
+    await expect(repository.isVerified('@alice')).resolves.toBe(true)
+    await expect(repository.setVerified('@missing', true)).resolves.toBe(false)
+  })
+
+  test('keeps verification when Telegram changes username for the same userId', async () => {
+    const repository = new InMemoryPlayersRepository()
+    await repository.upsert({ username: '@old', userId: 42 })
+    await repository.setVerified('@old', true)
+
+    await repository.upsert({ username: '@new', userId: 42, firstName: 'New' })
+
+    await expect(repository.findByUserId(42)).resolves.toMatchObject({
+      username: '@new',
+      verified: true,
+    })
+    await expect(repository.isVerified(42)).resolves.toBe(true)
+  })
+})

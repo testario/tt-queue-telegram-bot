@@ -11,6 +11,16 @@ export const markPlayerBanned = () => {
   banState.isBanned = true
 }
 
+const registrationState = reactive({ verified: false })
+
+export function useRegistrationStatus() {
+  return readonly(registrationState)
+}
+
+export const markPlayerVerified = () => {
+  registrationState.verified = true
+}
+
 export function useApi() {
   const { initData } = useTelegram()
 

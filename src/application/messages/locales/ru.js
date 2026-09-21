@@ -104,6 +104,9 @@ const createRuMessages = ({ formatDate }) => ({
     "Администратор заблокировал тебе доступ к очереди. Если это ошибка — обратись к администратору чата.",
   playerUnbanned: () =>
     "Администратор снял блокировку доступа к очереди. Теперь ты снова можешь пользоваться очередью.",
+  registrationRequest: ({ player }) =>
+    `${player} хочет получить доступ к мини-аппу очереди. Подтверди, что это ты — нажми кнопку ниже (сможешь только ты).`,
+  registrationConfirmed: () => "Подтверждено! Доступ к мини-аппу открыт.",
   metricsAccessDenied: () => "Просмотр метрик доступен только из доверенного чата.",
   metricsDisabled: () =>
     "Сбор метрик отключен. Запустите бота с флагом --metrics (-m) и задайте METRICS_MONGODB_URI.",
@@ -189,12 +192,14 @@ const createRuUi = () => ({
       createButton: "Создать",
     },
     confirmNoTime: "Нет времени на игры!",
+    confirmRegistration: "Подтвердить",
   },
   callback: {
     startDialogRequired: "Команда доступна только в основном чате.",
     contextMissing: "Контекст чата не готов, попробуйте позже.",
     contextNotFound: "Контекст чата не найден",
     cancelNotAuthor: "Только автор может отменить заявку",
+    confirmRegistrationNotAuthor: "Подтвердить может только тот, кого просят",
     cancelAlreadyRemoved: "Заявка уже была удалена",
     cancelForeignMatch: "Нельзя отменять чужие игры",
     matchNotFound: "Матч не найден",

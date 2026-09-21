@@ -83,6 +83,8 @@ export class InMemoryPlayersRepository {
       identityVersion,
       // Повторная регистрация не должна снимать ранее установленный бан.
       banned: existing?.banned === true,
+      // Повторная регистрация не должна снимать ранее пройденное подтверждение.
+      verified: existing?.verified === true,
     }
     this.players.set(username, player)
     this.playersByUsername.set(username, player)
@@ -176,5 +178,20 @@ export class InMemoryPlayersRepository {
 
   async unbanOne(username) {
     return this.setBanned(username, false)
+  }
+
+  async isVerified(userId) {
+    if (typeof userId === 'string' && userId.startsWith('@')) {
+      return (await this.findOne(userId))?.verified === true
+    }
+    const player = await this.findByUserId(userId)
+    return player?.verified === true
+  }
+
+  async setVerified(username, verified) {
+    const player = this.playersByUsername.get(username)
+    if (!player) return false
+    player.verified = verified === true
+    return true
   }
 }

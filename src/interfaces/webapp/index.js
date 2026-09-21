@@ -389,9 +389,26 @@ export const createWebApp = async ({
   // - all-in-one: EventNotifier → SSE
   if (eventBus && queueRepository) {
     await sseManager.subscribeToRedis(eventBus, buildStatePayload)
+    // Подтверждение регистрации (confirm_player) обрабатывается только в
+    // bot-процессе (там принимаются callback_query) и публикует player_verified
+    // через этот же eventBus — отдельный handler, независимый от блоковой
+    // рассылки state_update выше (RedisEventBus поддерживает несколько
+    // подписчиков на одном канале). Форма event здесь — обёртка
+    // {type, chatId, payload}, которую формирует EventNotifier.notify().
+    await eventBus.subscribe((event) => {
+      if (event?.type !== 'player_verified') return
+      const userId = event?.payload?.userId
+      if (userId != null) sseManager.notifyUser(userId, 'player_verified', { verified: true })
+    })
   } else if (resolvedContext) {
-    resolvedContext.notifier.onMessage(async ({ chatId }) => {
+    resolvedContext.notifier.onMessage(async ({ chatId, meta }) => {
       if (String(chatId) !== String(queueChatId)) return
+      // Локальный (не-Redis) путь: meta — исходный объект, переданный в
+      // notifier.notify(), без обёртки payload (в отличие от Redis-ветки выше).
+      if (meta?.type === 'player_verified') {
+        if (meta.userId != null) sseManager.notifyUser(meta.userId, 'player_verified', { verified: true })
+        return
+      }
       try {
         sseManager.broadcast('state_update', await buildStatePayload())
       } catch (err) {
@@ -420,7 +437,13 @@ export const createWebApp = async ({
     playersRepository,
   })
 
-  const port = Number(process.env.WEBAPP_PORT) || 3000
+  // WEBAPP_PORT=0 — валидная команда "пусть ОС выберет свободный порт"
+  // (используется тестами) — `Number(...) || 3000` трактовал бы 0 как falsy
+  // и молча подменял его на 3000, теряя это намерение.
+  const rawPort = process.env.WEBAPP_PORT
+  const port = rawPort != null && rawPort !== '' && Number.isFinite(Number(rawPort))
+    ? Number(rawPort)
+    : 3000
   await app.listen({ port, host: '0.0.0.0' })
   log.info(`WebApp сервер запущен на порту ${port}`)
 

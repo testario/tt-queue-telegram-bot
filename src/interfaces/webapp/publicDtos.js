@@ -23,10 +23,14 @@ export const toPublicInvite = (invite) => {
   return result
 }
 
-export const toPublicPlayer = (player) => {
+export const toPublicPlayer = (player, { ownerUserId } = {}) => {
   const result = {
     username: player?.username,
     banned: player?.banned === true,
+    // Владелец бота (METRICS_CHAT_ID) считается подтверждённым безусловно,
+    // даже если в самой записи игрока флаг ещё не выставлен — см. router.js.
+    verified: player?.verified === true
+      || (ownerUserId != null && player?.userId != null && String(player.userId) === String(ownerUserId)),
   }
   for (const field of ['displayName', 'firstName', 'lastName', 'lastSeenAt']) {
     addDefined(result, field, player?.[field])

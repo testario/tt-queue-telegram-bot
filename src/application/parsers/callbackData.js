@@ -6,6 +6,7 @@ const inlineTestPrefix = "inline_test:";
 const directAcceptPrefix = "direct_accept:";
 const directDeclinePrefix = "direct_decline:";
 const directCancelPrefix = "direct_cancel:";
+const confirmPlayerPrefix = "confirm_player:";
 const inviteIdPattern = /^[A-Za-z0-9_-]{16}$/;
 
 /**
@@ -42,10 +43,14 @@ const inviteIdPattern = /^[A-Za-z0-9_-]{16}$/;
  * @property {"direct_cancel"} type
  * @property {string|null} inviteId
  *
+ * @typedef {Object} ConfirmPlayerData
+ * @property {"confirm_player"} type
+ * @property {string|null} userId
+ *
  * @typedef {Object} UnknownData
  * @property {"unknown"} type
  *
- * @typedef {PlayWithData | CancelSearchData | CancelMatchData | TestData | InlineTestData | DirectAcceptData | DirectDeclineData | DirectCancelData | UnknownData} ParsedCallbackData
+ * @typedef {PlayWithData | CancelSearchData | CancelMatchData | TestData | InlineTestData | DirectAcceptData | DirectDeclineData | DirectCancelData | ConfirmPlayerData | UnknownData} ParsedCallbackData
  */
 
 /**
@@ -87,6 +92,10 @@ const parseCallbackData = (data) => {
   if (data.startsWith(directCancelPrefix)) {
     const inviteId = data.slice(directCancelPrefix.length);
     return { type: "direct_cancel", inviteId: inviteIdPattern.test(inviteId) ? inviteId : null };
+  }
+  if (data.startsWith(confirmPlayerPrefix)) {
+    const raw = data.slice(confirmPlayerPrefix.length);
+    return { type: "confirm_player", userId: /^\d+$/.test(raw) ? raw : null };
   }
   return { type: "unknown" };
 };

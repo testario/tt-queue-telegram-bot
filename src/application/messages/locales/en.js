@@ -96,6 +96,9 @@ const createEnMessages = ({ formatDate }) => ({
     "An administrator has blocked your access to the queue. If this is a mistake, contact the chat administrator.",
   playerUnbanned: () =>
     "An administrator has restored your access to the queue. You can use the queue again.",
+  registrationRequest: ({ player }) =>
+    `${player} wants access to the queue mini-app. Confirm it's you — tap the button below (only you can).`,
+  registrationConfirmed: () => "Confirmed! Mini-app access granted.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "test match" : "test matches");
@@ -156,12 +159,14 @@ const createEnUi = () => ({
       createButton: "Create",
     },
     confirmNoTime: "No time for games!",
+    confirmRegistration: "Confirm",
   },
   callback: {
     startDialogRequired: "This command is available only in the main chat.",
     contextMissing: "Chat context is not ready, try again later.",
     contextNotFound: "Chat context was not found",
     cancelNotAuthor: "Only the author can cancel the request",
+    confirmRegistrationNotAuthor: "Only the requested player can confirm this",
     cancelAlreadyRemoved: "The request was already removed",
     cancelForeignMatch: "You can't cancel someone else's match",
     matchNotFound: "Match not found",

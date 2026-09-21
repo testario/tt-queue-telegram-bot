@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useTelegram } from '@/composables/useTelegram.js'
 import { useQueue } from '@/composables/useQueue.js'
 import { useAdmin } from '@/composables/useAdmin.js'
-import { useBanStatus } from '@/composables/useApi.js'
+import { useBanStatus, useRegistrationStatus } from '@/composables/useApi.js'
 import { usePlayers } from '@/composables/usePlayers.js'
 import QueueView from '@/features/queue/QueueView.vue'
 
@@ -11,12 +11,14 @@ import PlayersView from '@/features/players/PlayersView.vue'
 import AdminPanel from '@/features/admin/AdminPanel.vue'
 import MockToolbar from '@/features/mock/MockToolbar.vue'
 import BottomNavigation from '@/shared/ui/BottomNavigation.vue'
+import LoginScreen from '@/features/registration/LoginScreen.vue'
 
 const { ready, expand, close } = useTelegram()
 const { init } = useQueue()
 const { isAdmin, checkAdmin } = useAdmin()
 const { load: loadPlayers } = usePlayers()
 const banStatus = useBanStatus()
+const registrationStatus = useRegistrationStatus()
 const activeTab = ref('queue')
 
 // Отсчёт перед закрытием мини-аппа после бана: 3, 2, 1 — и close().
@@ -95,12 +97,21 @@ onMounted(async () => {
   }
   expand()
   ready()
+  // init() подключает SSE сразу — нужно, чтобы player_verified/player_banned
+  // мог дойти в реальном времени, даже пока показан логин-экран.
   await init()
-  // Проверяем banned даже на стартовой вкладке очереди, где список игроков ещё не виден.
+  // checkAdmin() идёт раньше loadPlayers() и не зависит от verified-статуса:
+  // это тот же auth()-запрос, что и раньше, который своим побочным эффектом
+  // (claimPlayerIdentity) создаёт запись игрока при самом первом визите — без
+  // этого self-скан в loadPlayers() ниже не нашёл бы себя в списке и логин-
+  // экран показался бы даже владельцу бота (METRICS_CHAT_ID), у которого
+  // доступ безусловный, но только если его запись вообще существует.
+  await checkAdmin()
+  // Проверяем banned/verified даже на стартовой вкладке очереди, где список
+  // игроков ещё не виден.
   await loadPlayers().catch((error) => {
     console.error('Не удалось загрузить список игроков', error)
   })
-  await checkAdmin()
 })
 </script>
 
@@ -120,9 +131,10 @@ onMounted(async () => {
           <template v-else>Приложение закроется через {{ closeCountdown }}…</template>
         </p>
       </section>
+      <LoginScreen v-else-if="!registrationStatus.verified" />
       <component v-else :is="activeView" />
     </main>
-    <div v-if="!banStatus.isBanned" class="app__nav">
+    <div v-if="!banStatus.isBanned && registrationStatus.verified" class="app__nav">
       <BottomNavigation
         :active-tab="activeTab"
         :tabs="navigationTabs"

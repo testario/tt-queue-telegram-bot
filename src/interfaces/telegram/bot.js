@@ -903,7 +903,11 @@ const createBot = (
     notifier.onMessage(({ chatId: targetChatId, text, meta }) => {
       if (targetChatId !== chatId) return;
       onQueueChanged?.({ chatId, meta });
-      if (meta?.type === "state_update") return;
+      // player_verified (и любой другой служебный тип без текста для чата,
+      // как state_update) идёт сюда же за onQueueChanged-пробуждением, но не
+      // должен долетать до sendMessage — иначе Telegram отвечает "message
+      // text is empty" на пустой text.
+      if (meta?.type === "state_update" || !text) return;
 
       const replyMarkup =
         meta && meta.match && (meta.type === "match_created" || meta.type === "match_started")
@@ -2383,6 +2387,55 @@ const createBot = (
             show_alert: true,
           })
           .catch(console.error);
+      }
+    } else if (parsed.type === "confirm_player") {
+      // Идентичность нажавшего берём из callbackQuery.from.id (реальный,
+      // неподделываемый userId от Telegram), а не из payload — сверяем с тем,
+      // что закодировано в callback_data. userId, а не username (как в
+      // cancel_search выше): не меняется при смене ника игроком между
+      // отправкой сообщения в чат и нажатием кнопки.
+      if (!parsed.userId || String(userId) !== String(parsed.userId)) {
+        log.warn("Попытка подтвердить чужую регистрацию", { requester: userId, target: parsed.userId });
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: ui.callback.confirmRegistrationNotAuthor,
+            show_alert: true,
+          })
+          .catch(console.error);
+        return;
+      }
+
+      const player = await identityRepository.findByUserId(userId);
+      if (!player) {
+        // Не должно происходить: POST /api/register (auth() preHandler)
+        // всегда апсертит запись игрока до отправки этого сообщения.
+        // Защитная ветка на случай гонки/ручного вызова.
+        bot.answerCallbackQuery(callbackId, { text: ui.callback.contextMissing, show_alert: true }).catch(console.error);
+        return;
+      }
+
+      // Двойное нажатие до того, как Telegram успеет убрать кнопку из
+      // сообщения (или повторный тап после уже обработанного) — идемпотентно:
+      // просто подтверждаем ещё раз тем же текстом, без повторной записи и
+      // без повторной публикации player_verified в Redis.
+      if (player.verified !== true) {
+        await identityRepository.setVerified(player.username, true);
+        // Кросс-процессный релей в backend-процесс: там SSE подключение к
+        // мини-аппу (если открыто) узнаёт об этом мгновенно, см.
+        // src/interfaces/webapp/index.js.
+        context.notifier.notify(context.chatId, "", { type: "player_verified", userId: String(userId) });
+      }
+
+      bot.answerCallbackQuery(callbackId, { text: messages.registrationConfirmed() }).catch(console.error);
+      const editOptions = buildEditOptions({ reply_markup: { inline_keyboard: [] } });
+      if (editOptions) {
+        bot
+          .editMessageText(messages.registrationConfirmed(), editOptions)
+          .catch((error) =>
+            handleEditMessageError(error, "Не удалось обновить сообщение подтверждения регистрации")
+          );
+      } else {
+        log.warn("Нет цели для редактирования сообщения подтверждения регистрации", { chatId, userId });
       }
     } else if (parsed.type === "cancel_match") {
       const cancelResult = await cancelMatch.execute(player2, callbackQuery.from.identityToken);

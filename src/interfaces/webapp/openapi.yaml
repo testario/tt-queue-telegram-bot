@@ -95,7 +95,7 @@ components:
 
     Player:
       type: object
-      required: [username, displayName, banned]
+      required: [username, displayName, banned, verified]
       properties:
         username:
           type: string
@@ -115,6 +115,12 @@ components:
         banned:
           type: boolean
           description: Игрок заблокирован и не может участвовать в новых действиях.
+        verified:
+          type: boolean
+          description: |
+            Игрок подтвердил доступ к мини-аппу кнопкой в общем чате (см. POST /api/register).
+            Без этого мини-апп показывает только логин-экран. Владелец бота (METRICS_CHAT_ID)
+            всегда `true` независимо от фактического значения в базе.
         isAdmin:
           type: boolean
           description: Игрок является администратором общего чата — его нельзя забанить.
@@ -170,6 +176,9 @@ components:
               value: { error: player_banned }
             cannot_ban_admin:
               value: { error: cannot_ban_admin }
+            not_verified:
+              value: { error: not_verified }
+              summary: Игрок ещё не подтвердил доступ к мини-аппу (см. POST /api/register).
 
     NotFound:
       description: Ресурс не найден.
@@ -202,10 +211,23 @@ paths:
         Server-Sent Events. При подключении сразу отправляет текущее состояние.
         Далее присылает `state_update` при любом изменении очереди (команда бота, таймер оркестратора, действие через API).
 
+        Query-параметр `initData` (копия `Telegram.WebApp.initData` — EventSource не умеет
+        ставить кастомные заголовки) привязывает соединение к игроку и включает два
+        персональных события: `player_banned` (см. DELETE/PATCH /api/players/{username}) и
+        `player_verified` (см. POST /api/register) — оба присылаются сразу при подключении,
+        если соответствующий статус уже установлен, и позже в реальном времени, если статус
+        меняется, пока соединение открыто.
+
         **Формат события:**
         ```
         event: state_update
         data: {"queue":[...],"searching":[...],"played":[...],"paused":false,"emergeActive":false,"serverTime":"..."}
+
+        event: player_banned
+        data: {"reason":"player_banned"}
+
+        event: player_verified
+        data: {"verified":true}
         ```
       operationId: getEvents
       tags: [State]
@@ -368,6 +390,72 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/register:
+    post:
+      summary: Запросить подтверждение доступа к мини-аппу
+      description: |
+        Шлёт в общий чат сообщение с кнопкой «Подтвердить», адресованной игроку —
+        нажать её может только он (проверка по Telegram userId, см. confirm_player
+        callback бота). До подтверждения все геймплейные и админские эндпоинты
+        отвечают 403 `not_verified`.
+
+        Идемпотентно: если игрок уже подтверждён, сообщение не отправляется и
+        возвращается `alreadyVerified: true` — этим же полем клиент узнаёт о
+        подтверждении, если реалтайм push через SSE (`player_verified`) был
+        пропущен из-за разрыва соединения. Повторные запросы чаще чем раз в 30
+        секунд не отправляют новое сообщение (`cooldown: true`).
+
+        Требует членства в общем чате (иначе 403 `not_chat_member`) — иначе любой,
+        кто хоть раз открыл диалог с ботом, мог бы засыпать чат сообщениями.
+      operationId: requestRegistration
+      tags: [Queue]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Запрос обработан (см. описание полей ответа).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, alreadyVerified]
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  alreadyVerified:
+                    type: boolean
+                    description: Игрок уже подтверждён — сообщение не отправлялось.
+                  cooldown:
+                    type: boolean
+                    description: Сообщение недавно уже отправлялось — новое не отправлено.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/UsernameRequired"
+        "403":
+          description: Игрок заблокирован, либо не состоит в общем чате.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                player_banned:
+                  value: { error: player_banned }
+                not_chat_member:
+                  value: { error: not_chat_member }
+        "503":
+          description: Не удалось отправить сообщение в чат или проверить членство.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                registration_request_failed:
+                  value: { error: registration_request_failed }
+                chat_membership_check_failed:
+                  value: { error: chat_membership_check_failed }
 
   /api/search:
     post:

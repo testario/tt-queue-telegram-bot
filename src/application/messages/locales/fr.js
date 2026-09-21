@@ -95,6 +95,8 @@ const createFrMessages = ({ formatDate }) => ({
   emergeNotActive: () => "La pause d'urgence n'est plus active.",
   playerBanned: () =>
     "Un administrateur a bloqué ton accès à la file. Si c'est une erreur, contacte l'administrateur du chat.",
+  playerUnbanned: () =>
+    "Un administrateur a rétabli ton accès à la file. Tu peux de nouveau utiliser la file.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "match de test" : "matchs de test");

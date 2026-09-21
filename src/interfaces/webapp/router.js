@@ -664,6 +664,10 @@ export const registerRoutes = async (app, deps) => {
       // Не ждём Telegram, как и остальные уведомления в этом файле; и не
       // дублируем сообщение, если игрок уже был забанен раньше.
       if (!wasAlreadyBanned) notifyPlayerDirect(player?.userId, messages.playerBanned())
+    } else if (wasAlreadyBanned) {
+      // Симметрично бану: уведомляем о разбане, только если игрок
+      // действительно был забанен до этого запроса.
+      notifyPlayerDirect(player?.userId, messages.playerUnbanned())
     }
     return { ok: true, banned }
   })

@@ -110,6 +110,7 @@ const createHarness = async ({
     searchCancelled: jest.fn().mockReturnValue('search cancelled'),
     matchAlreadyInQueue: jest.fn().mockReturnValue('invite exists'),
     playerBanned: jest.fn().mockReturnValue('you are banned'),
+    playerUnbanned: jest.fn().mockReturnValue('you are unbanned'),
   }
   const app = Fastify()
 
@@ -834,7 +835,7 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
-  test('sends a Telegram DM to the banned player but not when unbanning', async () => {
+  test('sends a Telegram DM to the banned player and another one when unbanning', async () => {
     const harness = await createHarness({ production: true })
     harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
     harness.playersRepository.findOne.mockImplementation(async (username) =>
@@ -849,6 +850,7 @@ describe('webapp REST routes', () => {
     })
 
     expect(banResponse.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
     expect(harness.bot.sendMessage).toHaveBeenCalledWith(42, 'you are banned')
 
     harness.bot.sendMessage.mockClear()
@@ -864,7 +866,8 @@ describe('webapp REST routes', () => {
     })
 
     expect(unbanResponse.statusCode).toBe(200)
-    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith(42, 'you are unbanned')
     await harness.app.close()
   })
 
@@ -881,6 +884,26 @@ describe('webapp REST routes', () => {
       url: '/api/players/alice',
       headers: authHeader('admin', 10),
       payload: { banned: true },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('does not send a DM when "unbanning" a player who was not banned', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: 42, banned: false } : null
+    )
+    harness.playersRepository.setBanned.mockResolvedValue(true)
+
+    const response = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: false },
     })
 
     expect(response.statusCode).toBe(200)
@@ -908,7 +931,55 @@ describe('webapp REST routes', () => {
     })
 
     expect(response.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
     expect(harness.bot.sendMessage).toHaveBeenCalledWith(42, 'you are banned')
+    await harness.app.close()
+  })
+
+  test('PATCH unban sends a DM even against a repository that mutates records in place', async () => {
+    // Mirrors the ban regression test above: InMemoryPlayersRepository
+    // mutates the record setBanned reads from, so this aliasing trap needs
+    // the real repository — a jest.fn() mock can't reproduce it.
+    const playersRepository = new InMemoryPlayersRepository()
+    await playersRepository.upsert({ username: '@alice', userId: 42, firstName: 'Alice' })
+    await playersRepository.setBanned('@alice', true)
+    const harness = await createHarness({ production: true, playersRepository })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+
+    const response = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: false },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
+    expect(harness.bot.sendMessage).toHaveBeenCalledWith(42, 'you are unbanned')
+    await harness.app.close()
+  })
+
+  test('does not send a DM when unbanning a previously-banned player without a userId', async () => {
+    // A player can be marked banned without ever having authorized through
+    // the mini app, so player.userId is null even though wasAlreadyBanned
+    // is true — this exercises the new unban branch itself (not just the
+    // findOne-returns-null short circuit) and its notifyPlayerDirect guard.
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@alice' ? { username, userId: null, banned: true } : null
+    )
+    harness.playersRepository.setBanned.mockResolvedValue(true)
+
+    const response = await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: false },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.bot.sendMessage).not.toHaveBeenCalled()
     await harness.app.close()
   })
 

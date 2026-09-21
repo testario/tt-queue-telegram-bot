@@ -95,6 +95,8 @@ const createEsMessages = ({ formatDate }) => ({
   emergeNotActive: () => "La pausa de emergencia ya no está activa.",
   playerBanned: () =>
     "Un administrador bloqueó tu acceso a la cola. Si es un error, contacta al administrador del chat.",
+  playerUnbanned: () =>
+    "Un administrador restauró tu acceso a la cola. Ya puedes volver a usar la cola.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "partido de prueba" : "partidos de prueba");

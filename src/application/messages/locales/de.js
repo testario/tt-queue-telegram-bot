@@ -96,6 +96,8 @@ const createDeMessages = ({ formatDate }) => ({
   emergeNotActive: () => "Notfallpause ist nicht mehr aktiv.",
   playerBanned: () =>
     "Ein Administrator hat deinen Zugriff auf die Warteschlange gesperrt. Falls das ein Fehler ist, wende dich an den Chat-Administrator.",
+  playerUnbanned: () =>
+    "Ein Administrator hat deinen Zugriff auf die Warteschlange wieder freigegeben. Du kannst die Warteschlange wieder nutzen.",
 });
 
 const pluralizeTestMatches = (count) => (count === 1 ? "Testmatch" : "Testmatches");

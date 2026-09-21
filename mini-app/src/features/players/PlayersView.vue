@@ -40,11 +40,8 @@ const invitedPlayers = computed(() =>
   new Set(queueState.pendingInvites.flatMap((invite) => [invite.player, invite.opponent]))
 )
 
-// Только инициаторы — отдельно от invitedPlayers, потому что isSearching у
-// инициатора истинен именно из-за его приглашения (см. CreateDirectMatch), а
-// у простого получателя приглашения он может быть истинен и сам по себе
-// (обычный поиск + кто-то параллельно его пригласил) — эти два случая нельзя
-// путать в статусе.
+// Только инициаторы — отдельно от invitedPlayers, потому что бейджу нужно
+// различать "Ждёт ответа" (сам позвал) и "Вызван" (позвали его).
 const invitedInitiators = computed(() =>
   new Set(queueState.pendingInvites.map((invite) => invite.player))
 )
@@ -55,7 +52,7 @@ const currentPlayerHasOutgoingInvite = computed(() =>
   Boolean(currentPlayer) && queueState.pendingInvites.some((inv) => inv.player === currentPlayer)
 )
 
-// usePlayers() уже отфильтровывает currentPlayer при загрузке — этот пункт
+// usePlayers() уже отфильтровывает currentPlayer при выдаче списка — этот пункт
 // здесь дублирующий, но бесплатный: если фильтрация в usePlayers когда-нибудь
 // уедет или список начнёт наполняться в обход неё, canInvite для собственной
 // записи не откроется молча.
@@ -70,19 +67,25 @@ const playersWithStatus = computed(() =>
   visiblePlayers.value.map((player) => {
     const isSearching = queueState.searching.includes(player.username)
     const isQueued = queuedPlayers.value.includes(player.username)
-    const isPlayed = queueState.played.includes(player.username)
     const isInvited = invitedPlayers.value.has(player.username)
     const isInviteInitiator = invitedInitiators.value.has(player.username)
+    // По просьбе продукта в этом списке — "Фамилия Имя", в отличие от
+    // displayName в PlayerManager/DirectMatchModal/боте ("Имя Фамилия").
+    const fullName = [player.lastName, player.firstName].filter(Boolean).join(' ')
+    // Токены, а не одна строка: чтобы запрос "Имя Фамилия" тоже находил игрока,
+    // хотя на экране порядок обратный ("Фамилия Имя").
+    const searchHaystack = `${player.username} ${player.firstName ?? ''} ${player.lastName ?? ''}`.toLowerCase()
 
     return {
       ...player,
       isSearching,
       isQueued,
-      isPlayed,
       isInvited,
       isInviteInitiator,
+      fullName,
+      searchHaystack,
       canInvite: Boolean(currentPlayer)
-        && !player.banned
+        && !player.banned // дублирует фильтр в filteredPlayers — дешёвая защита на случай, если он уедет
         && !unavailablePlayers.value.has(player.username)
         && !currentPlayerInQueue.value
         && !currentPlayerPlayed.value
@@ -93,33 +96,15 @@ const playersWithStatus = computed(() =>
 
 const filteredPlayers = computed(() => {
   const query = search.value.toLowerCase().trim()
+  const queryTokens = query ? query.split(/\s+/) : []
 
   return playersWithStatus.value.filter((player) => {
+    if (player.banned) return false
     if (activeFilter.value === 'searching' && !player.isSearching) return false
     if (activeFilter.value === 'available' && !player.canInvite) return false
-    if (!query) return true
-
-    const username = player.username.toLowerCase()
-    const displayName = player.displayName.toLowerCase()
-    return username.includes(query) || displayName.includes(query)
+    return queryTokens.every((token) => player.searchHaystack.includes(token))
   })
 })
-
-const statusText = (player) => {
-  if (player.banned) return 'доступ закрыт'
-  // У инициатора приглашения isSearching истинен только из-за самого
-  // приглашения (см. CreateDirectMatch) — без этой ветки он читался бы как
-  // обычный "ищет пару", хотя пригласить его в этот момент уже нельзя. Берём
-  // именно isInviteInitiator (не isInvited): обычный искатель, которого
-  // параллельно кто-то пригласил, — это другой случай, ветка isSearching
-  // ниже для него по-прежнему верна.
-  if (player.isSearching && player.isInviteInitiator) return 'кого-то позвал — ждём ответа'
-  if (player.isSearching) return 'ищет пару'
-  if (player.isQueued) return 'в очереди'
-  if (player.isPlayed) return 'играл сегодня'
-  if (player.isInvited) return 'получил приглашение — ждём ответа'
-  return 'доступен для приглашения'
-}
 
 // POST /api/direct отвечает 200 и { ok: false, reason } даже при отказе
 // (например reason: 'opponent_invite_pending', если оппонента позвал кто-то
@@ -153,7 +138,7 @@ const invite = async (username) => {
       <input
         v-model="search"
         type="search"
-        placeholder="Найти игрока по @username"
+        placeholder="Найти игрока по имени или @username"
       />
     </label>
 
@@ -203,8 +188,8 @@ const invite = async (username) => {
       >
         <PlayerAvatar :username="player.username" :size="44" />
         <div class="players-view__info">
-          <h2>{{ player.username }}</h2>
-          <p>{{ statusText(player) }}</p>
+          <h2>{{ player.fullName || player.username }}</h2>
+          <p v-if="player.fullName">{{ player.username }}</p>
         </div>
         <AppButton
           v-if="player.canInvite"
@@ -214,8 +199,8 @@ const invite = async (username) => {
         >
           Позвать
         </AppButton>
-        <span v-else :class="['players-view__badge', { 'players-view__badge--banned': player.banned }]">
-          {{ player.banned ? 'Бан' : (player.isQueued ? 'В игре' : (player.isInviteInitiator ? 'Ждёт ответа' : (player.isInvited ? 'Вызван' : 'Недоступен'))) }}
+        <span v-else class="players-view__badge">
+          {{ player.isQueued ? 'В игре' : (player.isInviteInitiator ? 'Ждёт ответа' : (player.isInvited ? 'Вызван' : 'Недоступен')) }}
         </span>
       </article>
 
@@ -368,11 +353,6 @@ const invite = async (username) => {
     color: var(--color-muted);
     font-size: 12px;
     font-weight: 800;
-
-    &--banned {
-      background: color-mix(in srgb, var(--color-danger), transparent 84%);
-      color: var(--color-danger);
-    }
   }
 
   &__hint {

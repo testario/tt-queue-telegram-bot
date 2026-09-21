@@ -9,7 +9,7 @@ import AppIcon from '@/shared/ui/AppIcon.vue'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
 
 const api = useApi()
-const { state: playersState, load } = usePlayers()
+const { state: playersState, players: visiblePlayers, load } = usePlayers()
 const { state: queueState } = useQueue()
 const { player: currentPlayer } = useTelegram()
 
@@ -67,7 +67,7 @@ const unavailablePlayers = computed(() => new Set([
 ]))
 
 const playersWithStatus = computed(() =>
-  playersState.players.map((player) => {
+  visiblePlayers.value.map((player) => {
     const isSearching = queueState.searching.includes(player.username)
     const isQueued = queuedPlayers.value.includes(player.username)
     const isPlayed = queueState.played.includes(player.username)

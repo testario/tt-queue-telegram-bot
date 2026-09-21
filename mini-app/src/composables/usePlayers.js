@@ -1,4 +1,4 @@
-import { reactive, readonly } from 'vue'
+import { computed, reactive, readonly } from 'vue'
 import { useApi } from './useApi.js'
 import { useTelegram } from './useTelegram.js'
 import { markPlayerBanned } from './useApi.js'
@@ -27,7 +27,6 @@ const mockAvatarUrl = (username) => {
 
 export function usePlayers() {
   const { get } = useApi()
-  const { player: currentPlayer } = useTelegram()
 
   const load = async () => {
     if (state.loaded || state.loading) return
@@ -35,20 +34,30 @@ export function usePlayers() {
     try {
       const data = await get('/players')
       const players = data.players ?? []
+      const currentPlayer = useTelegram().player
       if (players.some((player) => player.username === currentPlayer && player.banned)) {
         markPlayerBanned()
       }
-      // Себя в списке не показываем — ни вызвать на игру, ни забанить себя
-      // всё равно нельзя, эти записи только мешают. Без username (Telegram
-      // это допускает) сравнивать не с чем — оставляем список как есть.
-      state.players = currentPlayer
-        ? players.filter((player) => player.username !== currentPlayer)
-        : players
+      state.players = players
       state.loaded = true
     } finally {
       state.loading = false
     }
   }
+
+  // Себя в списке не показываем — ни вызвать на игру, ни забанить себя всё
+  // равно нельзя, эти записи только мешают. Сделано computed'ом, а не
+  // фильтром внутри load(): initDataUnsafe.user.username на некоторых
+  // Telegram-клиентах может быть ещё не готов в момент самой первой загрузки
+  // (load() выполняется один раз за сессию), поэтому currentPlayer читаем
+  // заново при каждом обращении к списку, а не полагаемся на снепшот.
+  // Сравнение регистронезависимое — Telegram username регистронезависим.
+  const players = computed(() => {
+    const currentPlayer = useTelegram().player
+    if (!currentPlayer) return state.players
+    const currentLower = currentPlayer.toLowerCase()
+    return state.players.filter((player) => player.username?.toLowerCase() !== currentLower)
+  })
 
   const avatarUrl = (username) => {
     if (isMockMode) return mockAvatarUrl(username)
@@ -66,5 +75,5 @@ export function usePlayers() {
     if (player) player.banned = banned
   }
 
-  return { state: readonly(state), load, avatarUrl, remove, setBanned }
+  return { state: readonly(state), players, load, avatarUrl, remove, setBanned }
 }

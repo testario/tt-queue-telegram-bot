@@ -5,7 +5,7 @@ import { usePlayers } from '@/composables/usePlayers.js'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
 
 const api = useApi()
-const { state, load, setBanned } = usePlayers()
+const { state, players, load, setBanned } = usePlayers()
 
 const deletingUsername = ref(null)  // username игрока, которого удаляем прямо сейчас
 
@@ -56,13 +56,13 @@ const banPlayer = async (username) => {
 
     <p v-if="state.loading" class="player-manager__hint">Загрузка...</p>
 
-    <p v-else-if="!state.players.length" class="player-manager__hint">
+    <p v-else-if="!players.length" class="player-manager__hint">
       Список пуст
     </p>
 
     <div v-else class="player-manager__list">
       <div
-        v-for="p in state.players"
+        v-for="p in players"
         :key="p.username"
         class="player-manager__row"
       >

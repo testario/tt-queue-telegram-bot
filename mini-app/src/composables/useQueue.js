@@ -1,5 +1,5 @@
 import { reactive, readonly } from 'vue'
-import { useApi } from './useApi.js'
+import { useApi, markPlayerBanned } from './useApi.js'
 import { useTelegram } from './useTelegram.js'
 
 const state = reactive({
@@ -49,11 +49,30 @@ const applyState = (data) => {
 
 const connectSse = () => {
   if (eventSource) return
-  eventSource = new EventSource('/api/events')
+  // initData прокидывается строкой запроса — EventSource не умеет ставить
+  // кастомные заголовки. Нужен только чтобы сервер мог связать это
+  // соединение с userId и адресно прислать player_banned в момент бана, а
+  // не только при следующем обычном запросе к API.
+  const { initData } = useTelegram()
+  const url = initData ? `/api/events?initData=${encodeURIComponent(initData)}` : '/api/events'
+  eventSource = new EventSource(url)
 
   eventSource.addEventListener('state_update', (e) => {
     applyState(JSON.parse(e.data))
     state.loading = false
+  })
+
+  // Бан игрока с открытым мини-аппом — сервер шлёт это событие сразу по
+  // факту бана (см. sseManager.notifyUser в router.js), а не только когда
+  // игрок сам за чем-то обратится к API. Закрываем соединение сразу же:
+  // приложение и так закроется через отсчёт (см. App.vue), а держать канал
+  // открытым забаненному игроку незачем — connectSse() больше не вызовется
+  // повторно за эту сессию (init() — разовый вызов), поэтому обнулить
+  // eventSource здесь безопасно.
+  eventSource.addEventListener('player_banned', () => {
+    markPlayerBanned()
+    eventSource?.close()
+    eventSource = null
   })
 
   eventSource.onerror = () => {

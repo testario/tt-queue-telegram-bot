@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useTelegram } from '@/composables/useTelegram.js'
 import { useQueue } from '@/composables/useQueue.js'
 import { useAdmin } from '@/composables/useAdmin.js'
@@ -12,12 +12,52 @@ import AdminPanel from '@/features/admin/AdminPanel.vue'
 import MockToolbar from '@/features/mock/MockToolbar.vue'
 import BottomNavigation from '@/shared/ui/BottomNavigation.vue'
 
-const { ready, expand } = useTelegram()
+const { ready, expand, close } = useTelegram()
 const { init } = useQueue()
 const { isAdmin, checkAdmin } = useAdmin()
 const { load: loadPlayers } = usePlayers()
 const banStatus = useBanStatus()
 const activeTab = ref('queue')
+
+// Отсчёт перед закрытием мини-аппа после бана: 3, 2, 1 — и close().
+// Один и тот же banStatus.isBanned взводится и мгновенным SSE-событием
+// player_banned (см. useQueue.js), и обычным 403 player_banned на первом
+// же запросе после бана (см. useApi.js) — какой бы путь ни сработал первым,
+// закрытие запускается отсюда один раз.
+const closeCountdown = ref(3)
+// close() ничего не возвращает и не гарантирует эффект вне настоящего
+// Telegram-клиента (dev-режим, открытие мини-аппа напрямую в браузере) — там
+// это тихий no-op. Если приложение всё ещё открыто спустя пару секунд после
+// вызова, перестаём врать про "закроется через N" и просим закрыть вручную.
+const closeFailed = ref(false)
+let closeTimer = null
+let closeFallbackTimer = null
+
+watch(
+  () => banStatus.isBanned,
+  (isBanned) => {
+    if (!isBanned || closeTimer) return
+    closeCountdown.value = 3
+    closeTimer = setInterval(() => {
+      if (closeCountdown.value <= 1) {
+        clearInterval(closeTimer)
+        closeTimer = null
+        close()
+        closeFallbackTimer = setTimeout(() => {
+          closeFailed.value = true
+        }, 2000)
+        return
+      }
+      closeCountdown.value -= 1
+    }, 1000)
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  if (closeTimer) clearInterval(closeTimer)
+  if (closeFallbackTimer) clearTimeout(closeFallbackTimer)
+})
 const isMockMode =
   import.meta.env.DEV &&
   (import.meta.env.MODE === 'mock' || import.meta.env.VITE_USE_MOCKS === 'true')
@@ -74,6 +114,10 @@ onMounted(async () => {
         <h1>Вы заблокированы</h1>
         <p class="blocked-state__text">
           Функции очереди и приглашения недоступны. Если это ошибка, обратитесь к администратору.
+        </p>
+        <p class="blocked-state__countdown">
+          <template v-if="closeFailed">Закройте приложение вручную.</template>
+          <template v-else>Приложение закроется через {{ closeCountdown }}…</template>
         </p>
       </section>
       <component v-else :is="activeView" />
@@ -217,6 +261,12 @@ input {
     color: var(--color-text-secondary);
     font-size: 15px;
     line-height: 1.45;
+  }
+  &__countdown {
+    margin-top: 20px;
+    color: var(--color-danger);
+    font-size: 14px;
+    font-weight: 700;
   }
 }
 </style>

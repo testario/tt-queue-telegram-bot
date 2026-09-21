@@ -65,6 +65,11 @@ export const registerRoutes = async (app, deps) => {
   // --- preHandlers ---
 
   const isDev = process.env.NODE_ENV !== 'production'
+  // Общий dev-fallback identity для auth() (без initData) и для GET /api/events
+  // (без initData в query) — единственный источник истины, чтобы оба пути
+  // не разъехались по userId и не сломали ban-проверку в dev-режиме.
+  const DEV_USER_ID = 123456
+  const DEV_USERNAME = '@dev_user'
   const activateTestIdentity = typeof context.testIdentityActivation === 'function'
     ? context.testIdentityActivation
     : isDev && context.claimPlayerIdentity
@@ -247,8 +252,8 @@ export const registerRoutes = async (app, deps) => {
 
     // В dev-режиме пропускаем без initData (для тестирования через браузер)
     if (isDev && !initData) {
-      req.tgUser = { id: 123456, username: 'dev_user', firstName: 'Dev', lastName: '' }
-      req.player = '@dev_user'
+      req.tgUser = { id: DEV_USER_ID, username: 'dev_user', firstName: 'Dev', lastName: '' }
+      req.player = DEV_USERNAME
     } else {
       const result = verifyInitData(initData, process.env.TG_BOT_API_TOKEN)
       if (!result.ok) return reply.code(401).send({ error: result.reason })
@@ -393,11 +398,51 @@ export const registerRoutes = async (app, deps) => {
     reply.raw.setHeader('X-Accel-Buffering', 'no')
     reply.hijack()
 
-    sseManager.addClient(reply.raw)
+    // initData передаётся строкой запроса, а не заголовком: EventSource не
+    // умеет ставить кастомные HTTP-заголовки. Нужен он здесь только чтобы
+    // привязать SSE-соединение к userId для точечного оповещения о бане
+    // (см. sseManager.notifyUser ниже) — identity этим не claim'ится, её
+    // по-прежнему подтверждает auth() на каждом мутирующем запросе.
+    const initData = req.query?.initData
+    let userId = null
+    let username = null
+    if (initData) {
+      const result = verifyInitData(initData, process.env.TG_BOT_API_TOKEN)
+      if (result.ok) {
+        userId = result.user.id
+        username = result.user.username ? `@${result.user.username}` : null
+      } else {
+        log.warn('Не удалось проверить initData при подключении к SSE', { reason: result.reason })
+      }
+    } else if (isDev) {
+      userId = DEV_USER_ID
+      username = DEV_USERNAME
+    }
+
+    // Регистрируем соединение до чтения состояния: бан, наступивший позже
+    // (см. sseManager.notifyUser в ban-хендлерах), поймает этот listener;
+    // бан, уже случившийся раньше, поймает проверка ниже. Порядок исключает
+    // окно, в котором бан произошёл бы "между" и не долетел ни одним путём.
+    sseManager.addClient(reply.raw, userId)
 
     // Сразу отправить текущее состояние
     const payload = await buildStatePayload()
     reply.raw.write(`event: state_update\ndata: ${JSON.stringify(payload)}\n\n`)
+
+    // Игрок мог быть забанен ещё до открытия (пере)подключения — например,
+    // переоткрыл мини-апп после бана. Сообщаем тем же каналом сразу, не
+    // дожидаясь его первого мутирующего запроса. Через sseManager.notifyUser,
+    // а не прямой записью в reply.raw — тот же путь, что и у ban-хендлеров,
+    // без второй копии SSE wire-формата.
+    if (userId != null) {
+      try {
+        if (await isUserBanned({ id: userId }, username)) {
+          sseManager.notifyUser(userId, 'player_banned', { reason: 'player_banned' })
+        }
+      } catch (err) {
+        log.warn('Не удалось проверить бан при подключении к SSE', { message: err.message })
+      }
+    }
   })
 
   // GET /api/players — список известных игроков
@@ -627,7 +672,12 @@ export const registerRoutes = async (app, deps) => {
     if (!cleanupSucceeded) return reply.code(503).send({ error: 'ban_cleanup_unavailable' })
     // Не ждём Telegram, как и остальные уведомления в этом файле — ответ
     // админу не должен зависеть от round-trip до чата с игроком.
-    if (!wasAlreadyBanned) notifyPlayerDirect(player?.userId, messages.playerBanned())
+    if (!wasAlreadyBanned) {
+      notifyPlayerDirect(player?.userId, messages.playerBanned())
+      // Если у игрока в этот момент открыт мини-апп — оповещаем его тем же
+      // тиком через SSE, не дожидаясь следующего запроса к API.
+      sseManager.notifyUser(player?.userId, 'player_banned', { reason: 'player_banned' })
+    }
     return { ok: true }
   })
 
@@ -663,10 +713,19 @@ export const registerRoutes = async (app, deps) => {
       if (!cleanupSucceeded) return reply.code(503).send({ error: 'ban_cleanup_unavailable' })
       // Не ждём Telegram, как и остальные уведомления в этом файле; и не
       // дублируем сообщение, если игрок уже был забанен раньше.
-      if (!wasAlreadyBanned) notifyPlayerDirect(player?.userId, messages.playerBanned())
+      if (!wasAlreadyBanned) {
+        notifyPlayerDirect(player?.userId, messages.playerBanned())
+        // Если у игрока в этот момент открыт мини-апп — оповещаем его тем же
+        // тиком через SSE, не дожидаясь следующего запроса к API.
+        sseManager.notifyUser(player?.userId, 'player_banned', { reason: 'player_banned' })
+      }
     } else if (wasAlreadyBanned) {
       // Симметрично бану: уведомляем о разбане, только если игрок
-      // действительно был забанен до этого запроса.
+      // действительно был забанен до этого запроса. SSE-пуш здесь намеренно
+      // не шлём — banState.isBanned на клиенте не сбрасывается назад в
+      // false, а значит закрывающий отсчёт (см. App.vue) к этому моменту
+      // либо уже отработал и мини-апп закрыт, либо вот-вот отработает;
+      // "отменять" его нечем и незачем.
       notifyPlayerDirect(player?.userId, messages.playerUnbanned())
     }
     return { ok: true, banned }

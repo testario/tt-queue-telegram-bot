@@ -4,13 +4,14 @@ import { jest } from '@jest/globals'
 import { registerRoutes } from '#interfaces/webapp/router.js'
 import { InMemoryInvitesStore } from '#infrastructure/invites/InMemoryInvitesStore.js'
 import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlayersRepository.js'
+import { SseManager } from '#interfaces/webapp/sse.js'
 import { QueueState } from '#domain/entities/QueueState.js'
 import { createTestIdentityHelper } from '#application/usecases/createTestIdentityHelper.js'
 
 const token = 'webapp-test-token'
 
-const initDataFor = (user) => {
-  const params = new URLSearchParams({ auth_date: '1', user: JSON.stringify(user) })
+const initDataFor = (user, { authDate = Math.floor(Date.now() / 1000) } = {}) => {
+  const params = new URLSearchParams({ auth_date: String(authDate), user: JSON.stringify(user) })
   const dataCheckString = Array.from(params.entries())
     .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
     .map(([key, value]) => `${key}=${value}`)
@@ -26,6 +27,7 @@ const createHarness = async ({
   claimPlayerIdentity = undefined,
   applyPauseMode = jest.fn(),
   playersRepository: playersRepositoryOverride = undefined,
+  sseManager: sseManagerOverride = undefined,
 } = {}) => {
   process.env.NODE_ENV = production ? 'production' : 'test'
 
@@ -97,7 +99,8 @@ const createHarness = async ({
     getChatMember: jest.fn(),
     getChatAdministrators: jest.fn().mockResolvedValue([]),
   }
-  const sseManager = { addClient: jest.fn(), broadcast: jest.fn() }
+  const sseManager = sseManagerOverride
+    || { addClient: jest.fn(), broadcast: jest.fn(), notifyUser: jest.fn() }
   const log = { error: jest.fn(), warn: jest.fn(), info: jest.fn() }
   const messages = {
     directInvite: jest.fn().mockReturnValue('invite'),
@@ -112,7 +115,11 @@ const createHarness = async ({
     playerBanned: jest.fn().mockReturnValue('you are banned'),
     playerUnbanned: jest.fn().mockReturnValue('you are unbanned'),
   }
-  const app = Fastify()
+  // forceCloseConnections: the GET /api/events tests below open a real
+  // socket via app.listen() and never end the response (it's a long-lived
+  // SSE stream, by design) — without this, app.close() would hang waiting
+  // for that connection to finish on its own.
+  const app = Fastify({ forceCloseConnections: true })
 
   await registerRoutes(app, {
     bot,
@@ -144,6 +151,34 @@ const createHarness = async ({
     get state() { return currentState },
     sseManager,
   }
+}
+
+// GET /api/events hijacks the raw response and never ends it (it's a
+// long-lived SSE stream), so app.inject() — which waits for the response to
+// finish — would hang forever. Listening on a real ephemeral port and
+// reading with fetch() exercises the exact same path a real EventSource
+// does (URL-encoding, Fastify's query parsing, hijack, headers) without any
+// internal Fastify API to fall out of sync with. The initial state_update
+// and a conditional player_banned are two separate writes, so this collects
+// everything that arrives within a short grace window rather than just the
+// first chunk — long enough for both, short enough to keep tests fast.
+const readSseChunks = async (app, path, graceMs = 200) => {
+  const address = await app.listen({ port: 0, host: '127.0.0.1' })
+  const res = await fetch(`${address}${path}`)
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const deadline = Date.now() + graceMs
+  for (;;) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    const timeout = new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), remaining))
+    const result = await Promise.race([reader.read(), timeout])
+    if (result.timedOut || result.done) break
+    buffer += decoder.decode(result.value, { stream: true })
+  }
+  await reader.cancel().catch(() => {})
+  return buffer
 }
 
 const authHeader = (username, id = 1) => ({
@@ -637,6 +672,26 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  test('rejects initData older than the max age instead of trusting it forever', async () => {
+    const harness = await createHarness({ production: true })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/search',
+      headers: {
+        'x-telegram-init-data': initDataFor(
+          { id: 1, username: 'alice', first_name: 'Alice' },
+          { authDate: Math.floor(Date.now() / 1000) - 25 * 60 * 60 }
+        ),
+      },
+    })
+
+    expect(response.statusCode).toBe(401)
+    expect(response.json()).toEqual({ error: 'stale_init_data' })
+    expect(harness.context.registerSearch.execute).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
   test('POST /api/admin/pause reports a conflict instead of a false "ok" when applyPauseMode cannot commit', async () => {
     const applyPauseMode = jest.fn().mockResolvedValue({ hasQueue: false, conflict: true })
     const harness = await createHarness({ production: true, applyPauseMode })
@@ -852,8 +907,12 @@ describe('webapp REST routes', () => {
     expect(banResponse.statusCode).toBe(200)
     expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
     expect(harness.bot.sendMessage).toHaveBeenCalledWith(42, 'you are banned')
+    // Помимо DM боту, игрока с открытым мини-аппом нужно оповестить сразу
+    // же через SSE, а не только через следующий 403 player_banned.
+    expect(harness.sseManager.notifyUser).toHaveBeenCalledWith(42, 'player_banned', { reason: 'player_banned' })
 
     harness.bot.sendMessage.mockClear()
+    harness.sseManager.notifyUser.mockClear()
     harness.playersRepository.findOne.mockImplementation(async (username) =>
       username === '@alice' ? { username, userId: 42, banned: true } : null
     )
@@ -868,10 +927,12 @@ describe('webapp REST routes', () => {
     expect(unbanResponse.statusCode).toBe(200)
     expect(harness.bot.sendMessage).toHaveBeenCalledTimes(1)
     expect(harness.bot.sendMessage).toHaveBeenCalledWith(42, 'you are unbanned')
+    // Разбан не должен закрывать мини-апп — SSE-пуш шлётся только на бан.
+    expect(harness.sseManager.notifyUser).not.toHaveBeenCalled()
     await harness.app.close()
   })
 
-  test('does not send a duplicate DM when banning an already banned player', async () => {
+  test('does not send a duplicate DM or SSE push when banning an already banned player', async () => {
     const harness = await createHarness({ production: true })
     harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
     harness.playersRepository.findOne.mockImplementation(async (username) =>
@@ -888,6 +949,129 @@ describe('webapp REST routes', () => {
 
     expect(response.statusCode).toBe(200)
     expect(harness.bot.sendMessage).not.toHaveBeenCalled()
+    expect(harness.sseManager.notifyUser).not.toHaveBeenCalled()
+    await harness.app.close()
+  })
+
+  test('GET /api/events associates the connection with the userId from initData', async () => {
+    const harness = await createHarness({ production: true })
+
+    await readSseChunks(
+      harness.app,
+      `/api/events?initData=${encodeURIComponent(initDataFor({ id: 77, username: 'alice', first_name: 'Alice' }))}`
+    )
+
+    expect(harness.sseManager.addClient).toHaveBeenCalledWith(expect.anything(), 77)
+    await harness.app.close()
+  })
+
+  test('GET /api/events also resolves the username, so a banned check can fall back to findOne', async () => {
+    // No isBanned/findByUserId on this repository — isUserBanned must fall
+    // back to findOne(username), which needs the @username resolved from
+    // initData, not just the numeric id. Real SseManager here (not the
+    // jest.fn() stub) because this asserts on bytes actually written to the
+    // socket, which the mocked notifyUser wouldn't produce.
+    const playersRepository = {
+      findOne: jest.fn().mockResolvedValue({ username: '@alice', banned: true }),
+    }
+    const harness = await createHarness({ production: true, playersRepository, sseManager: new SseManager() })
+
+    const chunk = await readSseChunks(
+      harness.app,
+      `/api/events?initData=${encodeURIComponent(initDataFor({ id: 77, username: 'alice', first_name: 'Alice' }))}`
+    )
+
+    expect(playersRepository.findOne).toHaveBeenCalledWith('@alice')
+    expect(chunk).toContain('event: player_banned')
+    await harness.app.close()
+  })
+
+  test('GET /api/events pushes player_banned immediately for a player reconnecting while banned', async () => {
+    // Real SseManager: needs an actual write to the socket, which the
+    // jest.fn() notifyUser stub used elsewhere in this file wouldn't produce.
+    const harness = await createHarness({ production: true, sseManager: new SseManager() })
+    harness.playersRepository.isBanned.mockResolvedValue(true)
+
+    const chunk = await readSseChunks(
+      harness.app,
+      `/api/events?initData=${encodeURIComponent(initDataFor({ id: 77, username: 'alice', first_name: 'Alice' }))}`
+    )
+
+    expect(harness.playersRepository.isBanned).toHaveBeenCalledWith(77)
+    expect(chunk).toContain('event: player_banned')
+    await harness.app.close()
+  })
+
+  test('GET /api/events does not push player_banned for a player who is not banned', async () => {
+    const harness = await createHarness({ production: true, sseManager: new SseManager() })
+    harness.playersRepository.isBanned.mockResolvedValue(false)
+
+    const chunk = await readSseChunks(
+      harness.app,
+      `/api/events?initData=${encodeURIComponent(initDataFor({ id: 77, username: 'alice', first_name: 'Alice' }))}`
+    )
+
+    // Не просто "player_banned отсутствует" (что тривиально проходит и при
+    // пустом ответе, если grace-окно истекло раньше первой записи) — а
+    // "state_update пришёл, а player_banned среди дождавшихся событий нет".
+    expect(chunk).toContain('event: state_update')
+    expect(chunk).not.toContain('event: player_banned')
+    await harness.app.close()
+  })
+
+  test('GET /api/events ignores stale initData just like the REST auth() path', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.isBanned.mockResolvedValue(true)
+    const stale = initDataFor(
+      { id: 77, username: 'alice', first_name: 'Alice' },
+      { authDate: Math.floor(Date.now() / 1000) - 25 * 60 * 60 }
+    )
+
+    const chunk = await readSseChunks(harness.app, `/api/events?initData=${encodeURIComponent(stale)}`)
+
+    expect(harness.sseManager.addClient).toHaveBeenCalledWith(expect.anything(), null)
+    expect(harness.log.warn).toHaveBeenCalledWith(
+      'Не удалось проверить initData при подключении к SSE',
+      expect.objectContaining({ reason: 'stale_init_data' })
+    )
+    expect(harness.playersRepository.isBanned).not.toHaveBeenCalled()
+    expect(chunk).not.toContain('event: player_banned')
+    await harness.app.close()
+  })
+
+  test('GET /api/events ignores a forged/invalid initData instead of trusting the connection', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.isBanned.mockResolvedValue(true)
+
+    const chunk = await readSseChunks(harness.app, '/api/events?initData=not-a-valid-signature')
+
+    expect(harness.sseManager.addClient).toHaveBeenCalledWith(expect.anything(), null)
+    expect(harness.log.warn).toHaveBeenCalledWith(
+      'Не удалось проверить initData при подключении к SSE',
+      expect.objectContaining({ reason: expect.any(String) })
+    )
+    expect(harness.playersRepository.isBanned).not.toHaveBeenCalled()
+    expect(chunk).not.toContain('event: player_banned')
+    await harness.app.close()
+  })
+
+  test('GET /api/events without initData in production stays anonymous', async () => {
+    const harness = await createHarness({ production: true })
+
+    await readSseChunks(harness.app, '/api/events')
+
+    expect(harness.sseManager.addClient).toHaveBeenCalledWith(expect.anything(), null)
+    await harness.app.close()
+  })
+
+  test('GET /api/events falls back to the shared dev user id when initData is absent outside production', async () => {
+    const harness = await createHarness({ production: false })
+
+    await readSseChunks(harness.app, '/api/events')
+
+    // Must match the DEV_USER_ID used by auth()'s dev fallback (router.js) —
+    // a mismatch would silently split dev-mode ban checks across two ids.
+    expect(harness.sseManager.addClient).toHaveBeenCalledWith(expect.anything(), 123456)
     await harness.app.close()
   })
 

@@ -1,5 +1,11 @@
 import { createHmac } from 'crypto'
 
+// Telegram обновляет initData при каждом открытии мини-аппа, поэтому разумное
+// окно не мешает обычному использованию — но без него валидный initData,
+// однажды утёкший (например, через access-логи прокси при передаче query-
+// строкой в SSE, см. GET /api/events), остаётся рабочим бессрочно.
+const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60
+
 /**
  * Верифицирует Telegram initData через HMAC-SHA256.
  *
@@ -46,6 +52,19 @@ export const verifyInitData = (initData, botToken) => {
 
   if (expectedHash !== hash) {
     return { ok: false, reason: 'invalid_hash' }
+  }
+
+  // params.get возвращает null при отсутствующем ключе, а Number(null) — это
+  // 0, а не NaN: без явной проверки на пустую строку "нет auth_date" тихо
+  // превращается в "auth_date=0" и отдаётся клиенту как stale_init_data
+  // вместо настоящей причины.
+  const authDateRaw = params.get('auth_date')
+  if (!authDateRaw || !Number.isFinite(Number(authDateRaw))) {
+    return { ok: false, reason: 'missing_auth_date' }
+  }
+  const authDate = Number(authDateRaw)
+  if (Date.now() / 1000 - authDate > MAX_INIT_DATA_AGE_SECONDS) {
+    return { ok: false, reason: 'stale_init_data' }
   }
 
   const userRaw = params.get('user')

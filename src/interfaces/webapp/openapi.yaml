@@ -179,6 +179,9 @@ components:
             not_verified:
               value: { error: not_verified }
               summary: Игрок ещё не подтвердил доступ к мини-аппу (см. POST /api/register).
+            opponent_not_verified:
+              value: { error: opponent_not_verified }
+              summary: Оппонент прямого приглашения (POST /api/direct) ещё не подтвердил доступ к мини-аппу.
 
     NotFound:
       description: Ресурс не найден.
@@ -266,7 +269,11 @@ paths:
   /api/players:
     get:
       summary: Список известных игроков
-      description: Возвращает всех игроков, когда-либо взаимодействовавших с ботом. Поле `userId` не возвращается.
+      description: |
+        Возвращает подтверждённых (`verified: true`) игроков, когда-либо взаимодействовавших
+        с ботом. Поле `userId` не возвращается. Игроки, ещё не подтвердившие доступ кнопкой
+        в общем чате, в этот список не попадают — их видит только администрация через
+        GET /api/admin/players.
       operationId: getPlayers
       tags: [Players]
       responses:
@@ -597,7 +604,10 @@ paths:
   /api/direct:
     post:
       summary: Прямое приглашение соперника
-      description: Ставит авторизованного игрока в поиск с пометкой конкретного соперника. Отправляет сообщение с кнопками в Telegram чат.
+      description: |
+        Ставит авторизованного игрока в поиск с пометкой конкретного соперника. Отправляет
+        сообщение с кнопками в Telegram чат. Соперник должен быть подтверждён (`verified: true`),
+        иначе 403 `opponent_not_verified`.
       operationId: directInvite
       tags: [Direct]
       security:

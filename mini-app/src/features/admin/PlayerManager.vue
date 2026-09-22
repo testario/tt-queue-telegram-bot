@@ -9,12 +9,14 @@ const api = useApi()
 // Основной список — общий usePlayers (тот же, что и на вкладке "Игроки"):
 // бан/восстановление отсюда сразу видны везде, без отдельного admin-стейта.
 const { state, players, load, setBanned } = usePlayers()
-// useAdminPlayers — только для секции "Не подтверждены" ниже: ей нужен
-// chat_id (userId), которого в публичном /api/players нет.
-const { pending, load: loadPending, banByUserId } = useAdminPlayers()
+// useAdminPlayers — только для секций "Не подтверждены" и "Заблокированные
+// неподтверждённые" ниже: им нужен chat_id (userId), которого в публичном
+// /api/players нет (и который сам этот список туда больше не отдаёт).
+const { pending, bannedPending, load: loadPending, banByUserId, restoreByUserId } = useAdminPlayers()
 
 const deletingUsername = ref(null)  // username игрока, которого удаляем прямо сейчас
 const banningUserId = ref(null)     // userId неподтверждённого игрока, которого баним прямо сейчас
+const restoringUserId = ref(null)   // userId неподтверждённого игрока, которого восстанавливаем прямо сейчас
 
 onMounted(() => {
   load().catch((err) => console.error('Не удалось загрузить список игроков', err))
@@ -87,6 +89,17 @@ const banPendingPlayer = async (pendingPlayer) => {
     banningUserId.value = null
   }
 }
+
+const restorePendingPlayer = async (pendingPlayer) => {
+  restoringUserId.value = pendingPlayer.userId
+  try {
+    await restoreByUserId(pendingPlayer.userId)
+  } catch (err) {
+    console.error('Не удалось восстановить игрока по chat_id', pendingPlayer.userId, err)
+  } finally {
+    restoringUserId.value = null
+  }
+}
 </script>
 
 <template>
@@ -121,6 +134,41 @@ const banPendingPlayer = async (pendingPlayer) => {
       </div>
     </template>
 
+    <!-- Неподтверждённые, которых уже забанили — отдельно от "Не подтверждены"
+         выше (та секция только про ещё не забаненных) и от "Список игроков"
+         ниже (туда неподтверждённые вообще не попадают, см. usePlayers.js):
+         без этой секции забаненный неподтверждённый пропадал бы из панели
+         управления совсем, а разбанить его было бы нечем. isAdmin здесь не
+         исключается (в отличие от "Не подтверждены" выше) — getChatAdminIds
+         в router.js fail-open, так что забанить админа чата теоретически
+         можно, пока Telegram недоступен, и бейдж должен явно это показать. -->
+    <template v-if="bannedPending.length">
+      <h3 class="player-manager__title">Заблокированные неподтверждённые</h3>
+      <div class="player-manager__list">
+        <div
+          v-for="p in bannedPending"
+          :key="p.userId"
+          class="player-manager__row"
+        >
+          <PlayerAvatar :username="p.username" :size="36" />
+          <div class="player-manager__info">
+            <span class="player-manager__name">{{ p.displayName }}</span>
+            <span class="player-manager__username">{{ p.username }} · chat_id: {{ p.userId }}</span>
+          </div>
+          <span v-if="p.isAdmin" class="player-manager__admin">Админ</span>
+          <span class="player-manager__ban">Бан</span>
+          <button
+            class="player-manager__action player-manager__action--restore"
+            :disabled="restoringUserId === p.userId"
+            :aria-label="`Вернуть ${p.username}`"
+            @click="restorePendingPlayer(p)"
+          >
+            Вернуть
+          </button>
+        </div>
+      </div>
+    </template>
+
     <h3 class="player-manager__title">Список игроков</h3>
 
     <p v-if="state.loading && !state.loaded" class="player-manager__hint">Загрузка...</p>
@@ -141,8 +189,10 @@ const banPendingPlayer = async (pendingPlayer) => {
           <span class="player-manager__username">{{ p.username }}</span>
         </div>
         <span v-if="p.isAdmin" class="player-manager__admin">Админ</span>
+        <!-- !p.verified здесь больше не встречается: usePlayers()/GET
+             /api/players отдаёт только подтверждённых (см. router.js),
+             неподтверждённые видны только в секциях выше. -->
         <span v-if="p.banned" class="player-manager__ban">Бан</span>
-        <span v-else-if="!p.verified" class="player-manager__pending">Не подтверждён</span>
         <button
           v-if="!p.isAdmin || p.banned"
           :class="['player-manager__action', { 'player-manager__action--restore': p.banned }]"
@@ -252,16 +302,6 @@ const banPendingPlayer = async (pendingPlayer) => {
     border-radius: 8px;
     background: color-mix(in srgb, var(--color-success), transparent 84%);
     color: var(--color-success);
-    font-size: 11px;
-    font-weight: 900;
-  }
-
-  &__pending {
-    flex: 0 0 auto;
-    padding: 5px 8px;
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--color-warning), transparent 84%);
-    color: var(--color-warning);
     font-size: 11px;
     font-weight: 900;
   }

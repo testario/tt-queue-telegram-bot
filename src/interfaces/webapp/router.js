@@ -254,6 +254,17 @@ export const registerRoutes = async (app, deps) => {
     return player?.banned === true
   }
 
+  // Симметрично isUsernameBanned — для проверки оппонента прямого
+  // приглашения (POST /api/direct, см. ниже), у которого нет своего
+  // req.tgUser. Резолвим userId через findOne и отдаём его в isUserVerified,
+  // а не читаем player.verified напрямую — иначе владелец бота (OWNER_USER_ID),
+  // у которого в БД он может быть не выставлен, оказался бы неприглашаемым.
+  const isUsernameVerified = async (username) => {
+    if (!username || typeof playersRepository.findOne !== 'function') return false
+    const player = await playersRepository.findOne(username)
+    return isUserVerified({ id: player?.userId }, username)
+  }
+
   const isInviteParticipantAuthorized = async (invite, actor, actorUserId, role) => {
     const identity = role === 'initiator' ? invite?.playerIdentity : invite?.opponentIdentity
     return Boolean(identity?.username === actor
@@ -535,9 +546,14 @@ export const registerRoutes = async (app, deps) => {
       }))
   }
 
-  // GET /api/players — список известных игроков
+  // GET /api/players — список известных игроков. Неподтверждённые (verified:
+  // false) сюда намеренно не попадают: этот список публичный (без auth) и
+  // используется для общего списка/вызова на игру — до подтверждения игрок
+  // не должен ни маячить среди обычных игроков, ни быть приглашаемым.
+  // Админка видит их отдельно через GET /api/admin/players (ниже).
   app.get('/api/players', async () => {
-    return { players: await buildPlayersList({ includeUserId: false }) }
+    const players = await buildPlayersList({ includeUserId: false })
+    return { players: players.filter((player) => player.verified) }
   })
 
   // GET /api/admin/players — тот же список, но только для admin: добавляет
@@ -1046,6 +1062,16 @@ export const registerRoutes = async (app, deps) => {
     // создания и немедленного отката self-инвайта в сторе ниже.
     if (normalizedOpponent.toLowerCase() === req.player.toLowerCase()) {
       return { ok: false, reason: 'self_invite' }
+    }
+    // Список игроков в мини-аппе уже скрывает неподтверждённых оппонентов
+    // (см. GET /api/players), но прямой вызов этого API — нет: без этой
+    // проверки приглашение неподтверждённому всё ещё можно было бы создать
+    // и принять кнопкой в чате (direct_accept в bot.js), в обход всей фичи.
+    // После self_invite — иначе банальный вызов себя самого (собственная
+    // verified-запись здесь не подгружена этим путём) отвечал бы неверной
+    // причиной отказа.
+    if (!(await isUsernameVerified(normalizedOpponent))) {
+      return reply.code(403).send({ error: 'opponent_not_verified' })
     }
     const currentState = await context.repository.get()
     const opponentIdentity = typeof currentState.getActiveIdentity === 'function'

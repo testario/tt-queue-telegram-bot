@@ -65,6 +65,12 @@ const createHarness = async ({
   const playersRepository = playersRepositoryOverride || {
     upsert: jest.fn().mockResolvedValue(undefined),
     isBanned: jest.fn().mockResolvedValue(false),
+    // Default null (unlike isVerified's default true below): POST /api/direct
+    // resolves its opponent's verified status via findOne(username), so any
+    // new test that exercises it needs to mock findOne for the opponent
+    // (with a userId + verified: true) or it 403s with opponent_not_verified
+    // instead of reaching the scenario under test — see the existing
+    // POST /api/direct tests for the pattern.
     findOne: jest.fn().mockResolvedValue(null),
     getAliases: jest.fn().mockResolvedValue([]),
     setBanned: jest.fn().mockResolvedValue(true),
@@ -211,6 +217,9 @@ describe('webapp REST routes', () => {
 
   test('activates a test identity before granting route access', async () => {
     const harness = await createHarness()
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, verified: true } : null
+    )
     const response = await harness.app.inject({
       method: 'POST',
       url: '/api/direct',
@@ -555,6 +564,7 @@ describe('webapp REST routes', () => {
       lastName: 'Player',
       lastSeenAt: '2026-01-01T00:00:00.000Z',
       banned: true,
+      verified: true,
       userId: 10,
       generation: 4,
       identityVersion: 4,
@@ -565,6 +575,7 @@ describe('webapp REST routes', () => {
       username: '@__former_42',
       userId: 42,
       banned: true,
+      verified: true,
     }])
 
     const response = await harness.app.inject({ method: 'GET', url: '/api/players' })
@@ -577,7 +588,7 @@ describe('webapp REST routes', () => {
         lastName: 'Player',
         lastSeenAt: '2026-01-01T00:00:00.000Z',
         banned: true,
-        verified: false,
+        verified: true,
         isAdmin: false,
       }],
     })
@@ -587,19 +598,35 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  test('excludes unverified players from the public /api/players list', async () => {
+    const harness = await createHarness()
+    harness.playersRepository.findAll.mockResolvedValue([
+      { username: '@alice', userId: 10, verified: true },
+      { username: '@bob', userId: 11, verified: false },
+      { username: '@carol', userId: 12, banned: true, verified: false },
+    ])
+
+    const response = await harness.app.inject({ method: 'GET', url: '/api/players' })
+
+    expect(response.json()).toEqual({
+      players: [{ username: '@alice', banned: false, verified: true, isAdmin: false }],
+    })
+    await harness.app.close()
+  })
+
   test('returns a normalized ban flag without userId in the player list', async () => {
     const harness = await createHarness()
     harness.playersRepository.findAll.mockResolvedValue([
-      { username: '@alice', userId: 10, banned: true },
-      { username: '@bob', userId: 11 },
+      { username: '@alice', userId: 10, banned: true, verified: true },
+      { username: '@bob', userId: 11, verified: true },
     ])
 
     const response = await harness.app.inject({ method: 'GET', url: '/api/players' })
 
     expect(response.json()).toEqual({
       players: [
-        { username: '@alice', banned: true, verified: false, isAdmin: false },
-        { username: '@bob', banned: false, verified: false, isAdmin: false },
+        { username: '@alice', banned: true, verified: true, isAdmin: false },
+        { username: '@bob', banned: false, verified: true, isAdmin: false },
       ],
     })
     await harness.app.close()
@@ -1143,16 +1170,16 @@ describe('webapp REST routes', () => {
     const harness = await createHarness()
     harness.bot.getChatAdministrators.mockResolvedValue([{ user: { id: 10 } }])
     harness.playersRepository.findAll.mockResolvedValue([
-      { username: '@alice', userId: 10 },
-      { username: '@bob', userId: 11 },
+      { username: '@alice', userId: 10, verified: true },
+      { username: '@bob', userId: 11, verified: true },
     ])
 
     const response = await harness.app.inject({ method: 'GET', url: '/api/players' })
 
     expect(response.json()).toEqual({
       players: [
-        { username: '@alice', banned: false, verified: false, isAdmin: true },
-        { username: '@bob', banned: false, verified: false, isAdmin: false },
+        { username: '@alice', banned: false, verified: true, isAdmin: true },
+        { username: '@bob', banned: false, verified: true, isAdmin: false },
       ],
     })
     await harness.app.close()
@@ -1161,7 +1188,10 @@ describe('webapp REST routes', () => {
   test('GET /api/players reports the METRICS_CHAT_ID owner as verified even without a stored record', async () => {
     // This is the mechanism that actually keeps the login screen off the
     // owner's screen — requireVerified (server-side gate) is defense in
-    // depth, but the mini-app decides what to render from this DTO.
+    // depth, but the mini-app decides what to render from this DTO. bob is
+    // unverified and not the owner, so — like any other unverified player —
+    // he's filtered out of this public list entirely (see the dedicated
+    // "excludes unverified players" test above).
     const previousOwnerId = process.env.METRICS_CHAT_ID
     process.env.METRICS_CHAT_ID = '10'
     try {
@@ -1176,7 +1206,6 @@ describe('webapp REST routes', () => {
       expect(response.json()).toEqual({
         players: [
           { username: '@owner', banned: false, verified: true, isAdmin: false },
-          { username: '@bob', banned: false, verified: false, isAdmin: false },
         ],
       })
       await harness.app.close()
@@ -1279,6 +1308,10 @@ describe('webapp REST routes', () => {
       harness.playersRepository.findAll.mockResolvedValue([
         { username: '@alice', userId: 42, verified: false, banned: false },
         { username: '@admin', userId: 10, verified: true, banned: false },
+        // Забаненный неподтверждённый — не попадает ни в pending, ни в
+        // usePlayers на фронте, единственный источник данных для него —
+        // именно этот эндпоинт (см. bannedPending в useAdminPlayers.js).
+        { username: '@carol', userId: 43, verified: false, banned: true },
       ])
 
       const response = await harness.app.inject({
@@ -1292,6 +1325,7 @@ describe('webapp REST routes', () => {
         players: [
           { username: '@alice', banned: false, verified: false, userId: 42, isAdmin: false },
           { username: '@admin', banned: false, verified: true, userId: 10, isAdmin: true },
+          { username: '@carol', banned: true, verified: false, userId: 43, isAdmin: false },
         ],
       })
       await harness.app.close()
@@ -2067,8 +2101,42 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  // Список игроков в мини-аппе уже скрывает неподтверждённых (GET
+  // /api/players отдаёт только verified), но прямой вызов этого REST-эндпоинта
+  // в обход UI (или устаревшая вкладка мини-аппа) — нет, без этой проверки
+  // приглашение неподтверждённому всё ещё можно было бы создать и принять
+  // кнопкой в чате (direct_accept в bot.js).
+  test('rejects an invite to an unverified opponent before creating a match', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, verified: false } : null
+    )
+    // isUserVerified prefers isVerified(userId) over the raw findOne().verified
+    // field once a userId is resolved (see router.js) — the default harness
+    // mock always resolves true, so bob's userId (2) needs to be overridden
+    // here too. Alice's own userId (10) must stay true — requireVerified
+    // gates this whole route on the acting user, not just the opponent.
+    harness.playersRepository.isVerified.mockImplementation(async (userId) => userId !== 2)
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@bob' },
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toEqual({ error: 'opponent_not_verified' })
+    expect(harness.context.directMatch.execute).not.toHaveBeenCalled()
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    await harness.app.close()
+  })
+
   test('does not create or overwrite an invite on a repeated request', async () => {
     const harness = await createHarness({ production: true })
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, verified: true } : null
+    )
     const first = await harness.app.inject({
       method: 'POST',
       url: '/api/direct',
@@ -2118,7 +2186,11 @@ describe('webapp REST routes', () => {
 
   test('falls back to the queue chat when REST private delivery fails', async () => {
     const harness = await createHarness({ production: true })
-    // Реальный получатель резолвится из ownership состояния (userId: 2), а не из playersRepository.
+    // Реальный получатель резолвится из ownership состояния (userId: 2), а не из playersRepository —
+    // findOne здесь мокается только ради verified-гейта на оппонента (см. isUsernameVerified).
+    harness.playersRepository.findOne.mockImplementation(async (username) =>
+      username === '@bob' ? { username, userId: 2, verified: true } : null
+    )
     harness.bot.sendMessage.mockImplementation((chatId) =>
       chatId === 2 ? Promise.reject(new Error('private chat unavailable')) : Promise.resolve()
     )

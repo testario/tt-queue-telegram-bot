@@ -81,8 +81,10 @@ describe('all-in-one webapp composition', () => {
   // player_verified обрабатывается веткой, которая return'ится ДО блокового
   // broadcast('state_update', ...) — в отличие от backend-only режима (см.
   // тест ниже), где второй handler лишь дополняет уже существующий
-  // безусловный broadcast, а не заменяет его.
-  test('relays a local player_verified notification to sseManager.notifyUser without a state_update broadcast', async () => {
+  // безусловный broadcast, а не заменяет его. Она всё же шлёт свой собственный
+  // players_update — панель управления обновляет секцию "Не подтверждены"
+  // у всех открытых сессий, а не только у самого игрока.
+  test('relays a local player_verified notification to sseManager.notifyUser and broadcasts players_update, without a state_update broadcast', async () => {
     let capturedHandler
     const context = {
       chatId: 'queue',
@@ -113,10 +115,12 @@ describe('all-in-one webapp composition', () => {
       await capturedHandler({ chatId: 'queue', text: '', meta: { type: 'player_verified', userId: '77' } })
 
       expect(notifyUser).toHaveBeenCalledWith('77', 'player_verified', { verified: true })
-      expect(broadcast).not.toHaveBeenCalled()
+      expect(broadcast).toHaveBeenCalledWith('players_update', {})
+      expect(broadcast).not.toHaveBeenCalledWith('state_update', expect.anything())
 
       // Untouched: a real state_update-shaped notification still broadcasts,
       // proving the new branch didn't swallow the existing behavior.
+      broadcast.mockClear()
       await capturedHandler({ chatId: 'queue', text: '', meta: { type: 'state_update' } })
       expect(broadcast).toHaveBeenCalledWith('state_update', expect.any(Object))
     } finally {
@@ -155,6 +159,7 @@ describe('all-in-one webapp composition', () => {
 
     try {
       const notifyUser = jest.spyOn(appResult.sseManager, 'notifyUser')
+      const broadcast = jest.spyOn(appResult.sseManager, 'broadcast')
 
       expect(handlers.length).toBeGreaterThanOrEqual(2)
       for (const handler of handlers) {
@@ -162,6 +167,10 @@ describe('all-in-one webapp composition', () => {
       }
 
       expect(notifyUser).toHaveBeenCalledWith('77', 'player_verified', { verified: true })
+      // Тот же players_update, что и в all-in-one ветке (см. тест выше) —
+      // панель управления должна обновить "Не подтверждены" и в backend-only
+      // режиме, а не только когда бот и backend — один процесс.
+      expect(broadcast).toHaveBeenCalledWith('players_update', {})
     } finally {
       await appResult.app.close()
     }

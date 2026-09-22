@@ -270,6 +270,13 @@ export const registerRoutes = async (app, deps) => {
     return isUserBanned({ id: invite.playerIdentity.userId }, invite.player)
   }
 
+  // Кто уже был замечен этим процессом — для одноразового players_update при
+  // первом визите (см. ниже в auth()). Только в памяти, как и
+  // registrationRequestSentAt ниже: переживать рестарт процесса ей не нужно,
+  // список "Не подтверждены" на бэкенде и так не зависит от этого множества,
+  // оно лишь ускоряет обновление уже открытой вкладки управления.
+  const notifiedNewPlayerUserIds = new Set()
+
   const auth = async (req, reply) => {
     const initData = req.headers['x-telegram-init-data']
 
@@ -324,6 +331,18 @@ export const registerRoutes = async (app, deps) => {
         return reply.code(403).send({ error: 'player_banned' })
       }
       return reply.code(503).send({ error: legacyTestContext ? 'player_registration_failed' : 'player_identity_unavailable' })
+    }
+
+    // Первый успешный claim этого userId за время жизни процесса — обычно это
+    // самый первый визит игрока в мини-апп вообще (claimPlayerIdentity
+    // апсертит его запись уже здесь, задолго до POST /api/register — см.
+    // комментарий у onMounted в App.vue). Панель управления должна увидеть
+    // такого игрока в "Не подтверждены", не дожидаясь, пока он вообще
+    // нажмёт кнопку подтверждения — часто он до этого и не доходит, просто
+    // спамит открытиями мини-аппа.
+    if (req.tgUser?.id != null && !notifiedNewPlayerUserIds.has(String(req.tgUser.id))) {
+      notifiedNewPlayerUserIds.add(String(req.tgUser.id))
+      sseManager.broadcast('players_update', {})
     }
 
     // Регистрация намеренно выполняется до этой проверки: вход не снимает бан.
@@ -501,18 +520,32 @@ export const registerRoutes = async (app, deps) => {
     }
   })
 
-  // GET /api/players — список известных игроков
-  app.get('/api/players', async () => {
+  // Общий список для GET /api/players и GET /api/admin/players — они
+  // отличаются ровно одним полем (userId), которое нельзя отдавать в
+  // публичный неавторизованный /api/players (это был бы слив чужого chat_id).
+  const buildPlayersList = async ({ includeUserId }) => {
     const players = await playersRepository.findAll()
     const adminIds = await getChatAdminIds()
-    return {
-      players: players
-        .filter((player) => !isSyntheticFormerUsername(player?.username))
-        .map((player) => ({
-          ...toPublicPlayer(player, { ownerUserId: OWNER_USER_ID }),
-          isAdmin: player?.userId != null && adminIds.has(String(player.userId)),
-        })),
-    }
+    return players
+      .filter((player) => !isSyntheticFormerUsername(player?.username))
+      .map((player) => ({
+        ...toPublicPlayer(player, { ownerUserId: OWNER_USER_ID }),
+        ...(includeUserId ? { userId: player?.userId ?? null } : {}),
+        isAdmin: player?.userId != null && adminIds.has(String(player.userId)),
+      }))
+  }
+
+  // GET /api/players — список известных игроков
+  app.get('/api/players', async () => {
+    return { players: await buildPlayersList({ includeUserId: false }) }
+  })
+
+  // GET /api/admin/players — тот же список, но только для admin: добавляет
+  // userId (chat_id), которого нет в публичном /api/players — по нему панель
+  // управления умеет банить ещё не подтверждённого игрока напрямую (см.
+  // DELETE /api/players/by-id/:userId), не дожидаясь резолва username.
+  app.get('/api/admin/players', { preHandler: [auth, requireVerified, requireAdmin] }, async () => {
+    return { players: await buildPlayersList({ includeUserId: true }) }
   })
 
   // GET /api/players/:username/avatar — редирект на аватар игрока
@@ -694,6 +727,61 @@ export const registerRoutes = async (app, deps) => {
     return true
   }
 
+  // Общая последовательность бана уже найденной записи (aliases → снятие с
+  // очереди/приглашений → уведомления → players_update). Используется DELETE
+  // /api/players/:username, DELETE /api/players/by-id/:userId и веткой
+  // banned=true в PATCH /api/players/:username — раньше это было три почти
+  // идентичных копии, которые легко было бы починить в одном месте и
+  // сломать в другом. Не трогает reply — вызывающий код сам решает HTTP-код
+  // по result.error (см. banErrorStatus ниже). player может быть null
+  // (репозиторий без findOne у DELETE-по-username) — тогда setPlayerBanned
+  // пробует username напрямую, а fence/cleanup/уведомления по userId просто
+  // пропускаются.
+  const banPlayerRecord = async ({ player, username }) => {
+    const aliases = await getPlayerAliasesForIdentity(player, username)
+    // Снимаем до setPlayerBanned: InMemoryPlayersRepository.findOne отдаёт
+    // живую ссылку на запись, которую setBanned мутирует на месте — если
+    // прочитать player.banned после этого вызова, там уже будет true.
+    const wasAlreadyBanned = player?.banned === true
+    const banned = await setPlayerBanned(username, true)
+    if (!banned) return { ok: false, error: 'player_not_found' }
+    if (!await setQueueBanFence(player?.userId, true)) {
+      return { ok: false, error: 'ban_fence_unavailable' }
+    }
+    const cleanupSucceeded = await cleanupPlayerIdentity({
+      userId: player?.userId,
+      usernames: aliases,
+    })
+    if (!cleanupSucceeded) return { ok: false, error: 'ban_cleanup_unavailable' }
+    // Не ждём Telegram, как и остальные уведомления в этом файле — ответ
+    // админу не должен зависеть от round-trip до чата с игроком.
+    if (!wasAlreadyBanned) {
+      notifyPlayerDirect(player?.userId, messages.playerBanned())
+      // Если у игрока в этот момент открыт мини-апп — оповещаем его тем же
+      // тиком через SSE, не дожидаясь следующего запроса к API.
+      sseManager.notifyUser(player?.userId, 'player_banned', { reason: 'player_banned' })
+    }
+    // Широковещательно, а не только banned-игроку: у остальных открытых
+    // сессий мини-аппа (в первую очередь — у других админов на вкладке
+    // управления) список игроков должен обновиться сам, без ручного
+    // перезахода. Payload пустой — это только сигнал "подтяни список заново"
+    // через авторизованный GET /api/admin/players, а не сами данные: SSE
+    // канал публичный, и userId других игроков туда лить нельзя.
+    sseManager.broadcast('players_update', {})
+    return { ok: true }
+  }
+
+  const banErrorStatus = {
+    player_not_found: 404,
+    ban_fence_unavailable: 503,
+    ban_cleanup_unavailable: 503,
+  }
+
+  const sendBanResult = (reply, result) =>
+    result.ok
+      ? { ok: true }
+      : reply.code(banErrorStatus[result.error] || 500).send({ error: result.error })
+
   // DELETE /api/players/:username — заблокировать игрока (только admin)
   app.delete('/api/players/:username', { preHandler: [auth, requireVerified, requireAdmin] }, async (req, reply) => {
     const atUsername = `@${req.params.username}`
@@ -711,30 +799,40 @@ export const registerRoutes = async (app, deps) => {
     if (player?.userId != null && (await getChatAdminIds({ fresh: true })).has(String(player.userId))) {
       return reply.code(403).send({ error: 'cannot_ban_admin' })
     }
-    const aliases = await getPlayerAliasesForIdentity(player, atUsername)
-    // Снимаем до setPlayerBanned: InMemoryPlayersRepository.findOne отдаёт
-    // живую ссылку на запись, которую setBanned мутирует на месте — если
-    // прочитать player.banned после этого вызова, там уже будет true.
-    const wasAlreadyBanned = player?.banned === true
-    const banned = await setPlayerBanned(atUsername, true)
-    if (!banned) return reply.code(404).send({ error: 'player_not_found' })
-    if (!await setQueueBanFence(player?.userId, true)) {
-      return reply.code(503).send({ error: 'ban_fence_unavailable' })
+    return sendBanResult(reply, await banPlayerRecord({ player, username: atUsername }))
+  })
+
+  // DELETE /api/players/by-id/:userId — заблокировать игрока по chat_id
+  // (только admin). Основной путь бана из секции "Не подтверждены" панели
+  // управления: там уже показан chat_id самого игрока (см. GET
+  // /api/admin/players), и админу не нужно отдельно резолвить username,
+  // чтобы сразу остановить спам-игрока, даже не дожидаясь, пока он вообще
+  // нажмёт кнопку подтверждения.
+  app.delete('/api/players/by-id/:userId', { preHandler: [auth, requireVerified, requireAdmin] }, async (req, reply) => {
+    if (typeof playersRepository.findByUserId !== 'function') {
+      return reply.code(503).send({ error: 'player_lookup_unavailable' })
     }
-    const cleanupSucceeded = await cleanupPlayerIdentity({
-      userId: player?.userId,
-      usernames: aliases,
-    })
-    if (!cleanupSucceeded) return reply.code(503).send({ error: 'ban_cleanup_unavailable' })
-    // Не ждём Telegram, как и остальные уведомления в этом файле — ответ
-    // админу не должен зависеть от round-trip до чата с игроком.
-    if (!wasAlreadyBanned) {
-      notifyPlayerDirect(player?.userId, messages.playerBanned())
-      // Если у игрока в этот момент открыт мини-апп — оповещаем его тем же
-      // тиком через SSE, не дожидаясь следующего запроса к API.
-      sseManager.notifyUser(player?.userId, 'player_banned', { reason: 'player_banned' })
+    // Fastify всегда отдаёт параметры пути строками. Telegram userId в Mongo
+    // хранится числом (players.userId пишется как Number из req.tgUser.id —
+    // см. upsert/auth() выше), и MongoDB делает типострогий equality-матч:
+    // findOne({ userId: '999' }) не найдёт документ с userId: 999. Без
+    // явного приведения этот маршрут никогда бы не находил игрока в проде.
+    // Проверяем строго десятичными цифрами перед Number(...) — сам по себе
+    // Number() принимает и '0x10' (=16), и '1e3' (=1000), и ' 12' с пробелами.
+    if (!/^\d+$/.test(req.params.userId)) {
+      return reply.code(400).send({ error: 'invalid_user_id' })
     }
-    return { ok: true }
+    const targetUserId = Number(req.params.userId)
+    if (!Number.isSafeInteger(targetUserId)) {
+      return reply.code(400).send({ error: 'invalid_user_id' })
+    }
+    const player = await playersRepository.findByUserId(targetUserId)
+    if (!player) return reply.code(404).send({ error: 'player_not_found' })
+    // fresh: true — см. пояснение у DELETE /api/players/:username выше.
+    if ((await getChatAdminIds({ fresh: true })).has(String(targetUserId))) {
+      return reply.code(403).send({ error: 'cannot_ban_admin' })
+    }
+    return sendBanResult(reply, await banPlayerRecord({ player, username: player.username }))
   })
 
   // PATCH /api/players/:username — изменить статус бана (только admin)
@@ -752,30 +850,20 @@ export const registerRoutes = async (app, deps) => {
       && (await getChatAdminIds({ fresh: true })).has(String(player.userId))) {
       return reply.code(403).send({ error: 'cannot_ban_admin' })
     }
+    if (banned) {
+      const result = await banPlayerRecord({ player, username: atUsername })
+      if (!result.ok) return sendBanResult(reply, result)
+      return { ok: true, banned: true }
+    }
     // Снимаем до setPlayerBanned — см. пояснение в DELETE-хендлере выше
     // (InMemoryPlayersRepository мутирует запись на месте).
     const wasAlreadyBanned = player?.banned === true
-    const updated = await setPlayerBanned(atUsername, banned)
+    const updated = await setPlayerBanned(atUsername, false)
     if (!updated) return reply.code(404).send({ error: 'player_not_found' })
-    if (!await setQueueBanFence(player?.userId, banned)) {
+    if (!await setQueueBanFence(player?.userId, false)) {
       return reply.code(503).send({ error: 'ban_fence_unavailable' })
     }
-    if (banned) {
-      const aliases = await getPlayerAliasesForIdentity(player, atUsername)
-      const cleanupSucceeded = await cleanupPlayerIdentity({
-        userId: player?.userId,
-        usernames: aliases,
-      })
-      if (!cleanupSucceeded) return reply.code(503).send({ error: 'ban_cleanup_unavailable' })
-      // Не ждём Telegram, как и остальные уведомления в этом файле; и не
-      // дублируем сообщение, если игрок уже был забанен раньше.
-      if (!wasAlreadyBanned) {
-        notifyPlayerDirect(player?.userId, messages.playerBanned())
-        // Если у игрока в этот момент открыт мини-апп — оповещаем его тем же
-        // тиком через SSE, не дожидаясь следующего запроса к API.
-        sseManager.notifyUser(player?.userId, 'player_banned', { reason: 'player_banned' })
-      }
-    } else if (wasAlreadyBanned) {
+    if (wasAlreadyBanned) {
       // Симметрично бану: уведомляем о разбане, только если игрок
       // действительно был забанен до этого запроса. SSE-пуш здесь намеренно
       // не шлём — banState.isBanned на клиенте не сбрасывается назад в
@@ -784,7 +872,8 @@ export const registerRoutes = async (app, deps) => {
       // "отменять" его нечем и незачем.
       notifyPlayerDirect(player?.userId, messages.playerUnbanned())
     }
-    return { ok: true, banned }
+    sseManager.broadcast('players_update', {})
+    return { ok: true, banned: false }
   })
 
   // Когда игрок в последний раз запрашивал подтверждение регистрации —
@@ -814,6 +903,7 @@ export const registerRoutes = async (app, deps) => {
       if (typeof playersRepository.setVerified === 'function') {
         await playersRepository.setVerified(req.player, true)
       }
+      sseManager.broadcast('players_update', {})
       return { ok: true, alreadyVerified: true }
     }
     // Дешёвая in-memory проверка раньше похода в Telegram API: не тратим
@@ -844,6 +934,12 @@ export const registerRoutes = async (app, deps) => {
     const sent = await notifyChat(messages.registrationRequest({ player: req.player }), keyboard)
     if (!sent) return reply.code(503).send({ error: 'registration_request_failed' })
     registrationRequestSentAt.set(key, Date.now())
+    // Запись игрока обычно уже существует к этому моменту (claimPlayerIdentity
+    // в auth() апсертит её на первом же авторизованном запросе, например на
+    // GET /api/admin/check при открытии мини-аппа — раньше, чем сюда) — но
+    // шлём сигнал и здесь: он дешёвый, а лишний не повредит, если по каким-то
+    // причинам панель управления его к этому моменту ещё не увидела.
+    sseManager.broadcast('players_update', {})
     return { ok: true, alreadyVerified: false, cooldown: false }
   })
 

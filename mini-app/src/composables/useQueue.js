@@ -1,5 +1,5 @@
 import { reactive, readonly } from 'vue'
-import { useApi, markPlayerBanned, markPlayerVerified } from './useApi.js'
+import { useApi, markPlayerBanned, markPlayerVerified, bumpPlayersSync } from './useApi.js'
 import { useTelegram } from './useTelegram.js'
 
 const state = reactive({
@@ -81,6 +81,14 @@ const connectSse = () => {
   // соединение не закрываем: игроку оно ещё понадобится для обычной работы.
   eventSource.addEventListener('player_verified', () => {
     markPlayerVerified()
+  })
+
+  // Список игроков мог измениться (новый игрок, подтверждение регистрации,
+  // бан/разбан) — см. players_update в router.js. Payload здесь намеренно
+  // пустой, актуальные данные панель управления подтягивает сама через
+  // usePlayersSync (см. useAdminPlayers.js).
+  eventSource.addEventListener('players_update', () => {
+    bumpPlayersSync()
   })
 
   eventSource.onerror = () => {

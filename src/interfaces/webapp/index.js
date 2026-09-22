@@ -399,6 +399,11 @@ export const createWebApp = async ({
       if (event?.type !== 'player_verified') return
       const userId = event?.payload?.userId
       if (userId != null) sseManager.notifyUser(userId, 'player_verified', { verified: true })
+      // Подтверждение регистрации меняет секцию "Не подтверждены" в панели
+      // управления — у неё своя SSE-подписка (см. players_update в router.js),
+      // не завязанная на конкретного userId, поэтому шлём отдельно от
+      // targeted notifyUser выше.
+      sseManager.broadcast('players_update', {})
     })
   } else if (resolvedContext) {
     resolvedContext.notifier.onMessage(async ({ chatId, meta }) => {
@@ -407,6 +412,7 @@ export const createWebApp = async ({
       // notifier.notify(), без обёртки payload (в отличие от Redis-ветки выше).
       if (meta?.type === 'player_verified') {
         if (meta.userId != null) sseManager.notifyUser(meta.userId, 'player_verified', { verified: true })
+        sseManager.broadcast('players_update', {})
         return
       }
       try {

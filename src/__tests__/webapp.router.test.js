@@ -1249,6 +1249,247 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  test('DELETE and PATCH /api/players/:username broadcast players_update so other admin sessions refresh their list', async () => {
+    const harness = await createHarness({ production: true })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+
+    await harness.app.inject({
+      method: 'DELETE',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+    })
+    expect(harness.sseManager.broadcast).toHaveBeenCalledWith('players_update', {})
+
+    harness.sseManager.broadcast.mockClear()
+    await harness.app.inject({
+      method: 'PATCH',
+      url: '/api/players/alice',
+      headers: authHeader('admin', 10),
+      payload: { banned: false },
+    })
+    expect(harness.sseManager.broadcast).toHaveBeenCalledWith('players_update', {})
+    await harness.app.close()
+  })
+
+  describe('GET /api/admin/players', () => {
+    test('requires admin and includes userId, unlike the public /api/players list', async () => {
+      const harness = await createHarness({ production: true })
+      harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+      harness.bot.getChatAdministrators.mockResolvedValue([{ user: { id: 10 } }])
+      harness.playersRepository.findAll.mockResolvedValue([
+        { username: '@alice', userId: 42, verified: false, banned: false },
+        { username: '@admin', userId: 10, verified: true, banned: false },
+      ])
+
+      const response = await harness.app.inject({
+        method: 'GET',
+        url: '/api/admin/players',
+        headers: authHeader('admin', 10),
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        players: [
+          { username: '@alice', banned: false, verified: false, userId: 42, isAdmin: false },
+          { username: '@admin', banned: false, verified: true, userId: 10, isAdmin: true },
+        ],
+      })
+      await harness.app.close()
+    })
+
+    test('rejects a non-admin caller', async () => {
+      const harness = await createHarness({ production: true })
+      harness.bot.getChatMember.mockResolvedValue({ status: 'member' })
+
+      const response = await harness.app.inject({
+        method: 'GET',
+        url: '/api/admin/players',
+        headers: authHeader('alice', 1),
+      })
+
+      expect(response.statusCode).toBe(403)
+      expect(response.json()).toEqual({ error: 'admin_required' })
+      await harness.app.close()
+    })
+  })
+
+  describe('DELETE /api/players/by-id/:userId', () => {
+    test('bans a player who has only requested confirmation, using chat_id directly', async () => {
+      const harness = await createHarness({ production: true })
+      harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+      harness.playersRepository.findByUserId = jest.fn().mockResolvedValue({
+        username: '@spammer', userId: 999, verified: false, banned: false,
+      })
+      harness.playersRepository.setBanned.mockResolvedValue(true)
+
+      const response = await harness.app.inject({
+        method: 'DELETE',
+        url: '/api/players/by-id/999',
+        headers: authHeader('admin', 10),
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ ok: true })
+      // Fastify отдаёт параметры пути строками, а в Mongo userId хранится
+      // числом (findByUserId делает Number(userId) match) — findByUserId
+      // здесь обязан получить настоящее число, а не '999'-строку, иначе
+      // прод-бан по chat_id молча не находил бы игрока (см. MongoPlayersRepository).
+      expect(harness.playersRepository.findByUserId).toHaveBeenCalledWith(999)
+      expect(harness.playersRepository.setBanned).toHaveBeenCalledWith('@spammer', true)
+      expect(harness.sseManager.notifyUser).toHaveBeenCalledWith(999, 'player_banned', { reason: 'player_banned' })
+      expect(harness.sseManager.broadcast).toHaveBeenCalledWith('players_update', {})
+      await harness.app.close()
+    })
+
+    test('404s when no player record exists for that chat_id', async () => {
+      const harness = await createHarness({ production: true })
+      harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+      harness.playersRepository.findByUserId = jest.fn().mockResolvedValue(null)
+
+      const response = await harness.app.inject({
+        method: 'DELETE',
+        url: '/api/players/by-id/999',
+        headers: authHeader('admin', 10),
+      })
+
+      expect(response.statusCode).toBe(404)
+      expect(response.json()).toEqual({ error: 'player_not_found' })
+      await harness.app.close()
+    })
+
+    test('rejects a non-numeric chat_id instead of passing it through to the repository', async () => {
+      const harness = await createHarness({ production: true })
+      harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+      harness.playersRepository.findByUserId = jest.fn()
+
+      const response = await harness.app.inject({
+        method: 'DELETE',
+        url: '/api/players/by-id/not-a-number',
+        headers: authHeader('admin', 10),
+      })
+
+      expect(response.statusCode).toBe(400)
+      expect(response.json()).toEqual({ error: 'invalid_user_id' })
+      expect(harness.playersRepository.findByUserId).not.toHaveBeenCalled()
+      await harness.app.close()
+    })
+
+    test.each(['0x10', '1e3', ' 12', '12 ', '-5', '1.5'])(
+      'rejects %s as a chat_id instead of coercing it with a loose Number()',
+      async (looksNumeric) => {
+        // Number('0x10') === 16, Number('1e3') === 1000, Number(' 12') === 12
+        // — a bare Number() would silently accept and misinterpret these.
+        const harness = await createHarness({ production: true })
+        harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+        harness.playersRepository.findByUserId = jest.fn()
+
+        const response = await harness.app.inject({
+          method: 'DELETE',
+          url: `/api/players/by-id/${encodeURIComponent(looksNumeric)}`,
+          headers: authHeader('admin', 10),
+        })
+
+        expect(response.statusCode).toBe(400)
+        expect(response.json()).toEqual({ error: 'invalid_user_id' })
+        expect(harness.playersRepository.findByUserId).not.toHaveBeenCalled()
+        await harness.app.close()
+      }
+    )
+
+    test('returns 503 when the repository cannot look players up by userId', async () => {
+      const harness = await createHarness({ production: true })
+      harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+      delete harness.playersRepository.findByUserId
+
+      const response = await harness.app.inject({
+        method: 'DELETE',
+        url: '/api/players/by-id/999',
+        headers: authHeader('admin', 10),
+      })
+
+      expect(response.statusCode).toBe(503)
+      expect(response.json()).toEqual({ error: 'player_lookup_unavailable' })
+      await harness.app.close()
+    })
+
+    test('refuses to ban a chat administrator by chat_id', async () => {
+      const harness = await createHarness({ production: true })
+      harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+      harness.bot.getChatAdministrators.mockResolvedValue([{ user: { id: 42 } }])
+      harness.playersRepository.findByUserId = jest.fn().mockResolvedValue({
+        username: '@admin2', userId: 42, verified: true, banned: false,
+      })
+
+      const response = await harness.app.inject({
+        method: 'DELETE',
+        url: '/api/players/by-id/42',
+        headers: authHeader('admin', 10),
+      })
+
+      expect(response.statusCode).toBe(403)
+      expect(response.json()).toEqual({ error: 'cannot_ban_admin' })
+      expect(harness.playersRepository.setBanned).not.toHaveBeenCalled()
+      await harness.app.close()
+    })
+  })
+
+  test('POST /api/register broadcasts players_update when a new confirmation request is sent', async () => {
+    const harness = await createHarness({ production: true })
+    harness.playersRepository.isVerified.mockResolvedValue(false)
+    harness.bot.getChatMember.mockResolvedValue({ status: 'member' })
+    harness.bot.sendMessage.mockResolvedValue({ message_id: 1 })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/register',
+      headers: authHeader('alice', 77),
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.sseManager.broadcast).toHaveBeenCalledWith('players_update', {})
+    await harness.app.close()
+  })
+
+  test('auth() broadcasts players_update on a userId\'s first authenticated request in this process', async () => {
+    // claimPlayerIdentity in auth() upserts the player record on the very
+    // first authenticated call — well before POST /api/register (see the
+    // onMounted comment in App.vue: GET /api/admin/check runs on every app
+    // open, unconditionally). The admin panel's "Не подтверждены" list must
+    // learn about a brand-new player even if they never click the explicit
+    // confirmation-request button.
+    const harness = await createHarness({ production: true })
+
+    const response = await harness.app.inject({
+      method: 'GET',
+      url: '/api/admin/check',
+      headers: authHeader('newcomer', 555),
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(harness.sseManager.broadcast).toHaveBeenCalledWith('players_update', {})
+    await harness.app.close()
+  })
+
+  test('auth() does not re-broadcast players_update for the same userId on later requests', async () => {
+    const harness = await createHarness({ production: true })
+
+    await harness.app.inject({
+      method: 'GET',
+      url: '/api/admin/check',
+      headers: authHeader('newcomer', 555),
+    })
+    harness.sseManager.broadcast.mockClear()
+
+    await harness.app.inject({
+      method: 'GET',
+      url: '/api/admin/check',
+      headers: authHeader('newcomer', 555),
+    })
+
+    expect(harness.sseManager.broadcast).not.toHaveBeenCalledWith('players_update', {})
+    await harness.app.close()
+  })
+
   test('GET /api/events associates the connection with the userId from initData', async () => {
     const harness = await createHarness({ production: true })
 
@@ -1725,7 +1966,11 @@ describe('webapp REST routes', () => {
     expect(harness.context.addMatch.execute).not.toHaveBeenCalled()
     expect(harness.context.cancelSearch.execute).not.toHaveBeenCalled()
     expect(harness.bot.sendMessage).not.toHaveBeenCalled()
-    expect(harness.sseManager.broadcast).not.toHaveBeenCalled()
+    // Не state_update конкретно — а не "broadcast вообще ни разу": auth()
+    // сам шлёт один players_update при первом визите этого userId за время
+    // жизни процесса (см. router.js), это не имеет отношения к тому, что
+    // здесь проверяется (что отклонённые действия не трогают состояние очереди).
+    expect(harness.sseManager.broadcast).not.toHaveBeenCalledWith('state_update', expect.anything())
     expect(await harness.invitesStore.getAll()).toHaveLength(1)
     await harness.app.close()
   })

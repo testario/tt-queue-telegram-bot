@@ -38,8 +38,8 @@ const requestConfirmation = async () => {
 <template>
   <section class="login-screen" aria-live="polite">
     <span class="login-screen__icon" aria-hidden="true">👋</span>
-    <p class="login-screen__eyebrow">Добро пожаловать</p>
-    <h1>Подтверди, что это ты</h1>
+    <h1 class="login-screen__eyebrow">Добро пожаловать</h1>
+    <h3>Подтверди, что это ты</h3>
     <p class="login-screen__text">
       Чтобы пользоваться очередью в мини-аппе, подтверди доступ в общем чате — нажми кнопку ниже,
       бот пришлёт туда сообщение с кнопкой «Подтвердить», нажать её сможешь только ты.
@@ -85,7 +85,6 @@ const requestConfirmation = async () => {
     color: var(--color-link);
     font-size: 12px;
     font-weight: 850;
-    letter-spacing: .08em;
     text-transform: uppercase;
   }
 

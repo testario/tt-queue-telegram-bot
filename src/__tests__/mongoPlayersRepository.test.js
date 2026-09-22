@@ -61,6 +61,21 @@ describe('MongoPlayersRepository', () => {
     await expect(repository.isBanned(42)).resolves.toBe(true)
   })
 
+  it('coerces a numeric-string userId to a number when looking up by userId', async () => {
+    // userId is stored as a Number (upsert writes it straight from
+    // req.tgUser.id). Mongo's equality match is type-strict, so a caller
+    // passing the Fastify route-param string ('999') would otherwise never
+    // find the document — this is exactly what breaks DELETE
+    // /api/players/by-id/:userId in production without this coercion.
+    const repository = new MongoPlayersRepository({ uri: 'mongodb://unused', dbName: 'test' })
+    const findOne = jest.fn().mockResolvedValue({ userId: 999, username: '@spammer' })
+    repository.collection = { findOne }
+
+    await expect(repository.findByUserId('999')).resolves.toEqual({ userId: 999, username: '@spammer' })
+
+    expect(findOne).toHaveBeenCalledWith({ userId: 999 }, { projection: { _id: 0 } })
+  })
+
   it('looks up current usernames through the aliases field', async () => {
     const repository = new MongoPlayersRepository({ uri: 'mongodb://unused', dbName: 'test' })
     repository.collection = {

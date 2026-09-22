@@ -359,7 +359,15 @@ export class MongoPlayersRepository {
 
   async findByUserId(userId) {
     if (userId === undefined || userId === null) return null
-    return this.collection.findOne({ userId }, { projection: { _id: 0 } })
+    // userId хранится в Mongo числом (upsert пишет его как есть из
+    // req.tgUser.id/verifyInitData, всегда Number), а MongoDB matching
+    // типострогий: findOne({ userId: '999' }) не найдёт userId: 999. Вызовы
+    // извне REST-слоя (например, из строкового параметра пути) могут прийти
+    // строкой — приводим к числу, если это возможно, иначе ищем как есть
+    // (не роняем поведение для гипотетических нечисловых userId).
+    const numericUserId = Number(userId)
+    const query = Number.isFinite(numericUserId) ? { userId: numericUserId } : { userId }
+    return this.collection.findOne(query, { projection: { _id: 0 } })
   }
 
   async isBanned(userId) {

@@ -20,6 +20,9 @@ const { load: loadPlayers } = usePlayers()
 const banStatus = useBanStatus()
 const registrationStatus = useRegistrationStatus()
 const activeTab = ref('queue')
+// __APP_VERSION__ подставляется Vite из package.json на этапе сборки (см.
+// vite.config.js) — единственный источник версии, бампается там же.
+const appVersion = __APP_VERSION__
 
 // Отсчёт перед закрытием мини-аппа после бана: 3, 2, 1 — и close().
 // Один и тот же banStatus.isBanned взводится и мгновенным SSE-событием
@@ -150,6 +153,7 @@ onMounted(async () => {
         @change="activeTab = $event"
       />
     </div>
+    <span class="app__version">v{{ appVersion }}</span>
   </div>
 </template>
 
@@ -211,7 +215,7 @@ onMounted(async () => {
 body {
   background: var(--color-bg);
   color: var(--color-text);
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 16px;
 }
 
@@ -232,7 +236,11 @@ input {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 12px 16px calc(132px + env(safe-area-inset-bottom, 0px));
+    // Верхний отступ увеличен с 12px до 24px, чтобы под него гарантированно
+    // помещалась метка версии (.app__version ниже, фиксированная в том же
+    // углу) — без этого запаса её нижний край на 6-8px заходит на первый
+    // блок контента (поле поиска, статус-бейджи админки и т.п.).
+    padding: 24px 16px calc(132px + env(safe-area-inset-bottom, 0px));
   }
 
   &__nav {
@@ -241,6 +249,22 @@ input {
     bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
     left: max(16px, calc((100vw - 430px) / 2 + 16px));
     z-index: 20;
+  }
+
+  // Версия сборки — видна, но не мешает: угол экрана, мелкий шрифт, низкая
+  // контрастность, вне потока и вне кликов, чтобы не спорить с контентом
+  // или BottomNavigation ни в одном состоянии экрана (лого-скрин, бан и т.д).
+  &__version {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 6px);
+    right: max(10px, calc((100vw - 430px) / 2 + 10px));
+    color: var(--color-hint);
+    font-size: 10px;
+    font-weight: 700;
+    opacity: 0.55;
+    pointer-events: none;
+    user-select: none;
+    z-index: 30;
   }
 }
 

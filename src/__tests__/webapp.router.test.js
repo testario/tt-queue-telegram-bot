@@ -2037,6 +2037,36 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  test('rejects a self-invite before touching the invite store, independent of the mocked use case', async () => {
+    const harness = await createHarness({ production: true })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@alice' },
+    })
+
+    expect(response.json()).toEqual({ ok: false, reason: 'self_invite' })
+    expect(harness.context.directMatch.execute).not.toHaveBeenCalled()
+    expect(await harness.invitesStore.getAll()).toEqual([])
+    await harness.app.close()
+  })
+
+  test('rejects a self-invite regardless of the opponent username case', async () => {
+    const harness = await createHarness({ production: true })
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/api/direct',
+      headers: authHeader('alice', 10),
+      payload: { opponent: '@Alice' },
+    })
+
+    expect(response.json()).toEqual({ ok: false, reason: 'self_invite' })
+    await harness.app.close()
+  })
+
   test('does not create or overwrite an invite on a repeated request', async () => {
     const harness = await createHarness({ production: true })
     const first = await harness.app.inject({

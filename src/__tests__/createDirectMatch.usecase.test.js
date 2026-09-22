@@ -98,6 +98,27 @@ describe("CreateDirectMatch use case", () => {
     expect(result.ok).toBe(true);
   });
 
+  test("отказывает в приглашении самого себя", async () => {
+    repository.state = new QueueState({
+      ownership: { "@p1": { userId: 1, generation: 1, status: "active" } },
+    });
+    const result = await directMatch.execute("@p1", "@p1", { identityToken: identity });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("self_invite");
+    expect(result.text).toBe(templates.directSelfInvite());
+  });
+
+  test("отказывает в приглашении самого себя независимо от регистра ника", async () => {
+    repository.state = new QueueState({
+      ownership: { "@p1": { userId: 1, generation: 1, status: "active" } },
+    });
+    const result = await directMatch.execute("@p1", "@P1", { identityToken: identity });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("self_invite");
+  });
+
   test("создает матч и планирует жизненный цикл при успешном сценарии", async () => {
     repository.state = new QueueState({
       ownership: { "@p1": { userId: 1, generation: 1, status: "active" } },

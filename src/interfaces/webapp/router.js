@@ -1040,6 +1040,13 @@ export const registerRoutes = async (app, deps) => {
       const result = await context.directMatch.execute(req.player, opponent, { identityToken: req.identityToken })
       return { ok: result.ok, reason: result.reason }
     }
+    // CreateDirectMatch.execute тоже это проверяет (и остаётся источником
+    // истины — этот путь и команда /play в чате идут через один и тот же
+    // execute), но короткое замыкание здесь избавляет от бессмысленного
+    // создания и немедленного отката self-инвайта в сторе ниже.
+    if (normalizedOpponent.toLowerCase() === req.player.toLowerCase()) {
+      return { ok: false, reason: 'self_invite' }
+    }
     const currentState = await context.repository.get()
     const opponentIdentity = typeof currentState.getActiveIdentity === 'function'
       ? currentState.getActiveIdentity(normalizedOpponent)
@@ -1053,8 +1060,8 @@ export const registerRoutes = async (app, deps) => {
     // У оппонента уже есть собственное исходящее приглашение — если он примет
     // наше, его приглашение осиротеет (тот же сценарий, что и с общим поиском:
     // его "поиск" на бэкенде держится именно тем приглашением). Список игроков
-    // в мини-аппе уже скрывает таких оппонентов, но ручной ввод username его
-    // обходит — проверяем и на бэкенде.
+    // в мини-аппе уже скрывает таких оппонентов, но прямой вызов API (или
+    // команда в чате) — нет, проверяем и на бэкенде.
     if (typeof invitesStore.getByPlayer === 'function' && await invitesStore.getByPlayer(normalizedOpponent)) {
       return { ok: false, reason: 'opponent_invite_pending' }
     }

@@ -17,6 +17,7 @@ const createEnMessages = ({ formatDate }) => ({
   directOpponentRequired: () => "Specify opponent username, e.g. /play @opponent",
   directOpponentPlayed: (opponent) => `${opponent} already played this half-day`,
   directOpponentInvitePending: (opponent) => `${opponent} already invited someone else — wait for their answer`,
+  directSelfInvite: () => "You can't invite yourself",
   usernameRequired: () =>
     "Could not detect your Telegram username. Set it in your profile and retry.",
   directInvite: ({ from, to }) => `${from} invites ${to} to play. Accept the match?`,

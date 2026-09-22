@@ -48,12 +48,20 @@ const openMatchPopup = (match) => {
       Загрузка...
     </div>
 
-    <!-- Ошибка соединения -->
-    <div v-else-if="state.error" class="queue-view__error">
+    <!-- Данных ещё не было ни разу — показывать пустую очередь как факт
+         нельзя, мы его не знаем. Реального ретрая не нужен: как только SSE
+         подключится, придёт первый state_update и state.loaded станет true. -->
+    <div v-else-if="!state.loaded" class="queue-view__error">
       Нет соединения. Переподключаемся...
     </div>
 
     <template v-else>
+
+      <!-- Переподключение — не блокирует работу с уже загруженными данными,
+           только предупреждает, что они могут отставать от актуальных. -->
+      <div v-if="state.error" class="banner banner--warn">
+        Нет соединения. Переподключаемся...
+      </div>
 
       <!-- Пауза-баннер -->
       <div v-if="state.paused" class="banner banner--warn">
@@ -118,10 +126,6 @@ const openMatchPopup = (match) => {
     padding: 32px 0;
     color: var(--color-hint);
     font-size: 15px;
-  }
-
-  &__error {
-    color: #ff3b30;
   }
 }
 

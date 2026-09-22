@@ -17,6 +17,7 @@ const createFrMessages = ({ formatDate }) => ({
   directOpponentRequired: () => "Indique le pseudo de l’adversaire, par ex. /play @opponent",
   directOpponentPlayed: (opponent) => `${opponent} a déjà joué dans cette demi-journée`,
   directOpponentInvitePending: (opponent) => `${opponent} a déjà invité quelqu’un d’autre — attends sa réponse`,
+  directSelfInvite: () => "Tu ne peux pas t’inviter toi-même",
   usernameRequired: () =>
     "Impossible de détecter ton nom d’utilisateur Telegram. Renseigne-le dans ton profil et réessaie.",
   directInvite: ({ from, to }) => `${from} invite ${to} à jouer. Accepter le match ?`,

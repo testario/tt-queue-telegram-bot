@@ -9,6 +9,7 @@ import {
 import {
   DEFAULT_GAME_TIME,
   PAUSE_CANCEL_MATCH_MS,
+  REGISTRATION_CONFIRMED_TTL_MS,
   TIME_AFTER_EMERGE,
   TIME_READY,
   WORK_SCHEDULE,
@@ -1050,6 +1051,15 @@ const createBot = (
   const createDirectInvite = async (context, player, opponentRaw, identityToken = undefined) => {
     const opponent = context.directMatch.normalizeOpponent(opponentRaw);
     if (!player || !opponent) return context.directMatch.execute(player, opponentRaw, { identityToken });
+    // CreateDirectMatch.execute тоже это проверяет и остаётся источником
+    // истины (этот путь и POST /api/direct идут через один и тот же execute)
+    // — короткое замыкание здесь просто избавляет от бессмысленного создания
+    // и немедленного отката self-инвайта в сторе ниже. Проверка до
+    // identity-lookup — так же, как в POST /api/direct — чтобы reason не
+    // зависел от того, есть ли у инициатора активная identity.
+    if (opponent.toLowerCase() === player.toLowerCase()) {
+      return { ok: false, reason: "self_invite", text: messages.directSelfInvite() };
+    }
     const currentState = await context.repository.get();
     const opponentIdentity = typeof currentState.getActiveIdentity === "function"
       ? currentState.getActiveIdentity(opponent)
@@ -2429,11 +2439,30 @@ const createBot = (
       bot.answerCallbackQuery(callbackId, { text: messages.registrationConfirmed() }).catch(console.error);
       const editOptions = buildEditOptions({ reply_markup: { inline_keyboard: [] } });
       if (editOptions) {
-        bot
-          .editMessageText(messages.registrationConfirmed(), editOptions)
-          .catch((error) =>
-            handleEditMessageError(error, "Не удалось обновить сообщение подтверждения регистрации")
-          );
+        bot.editMessageText(messages.registrationConfirmed(), editOptions).then(
+          () => {
+            // Не спамим общий чат — сообщение о подтверждении самоудаляется
+            // через несколько секунд. Inline-сообщения (editTarget без
+            // chat_id/message_id) удалить нельзя — только редактировать,
+            // поэтому для них таймер не ставим. Рестарт процесса в пределах
+            // TTL оставит сообщение висеть — таймер живёт только в памяти,
+            // это осознанный компромисс, а не забытый edge case.
+            if (editTarget && !editTarget.inline_message_id) {
+              // unref: этот таймер не должен держать процесс живым при
+              // graceful shutdown (и не подвешивает тестовый воркер Jest).
+              setTimeout(() => {
+                bot
+                  .deleteMessage(editTarget.chat_id, editTarget.message_id)
+                  .catch((error) =>
+                    log.warn("Не удалось удалить сообщение подтверждения регистрации", {
+                      message: error.message,
+                    })
+                  );
+              }, REGISTRATION_CONFIRMED_TTL_MS).unref();
+            }
+          },
+          (error) => handleEditMessageError(error, "Не удалось обновить сообщение подтверждения регистрации")
+        );
       } else {
         log.warn("Нет цели для редактирования сообщения подтверждения регистрации", { chatId, userId });
       }

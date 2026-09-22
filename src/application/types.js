@@ -115,6 +115,7 @@
  * @property {() => string} directOpponentRequired
  * @property {(opponent: string) => string} directOpponentPlayed
  * @property {(opponent: string) => string} directOpponentInvitePending
+ * @property {() => string} directSelfInvite
  * @property {() => string} usernameRequired
  * @property {(payload: { from: string, to: string }) => string} directInvite
  * @property {(payload: { from: string, to: string }) => string} directAccepted

@@ -66,6 +66,15 @@ class CreateDirectMatch {
       return { ok: false, reason: "opponent_required", text: this.messages.directOpponentRequired() };
     }
 
+    // Список игроков в мини-аппе уже исключает самого игрока из выбора, но
+    // это UI-фильтр — без проверки здесь прямой запрос к API (или команда в
+    // чате) всё ещё мог бы пригласить самого себя и занять свой единственный
+    // слот исходящего приглашения (invite_exists) им же.
+    if (opponent.toLowerCase() === player.toLowerCase()) {
+      this.logger.warn("Нельзя создать матч: попытка пригласить самого себя", { player });
+      return { ok: false, reason: "self_invite", text: this.messages.directSelfInvite() };
+    }
+
     const now = this.clock.now();
     const { state: normalizedState } = await updateQueueState({
       repository: this.repository,

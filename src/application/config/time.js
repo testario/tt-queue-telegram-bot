@@ -21,6 +21,9 @@ export const TIME_AFTER_EMERGE = getEnvInt("TIME_AFTER_EMERGE", 3) * 60 * 1000;
 // вместо немедленной остановки. Общий порог для all-in-one (bot.js) и
 // backend-only (webapp/index.js) режимов, чтобы поведение не расходилось.
 export const PAUSE_CANCEL_MATCH_MS = 5 * 60 * 1000;
+// Сообщение "Доступ к мини-аппу открыт" самоудаляется из общего чата через
+// этот интервал, чтобы не спамить чат подтверждениями регистрации.
+export const REGISTRATION_CONFIRMED_TTL_MS = 5 * 1000;
 
 export const WORK_SCHEDULE = {
   workStart: {

@@ -11,10 +11,35 @@ const state = reactive({
   serverTime: null,
   pendingInvites: [],
   loading: true,
+  // Отличает "ещё ни разу не получили реальные данные" (блокирующий экран
+  // ошибки — показывать пустую очередь как факт нельзя, мы его не знаем) от
+  // "уже что-то показываем, но соединение сейчас шалит" (баннер поверх
+  // данных, не блокирующий работу). Взводится один раз и навсегда — данные
+  // уже показаны, откатывать этот флаг незачем.
+  loaded: false,
   error: null,
 })
 
 let eventSource = null
+// EventSource переподключается сам (это штатное поведение браузера), но
+// onerror стреляет на каждый короткий обрыв, а не только на затяжной сбой.
+// Без задержки баннер "Нет соединения" мигал бы при любом мимолётном обрыве
+// сети — переподключение должно быть фоновым и не дёргать UI по мелочам.
+const CONNECTION_LOST_DELAY_MS = 3000
+let connectionLostTimer = null
+// EventSource сам не переподключается после терминального CLOSED (например,
+// сервер ответил не-2xx на сам запрос установки соединения) — без ручного
+// повтора сессия молча теряла бы все будущие обновления. Фиксированный
+// интервал, а не backoff: соединение легковесное, а бэкенд может подняться
+// в любой момент — плата за более быстрый отклик после восстановления того
+// стоит.
+const RECONNECT_RETRY_MS = 5000
+
+const clearConnectionLostTimer = () => {
+  if (!connectionLostTimer) return
+  clearTimeout(connectionLostTimer)
+  connectionLostTimer = null
+}
 
 // SSE и обычные ответы API приходят по разным соединениям без гарантии
 // порядка — более старый снимок (например, устаревшее state_update,
@@ -45,6 +70,7 @@ const applyState = (data) => {
   state.emergeActive = data.emergeActive || false
   state.serverTime = data.serverTime ? new Date(data.serverTime) : null
   state.pendingInvites = data.pendingInvites || []
+  state.loaded = true
 }
 
 const connectSse = () => {
@@ -71,6 +97,7 @@ const connectSse = () => {
   // eventSource здесь безопасно.
   eventSource.addEventListener('player_banned', () => {
     markPlayerBanned()
+    clearConnectionLostTimer()
     eventSource?.close()
     eventSource = null
   })
@@ -92,10 +119,27 @@ const connectSse = () => {
   })
 
   eventSource.onerror = () => {
-    state.error = 'connection_lost'
+    // CLOSED — терминальный отказ (например, initData протухла и сервер
+    // ответил 401/403/404): браузер сам больше не переподключится, onopen
+    // никогда не придёт. Показываем баннер сразу, без 3-секундной задержки —
+    // ждать тут нечего, а задержка на CONNECTING-обрывах существует именно
+    // чтобы не мигать баннером во время штатных попыток реконнекта.
+    if (eventSource?.readyState === EventSource.CLOSED) {
+      clearConnectionLostTimer()
+      state.error = 'connection_lost'
+      eventSource = null
+      setTimeout(connectSse, RECONNECT_RETRY_MS)
+      return
+    }
+    if (connectionLostTimer) return
+    connectionLostTimer = setTimeout(() => {
+      state.error = 'connection_lost'
+      connectionLostTimer = null
+    }, CONNECTION_LOST_DELAY_MS)
   }
 
   eventSource.onopen = () => {
+    clearConnectionLostTimer()
     state.error = null
     // Переподключение могло произойти после рестарта backend/Redis — revision
     // там мог начаться заново, поэтому не считаем прежний максимум актуальным.

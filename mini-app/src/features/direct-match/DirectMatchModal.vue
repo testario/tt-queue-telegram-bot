@@ -1,9 +1,8 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useApi } from '@/composables/useApi.js'
 import { usePlayers } from '@/composables/usePlayers.js'
 import { useQueue } from '@/composables/useQueue.js'
-import { useTelegram } from '@/composables/useTelegram.js'
 import AppButton from '@/shared/ui/AppButton.vue'
 import AppModal from '@/shared/ui/AppModal.vue'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
@@ -11,34 +10,35 @@ import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
 defineEmits(['close'])
 const modalRef = ref(null)
 const api = useApi()
-const { state: playersState, load } = usePlayers()
+// players (в отличие от state.players) уже исключает самого себя, с
+// регистронезависимым сравнением — Telegram username регистронезависим, см.
+// комментарий у этого computed в usePlayers.js.
+const { state: playersState, players, load } = usePlayers()
 const { state: queueState } = useQueue()
-const { player: currentPlayer } = useTelegram()
 
 const search = ref('')
-const manualInput = ref('')
 const selected = ref(null)   // { username, displayName } — выбранный из списка
 const loading = ref(false)
 const error = ref(null)
 
 onMounted(() => load())
 
-// Исключаем себя, тех, кто уже в очереди/играл, и участников любого висящего
-// прямого приглашения — второе приглашение поверх первого осиротит его
-// (тот же сценарий, что и с общим поиском в SearchPanel).
+// Тех, кто уже в очереди/играл, и участников любого висящего прямого
+// приглашения — второе приглашение поверх первого осиротит его (тот же
+// сценарий, что и с общим поиском в SearchPanel). Регистронезависимо по той
+// же причине, что и self-фильтр в players.
 const unavailable = computed(() => new Set([
-  currentPlayer,
   ...queueState.queue.flatMap((m) => [m.player1, m.player2]),
   ...queueState.played,
   ...queueState.pendingInvites.flatMap((invite) => [invite.player, invite.opponent]),
-]))
+].map((username) => username?.toLowerCase())))
 
 // Фильтрация по строке поиска
 const filteredPlayers = computed(() => {
   const q = search.value.toLowerCase().trim()
-  return playersState.players.filter((p) => {
+  return players.value.filter((p) => {
     if (p.banned) return false
-    if (unavailable.value.has(p.username)) return false
+    if (unavailable.value.has(p.username.toLowerCase())) return false
     if (!q) return true
     return (
       p.username.toLowerCase().includes(q) ||
@@ -49,17 +49,20 @@ const filteredPlayers = computed(() => {
 
 const selectPlayer = (p) => {
   selected.value = p
-  manualInput.value = ''
   error.value = null
 }
 
-// Итоговый username для приглашения: из списка или из ручного ввода
-const resolvedOpponent = computed(() => {
-  if (selected.value) return selected.value.username
-  const raw = manualInput.value.trim()
-  if (!raw) return null
-  return raw.startsWith('@') ? raw : `@${raw}`
+// Выбранный игрок мог уйти из списка, пока открыта модалка (сам встал в
+// очередь/получил приглашение — пришло SSE-обновление): подсветка выбора уже
+// пропадает визуально, но без сброса сама переменная осталась бы прежней, и
+// кнопка "Пригласить" продолжала бы слать заведомо отклоняемый запрос.
+watch(filteredPlayers, (list) => {
+  if (selected.value && !list.some((p) => p.username === selected.value.username)) {
+    selected.value = null
+  }
 })
+
+const resolvedOpponent = computed(() => selected.value?.username ?? null)
 
 // POST /api/direct возвращает reason от CreateDirectMatch/router.js — сюда не
 // долетают reason-ы AddMatch (already_in_queue/same_player/...), этот запрос
@@ -68,7 +71,21 @@ const reasonToText = (reason) => ({
   opponent_played: 'Этот игрок уже играл сегодня',
   opponent_invite_pending: 'У этого игрока уже есть своё приглашение — дождитесь ответа на него',
   invite_exists: 'У вас уже есть отправленное приглашение — сначала отмените его',
+  self_invite: 'Нельзя пригласить самого себя',
 }[reason] ?? 'Не удалось отправить приглашение')
+
+// Enter в поле поиска: если игрок ещё не выбран явным кликом, но строка
+// поиска сузила список до одного совпадения — считаем это выбором и сразу
+// отправляем, а не заставляем тянуться к списку за тем же самым тапом.
+// Пустой запрос не считается: тогда "список из одного" означает не "нашли
+// то, что искали", а просто "у всех остальных сейчас есть матч/приглашение".
+const submitFromSearch = () => {
+  if (loading.value) return
+  if (!selected.value && search.value.trim() && filteredPlayers.value.length === 1) {
+    selected.value = filteredPlayers.value[0]
+  }
+  submit()
+}
 
 const submit = async () => {
   const opponent = resolvedOpponent.value
@@ -112,6 +129,7 @@ const submit = async () => {
       type="text"
       placeholder="Поиск по имени или @username"
       autofocus
+      @keydown.enter="submitFromSearch"
     />
 
     <!-- Список известных игроков -->
@@ -139,17 +157,6 @@ const submit = async () => {
       </button>
     </div>
 
-    <!-- Разделитель + ручной ввод -->
-    <div class="direct-match-modal__divider">или введите username вручную</div>
-    <input
-      v-model="manualInput"
-      class="direct-match-modal__input"
-      type="text"
-      placeholder="@username"
-      @input="selected = null"
-      @keydown.enter="submit"
-    />
-
     <p v-if="error" class="direct-match-modal__error">{{ error }}</p>
 
     <div class="direct-match-modal__buttons">
@@ -176,7 +183,7 @@ const submit = async () => {
     text-align: center;
   }
 
-  &__search, &__input {
+  &__search {
     width: 100%;
     min-height: 50px;
     padding: 0 14px;
@@ -213,12 +220,17 @@ const submit = async () => {
     transition: background 0.1s;
     color: var(--color-text);
 
+    // Убираем только "мышиный" outline при клике/тапе — :focus-visible ниже
+    // сохраняет кольцо фокуса для навигации с клавиатуры (Tab).
+    &:focus:not(:focus-visible) { outline: none; }
+    &:focus-visible { outline: 2px solid var(--color-button); }
+
     &:hover, &--selected {
       background: var(--color-surface-soft);
     }
 
     &--selected {
-      outline: 2px solid var(--color-button);
+      box-shadow: inset 0 0 0 2px var(--color-button);
     }
   }
 
@@ -248,24 +260,6 @@ const submit = async () => {
     font-size: 14px;
     text-align: center;
     padding: 16px 0;
-  }
-
-  &__divider {
-    font-size: 12px;
-    color: var(--color-hint);
-    text-align: center;
-    position: relative;
-
-    &::before, &::after {
-      content: '';
-      position: absolute;
-      top: 50%;
-      width: 28%;
-      height: 1px;
-      background: var(--color-border);
-    }
-    &::before { left: 0; }
-    &::after { right: 0; }
   }
 
   &__error {

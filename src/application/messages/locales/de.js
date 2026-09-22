@@ -17,6 +17,7 @@ const createDeMessages = ({ formatDate }) => ({
   directOpponentRequired: () => "Gib den Benutzernamen des Gegners an, z. B. /play @opponent",
   directOpponentPlayed: (opponent) => `${opponent} hat in dieser Tageshälfte schon gespielt`,
   directOpponentInvitePending: (opponent) => `${opponent} hat schon jemand anderen eingeladen — warte auf die Antwort`,
+  directSelfInvite: () => "Du kannst dich nicht selbst einladen",
   usernameRequired: () =>
     "Dein Telegram-Username konnte nicht erkannt werden. Setze ihn in deinem Profil und versuche es erneut.",
   directInvite: ({ from, to }) => `${from} lädt ${to} zum Spiel ein. Einladung annehmen?`,

@@ -4,6 +4,7 @@ import { useApi } from '@/composables/useApi.js'
 import { usePlayers } from '@/composables/usePlayers.js'
 import { useQueue } from '@/composables/useQueue.js'
 import { useTelegram } from '@/composables/useTelegram.js'
+import { withMinDuration } from '@/shared/lib/withMinDuration.js'
 import AppButton from '@/shared/ui/AppButton.vue'
 import AppIcon from '@/shared/ui/AppIcon.vue'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
@@ -18,7 +19,7 @@ const activeFilter = ref('all')
 const invitingUsername = ref(null)
 const inviteErrorText = ref('')
 
-onMounted(() => load())
+onMounted(() => load().catch((error) => console.error('Не удалось загрузить список игроков', error)))
 
 const queuedPlayers = computed(() =>
   queueState.queue.flatMap((match) => [match.player1, match.player2])
@@ -117,10 +118,17 @@ const inviteReasonToText = (reason) => ({
 }[reason] ?? 'Не удалось отправить приглашение')
 
 const invite = async (username) => {
+  // Пока один запрос ещё в кулдауне (см. withMinDuration), тап по другому
+  // игроку перезаписал бы invitingUsername и погасил бы спиннер/дизейбл не
+  // у того, чей запрос ещё летит — ранний выход держит инвариант "не больше
+  // одного invite() одновременно". Кнопки остальных строк на время кулдауна
+  // явно задизейблены в разметке (см. :disabled ниже) — это лишь страховка
+  // на тап, прилетевший до перерисовки.
+  if (invitingUsername.value !== null) return
   invitingUsername.value = username
   inviteErrorText.value = ''
   try {
-    const result = await api.post('/direct', { opponent: username })
+    const result = await withMinDuration(() => api.post('/direct', { opponent: username }))
     if (!result.ok) inviteErrorText.value = inviteReasonToText(result.reason)
   } catch (error) {
     console.error('Не удалось отправить приглашение', error)
@@ -178,7 +186,7 @@ const invite = async (username) => {
 
     <p v-if="inviteErrorText" class="players-view__error-banner">{{ inviteErrorText }}</p>
 
-    <p v-if="playersState.loading" class="players-view__hint">Загрузка...</p>
+    <p v-if="playersState.loading && !playersState.loaded" class="players-view__hint">Загрузка...</p>
 
     <section v-else class="players-view__list">
       <article
@@ -195,6 +203,7 @@ const invite = async (username) => {
           v-if="player.canInvite"
           class="players-view__invite"
           :loading="invitingUsername === player.username"
+          :disabled="invitingUsername !== null && invitingUsername !== player.username"
           @click="invite(player.username)"
         >
           Позвать

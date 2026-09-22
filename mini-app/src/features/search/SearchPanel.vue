@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useQueue } from '@/composables/useQueue.js'
 import { useTelegram } from '@/composables/useTelegram.js'
 import { useApi } from '@/composables/useApi.js'
+import { withMinDuration } from '@/shared/lib/withMinDuration.js'
 import AppButton from '@/shared/ui/AppButton.vue'
 import AppIcon from '@/shared/ui/AppIcon.vue'
 import PlayerTag from '@/shared/ui/PlayerTag.vue'
@@ -12,7 +13,20 @@ const { state, cancelMatch: cancelMatchRequest } = useQueue()
 const { player } = useTelegram()
 const api = useApi()
 
-const loading = ref(false)
+// Свой флаг загрузки на каждое действие, а не один общий loading — сервер
+// шлёт state_update по SSE ещё до HTTP-ответа на сам запрос, поэтому пока
+// один запрос летит, реактивные isSearching/isIdle/isInCurrentMatch и т.п.
+// уже могут переключить разметку на СОСЕДНЮЮ кнопку (searching → idle после
+// cancelSearch, idle → in-match после playWith и т.д.). Общий флаг оставлял
+// бы ту, уже другую, кнопку задизейбленной и крутящейся, хотя её не нажимали.
+const registering = ref(false)     // "Ищу соперника"
+const cancellingSearch = ref(false) // "Отменить поиск"
+const endingMatch = ref(false)      // "Нет времени на игры"
+const cancellingInvite = ref(false) // "Отменить приглашение"
+// Свой на каждую строку "Ищут соперника" — иначе вызов одного игрока крутил
+// бы спиннер на кнопках у всех остальных строк сразу (см. тот же приём у
+// invitingUsername в PlayersView.vue).
+const callingOpponent = ref(null)   // username того, кого сейчас зовём, либо null
 const showDirectModal = ref(false)
 
 // Исходящее прямое приглашение — кнопка "Отменить приглашение" для его автора.
@@ -58,58 +72,59 @@ const othersSearching = computed(() =>
 )
 
 const registerSearch = async () => {
-  loading.value = true
+  registering.value = true
   try {
-    await api.post('/search')
+    await withMinDuration(() => api.post('/search'))
   } catch (error) {
     console.error('Не удалось начать поиск', error)
   } finally {
-    loading.value = false
+    registering.value = false
   }
 }
 
 const cancelSearch = async () => {
-  loading.value = true
+  cancellingSearch.value = true
   try {
     await api.del('/search')
   } catch (error) {
     console.error('Не удалось отменить поиск', error)
   } finally {
-    loading.value = false
+    cancellingSearch.value = false
   }
 }
 
 const cancelMatch = async () => {
-  loading.value = true
+  endingMatch.value = true
   try {
     await cancelMatchRequest()
   } catch (error) {
     console.error('Не удалось отменить матч', error)
   } finally {
-    loading.value = false
+    endingMatch.value = false
   }
 }
 
 const playWith = async (opponent) => {
-  loading.value = true
+  if (callingOpponent.value) return
+  callingOpponent.value = opponent
   try {
     await api.post('/match', { opponent })
   } catch (error) {
     console.error('Не удалось создать матч', error)
   } finally {
-    loading.value = false
+    callingOpponent.value = null
   }
 }
 
 const cancelInvite = async () => {
   if (!myOutgoingInvite.value) return
-  loading.value = true
+  cancellingInvite.value = true
   try {
     await api.post('/direct/cancel', { inviteId: myOutgoingInvite.value.inviteId })
   } catch (error) {
     console.error('Не удалось отменить приглашение', error)
   } finally {
-    loading.value = false
+    cancellingInvite.value = false
   }
 }
 </script>
@@ -132,7 +147,8 @@ const cancelInvite = async () => {
         <AppButton
           v-if="isIdle"
           variant="primary"
-          :loading="loading"
+          :loading="callingOpponent === searcher"
+          :disabled="callingOpponent !== null && callingOpponent !== searcher"
           class="search-panel__play-btn"
           @click="playWith(searcher)"
         >
@@ -157,7 +173,7 @@ const cancelInvite = async () => {
       <!-- Ищет соперника -->
       <template v-else-if="isSearching">
         <p class="search-panel__hint">Вы в поиске соперника</p>
-        <AppButton variant="ghost" :loading="loading" @click="cancelSearch">
+        <AppButton variant="ghost" :loading="cancellingSearch" @click="cancelSearch">
           Отменить поиск
         </AppButton>
       </template>
@@ -170,7 +186,7 @@ const cancelInvite = async () => {
       <!-- В текущем матче -->
       <template v-else-if="isInCurrentMatch">
         <p class="search-panel__hint">Вы играете прямо сейчас!</p>
-        <AppButton variant="danger" :loading="loading" @click="cancelMatch">
+        <AppButton variant="danger" :loading="endingMatch" @click="cancelMatch">
           Нет времени на игры
         </AppButton>
       </template>
@@ -180,14 +196,14 @@ const cancelInvite = async () => {
         <p class="search-panel__hint">
           Вы пригласили {{ myOutgoingInvite.opponent }}
         </p>
-        <AppButton variant="ghost" :loading="loading" @click="cancelInvite">
+        <AppButton variant="ghost" :loading="cancellingInvite" @click="cancelInvite">
           Отменить приглашение
         </AppButton>
       </template>
 
       <!-- Свободен — показываем кнопки поиска и прямого приглашения -->
       <template v-else-if="isIdle">
-        <AppButton class="search-panel__cta" variant="primary" :loading="loading" @click="registerSearch">
+        <AppButton class="search-panel__cta" variant="primary" :loading="registering" @click="registerSearch">
           <AppIcon name="play" />
           Ищу соперника
         </AppButton>

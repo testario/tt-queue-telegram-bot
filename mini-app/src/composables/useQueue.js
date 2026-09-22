@@ -112,8 +112,9 @@ const connectSse = () => {
 
   // Список игроков мог измениться (новый игрок, подтверждение регистрации,
   // бан/разбан) — см. players_update в router.js. Payload здесь намеренно
-  // пустой, актуальные данные панель управления подтягивает сама через
-  // usePlayersSync (см. useAdminPlayers.js).
+  // пустой, актуальные данные подтягивают сами через usePlayersSync и там же
+  // хранимую версию: usePlayers.js (вкладка "Игроки", список в управлении) и
+  // useAdminPlayers.js (секция "Не подтверждены" в управлении).
   eventSource.addEventListener('players_update', () => {
     bumpPlayersSync()
   })

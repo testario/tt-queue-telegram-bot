@@ -9,7 +9,10 @@ import AppIcon from '@/shared/ui/AppIcon.vue'
 const { state } = useQueue()
 const { player } = useTelegram()
 const api = useApi()
-const loading = ref(false)
+// Какое из двух действий сейчас выполняется, а не общий булев флаг — иначе
+// тап по "Принять" крутил бы спиннер и на "Отказаться" тоже, они рендерятся
+// рядом, а не в разных ветках (см. тот же приём в SearchPanel.vue/PlayersView.vue).
+const pendingAction = ref(null) // 'accept' | 'decline' | null
 
 // pendingInvites приходит в state из /api/events или /api/state
 const myInvite = computed(() =>
@@ -28,26 +31,26 @@ const inviteResolved = computed(() => {
 })
 
 const accept = async () => {
-  if (!myInvite.value) return
-  loading.value = true
+  if (!myInvite.value || pendingAction.value) return
+  pendingAction.value = 'accept'
   try {
     await api.post('/direct/accept', { inviteId: myInvite.value.inviteId })
   } catch (error) {
     console.error('Не удалось принять приглашение', error)
   } finally {
-    loading.value = false
+    pendingAction.value = null
   }
 }
 
 const decline = async () => {
-  if (!myInvite.value) return
-  loading.value = true
+  if (!myInvite.value || pendingAction.value) return
+  pendingAction.value = 'decline'
   try {
     await api.post('/direct/decline', { inviteId: myInvite.value.inviteId })
   } catch (error) {
     console.error('Не удалось отклонить приглашение', error)
   } finally {
-    loading.value = false
+    pendingAction.value = null
   }
 }
 </script>
@@ -64,8 +67,21 @@ const decline = async () => {
       </div>
     </div>
     <div class="invite-card__actions">
-      <AppButton :loading="loading" @click="accept">Принять</AppButton>
-      <AppButton variant="ghost" :loading="loading" @click="decline">Отказаться</AppButton>
+      <AppButton
+        :loading="pendingAction === 'accept'"
+        :disabled="pendingAction !== null && pendingAction !== 'accept'"
+        @click="accept"
+      >
+        Принять
+      </AppButton>
+      <AppButton
+        variant="ghost"
+        :loading="pendingAction === 'decline'"
+        :disabled="pendingAction !== null && pendingAction !== 'decline'"
+        @click="decline"
+      >
+        Отказаться
+      </AppButton>
     </div>
   </div>
 </template>

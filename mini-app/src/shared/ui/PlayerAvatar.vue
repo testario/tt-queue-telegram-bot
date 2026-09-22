@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { usePlayers } from '@/composables/usePlayers.js'
+import { avatarUrl } from '@/composables/usePlayers.js'
 
 const props = defineProps({
   username: {
@@ -13,7 +13,6 @@ const props = defineProps({
   },
 })
 
-const { avatarUrl } = usePlayers()
 const failed = ref(false)
 
 const src = computed(() => avatarUrl(props.username))

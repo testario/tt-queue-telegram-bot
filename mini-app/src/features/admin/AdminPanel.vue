@@ -8,7 +8,13 @@ import PlayerManager from './PlayerManager.vue'
 const { isAdmin, checkAdmin, pause, resume, emerge } = useAdmin()
 const { state } = useQueue()
 
-const loading = ref(false)
+// Какое из действий сейчас выполняется, а не общий булев флаг — "Поставить
+// на паузу" и "Экстренная пауза" отрисованы рядом одновременно, а сервер к
+// тому же шлёт state_update по SSE раньше HTTP-ответа: paused успевает стать
+// true и в разметке появляется "Продолжить очередь" ещё до того, как исходный
+// запрос завершится — общий флаг оставлял бы её задизейбленной и крутящейся,
+// хотя её не нажимали (тот же приём, что в SearchPanel.vue/PlayersView.vue).
+const pendingAction = ref(null) // 'pause' | 'resume' | 'emerge' | null
 const result = ref(null)  // последний результат действия
 
 onMounted(() => checkAdmin())
@@ -20,8 +26,9 @@ const hasActiveMatch = computed(() => {
   return m?.status === 'playing'
 })
 
-const handleAction = async (action) => {
-  loading.value = true
+const handleAction = async (name, action) => {
+  if (pendingAction.value) return
+  pendingAction.value = name
   result.value = null
   try {
     const res = await action()
@@ -29,19 +36,19 @@ const handleAction = async (action) => {
   } catch {
     result.value = { ok: false, reason: 'connection_error' }
   } finally {
-    loading.value = false
+    pendingAction.value = null
   }
 }
 
-const confirmAndAct = async (message, action) => {
+const confirmAndAct = async (message, name, action) => {
   const tg = window.Telegram?.WebApp
   if (tg?.showPopup) {
     tg.showPopup(
       { message, buttons: [{ id: 'ok', text: 'Подтвердить' }, { type: 'cancel' }] },
-      (buttonId) => { if (buttonId === 'ok') handleAction(action) }
+      (buttonId) => { if (buttonId === 'ok') handleAction(name, action) }
     )
   } else {
-    if (window.confirm(message)) handleAction(action)
+    if (window.confirm(message)) handleAction(name, action)
   }
 }
 
@@ -85,8 +92,9 @@ const resultText = computed(() => {
       <AppButton
         v-if="!isPaused"
         variant="ghost"
-        :loading="loading"
-        @click="handleAction(pause)"
+        :loading="pendingAction === 'pause'"
+        :disabled="pendingAction !== null && pendingAction !== 'pause'"
+        @click="handleAction('pause', pause)"
       >
         Поставить на паузу
       </AppButton>
@@ -95,8 +103,9 @@ const resultText = computed(() => {
       <AppButton
         v-if="isPaused || isEmergeActive"
         variant="primary"
-        :loading="loading"
-        @click="handleAction(resume)"
+        :loading="pendingAction === 'resume'"
+        :disabled="pendingAction !== null && pendingAction !== 'resume'"
+        @click="handleAction('resume', resume)"
       >
         Продолжить очередь
       </AppButton>
@@ -105,8 +114,9 @@ const resultText = computed(() => {
       <AppButton
         v-if="hasActiveMatch && !isPaused && !isEmergeActive"
         variant="danger"
-        :loading="loading"
-        @click="confirmAndAct('Экстренная пауза остановит текущий матч. Продолжить?', emerge)"
+        :loading="pendingAction === 'emerge'"
+        :disabled="pendingAction !== null && pendingAction !== 'emerge'"
+        @click="confirmAndAct('Экстренная пауза остановит текущий матч. Продолжить?', 'emerge', emerge)"
       >
         Экстренная пауза матча
       </AppButton>

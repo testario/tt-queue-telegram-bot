@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useApi } from '@/composables/useApi.js'
 import { usePlayers } from '@/composables/usePlayers.js'
 import { useQueue } from '@/composables/useQueue.js'
+import { withMinDuration } from '@/shared/lib/withMinDuration.js'
 import AppButton from '@/shared/ui/AppButton.vue'
 import AppModal from '@/shared/ui/AppModal.vue'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
@@ -21,7 +22,7 @@ const selected = ref(null)   // { username, displayName } — выбранный
 const loading = ref(false)
 const error = ref(null)
 
-onMounted(() => load())
+onMounted(() => load().catch((err) => console.error('Не удалось загрузить список игроков', err)))
 
 // Тех, кто уже в очереди/играл, и участников любого висящего прямого
 // приглашения — второе приглашение поверх первого осиротит его (тот же
@@ -104,7 +105,7 @@ const submit = async () => {
   loading.value = true
 
   try {
-    const result = await api.post('/direct', { opponent })
+    const result = await withMinDuration(() => api.post('/direct', { opponent }))
     if (result.ok) {
       modalRef.value?.startClose()
     } else {
@@ -134,7 +135,7 @@ const submit = async () => {
 
     <!-- Список известных игроков -->
     <div class="direct-match-modal__list">
-      <div v-if="playersState.loading" class="direct-match-modal__hint">Загрузка...</div>
+      <div v-if="playersState.loading && !playersState.loaded" class="direct-match-modal__hint">Загрузка...</div>
 
       <div v-else-if="!filteredPlayers.length" class="direct-match-modal__hint">
         Никого не найдено

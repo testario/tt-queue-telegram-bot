@@ -17,7 +17,7 @@ const deletingUsername = ref(null)  // username игрока, которого �
 const banningUserId = ref(null)     // userId неподтверждённого игрока, которого баним прямо сейчас
 
 onMounted(() => {
-  load()
+  load().catch((err) => console.error('Не удалось загрузить список игроков', err))
   loadPending()
 })
 
@@ -123,7 +123,7 @@ const banPendingPlayer = async (pendingPlayer) => {
 
     <h3 class="player-manager__title">Список игроков</h3>
 
-    <p v-if="state.loading" class="player-manager__hint">Загрузка...</p>
+    <p v-if="state.loading && !state.loaded" class="player-manager__hint">Загрузка...</p>
 
     <p v-else-if="!players.length" class="player-manager__hint">
       Список пуст

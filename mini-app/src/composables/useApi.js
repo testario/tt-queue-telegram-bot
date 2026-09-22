@@ -40,8 +40,9 @@ export const markPlayerUnverified = () => {
 // Счётчик "список игроков мог измениться" — тикает на SSE-событие
 // players_update (новый игрок, подтверждение регистрации, бан/разбан — см.
 // router.js). Само событие не несёт данных (сервер не льёт чужой chat_id
-// всем подряд через публичный SSE), это только сигнал панели управления
-// перезапросить актуальный список через авторизованный /api/admin/players.
+// всем подряд через публичный SSE), это только сигнал перезапросить
+// актуальный список — usePlayers.js через публичный /api/players,
+// useAdminPlayers.js через авторизованный /api/admin/players.
 const playersSyncState = reactive({ version: 0 })
 
 export function usePlayersSync() {

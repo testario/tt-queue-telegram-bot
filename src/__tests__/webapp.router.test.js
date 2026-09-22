@@ -409,6 +409,40 @@ describe('webapp REST routes', () => {
     await harness.app.close()
   })
 
+  test('seeds @dev_user under the real DEV_USER_ID so a later dev-fallback claim does not lose verification', async () => {
+    // Regression for a real bug found via manual testing: DEV_PLAYERS' entry
+    // for @dev_user has no explicit userId, so without this fix it would
+    // seed under a synthetic test-user:@dev_user id (createTestIdentityHelper's
+    // fallback). Any authenticated request from the mini-app without initData
+    // later claims @dev_user under the real DEV_USER_ID (123456) — a
+    // different id — and InMemoryPlayersRepository.upsert() treats that as
+    // the username changing owners: it detaches the seeded (verified) record
+    // and starts a fresh, unverified one (also breaking generation and any
+    // pendingInvites identity referencing the old id). Seeding under the same
+    // DEV_USER_ID up front means there's no owner change to lose anything to.
+    const playersRepository = new InMemoryPlayersRepository()
+    const harness = await createHarness({ playersRepository })
+
+    const seedResponse = await harness.app.inject({
+      method: 'POST',
+      url: '/api/dev/seed',
+      payload: { players: [{ username: '@dev_user', firstName: 'Dev' }] },
+    })
+    expect(seedResponse.statusCode).toBe(200)
+    await expect(playersRepository.findOne('@dev_user')).resolves.toMatchObject({
+      userId: 123456,
+      verified: true,
+    })
+
+    // Первый же authenticated-запрос без initData claim'ит @dev_user под тем
+    // же DEV_USER_ID — владелец не меняется, verified не теряется.
+    const response = await harness.app.inject({ method: 'POST', url: '/api/search' })
+
+    expect(response.statusCode).toBe(200)
+    await expect(playersRepository.isVerified('@dev_user')).resolves.toBe(true)
+    await harness.app.close()
+  })
+
   test('cleans only the old identity token after a username transition', async () => {
     const harness = await createHarness({ production: true })
     harness.state.ownership['@old'] = { userId: 10, generation: 1, status: 'active' }

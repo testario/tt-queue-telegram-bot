@@ -1,7 +1,7 @@
 import { computed, reactive, readonly } from 'vue'
 import { useApi } from './useApi.js'
 import { useTelegram } from './useTelegram.js'
-import { markPlayerBanned, markPlayerVerified } from './useApi.js'
+import { markPlayerBanned, markPlayerVerified, markPlayerUnverified } from './useApi.js'
 
 const state = reactive({
   players: [],
@@ -44,9 +44,29 @@ export function usePlayers() {
     try {
       const data = await get('/players')
       const players = data.players ?? []
-      const self = findSelf(players, useTelegram().player)
-      if (self?.banned) markPlayerBanned()
-      if (self?.verified) markPlayerVerified()
+      const { user, player: currentPlayer } = useTelegram()
+      // registrationState.verified начинается с null ("ещё не знаем") — это
+      // единственное место, которое разрешает его в true/false. Разрешаем
+      // определённо в обе стороны (а не только при verified: true), иначе
+      // статус так и остаётся null и App.vue вечно показывает "проверяем
+      // доступ" вместо логин-экрана для реально неподтверждённого игрока.
+      if (currentPlayer) {
+        // Резолвим только когда currentPlayer уже известен — на некоторых
+        // Telegram-клиентах initDataUnsafe.user.username ещё может быть не
+        // готов к этому моменту (см. комментарий у computed players ниже), и
+        // объявлять игрока неподтверждённым в этом случае было бы неверно.
+        const self = findSelf(players, currentPlayer)
+        if (self?.banned) markPlayerBanned()
+        if (self?.verified) markPlayerVerified()
+        else markPlayerUnverified()
+      } else if (user) {
+        // user уже известен, а username у него просто нет — это не "ещё не
+        // готов", а терминальное состояние: authorized-эндпоинты (auth() в
+        // router.js) всё равно ответят 400 username_required. Без этой ветки
+        // такой игрок навечно виснет на "Проверяем доступ..." — self никогда
+        // не найдётся, потому что currentPlayer никогда не станет истинным.
+        markPlayerUnverified()
+      }
       state.players = players
       state.loaded = true
     } finally {

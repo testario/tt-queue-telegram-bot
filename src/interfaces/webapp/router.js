@@ -1248,7 +1248,12 @@ export const registerRoutes = async (app, deps) => {
       const current = state.getActiveIdentity?.(username)
       if (current) return current
       if (!activateTestIdentity) return null
-      return activateTestIdentity({ username, userId })
+      // Тот же дефолт, что и в цикле сидирования игроков ниже: @dev_user без
+      // явного userId должен клеймиться под настоящим DEV_USER_ID, а не под
+      // синтетическим test-user:@dev_user — иначе первый же authenticated-
+      // запрос переклеймит его под другим id и потеряет verified/generation.
+      const resolvedUserId = userId ?? (username === DEV_USERNAME ? DEV_USER_ID : undefined)
+      return activateTestIdentity({ username, userId: resolvedUserId })
     }
 
     // Сид состояния: игроки + очередь + инвайты.
@@ -1259,10 +1264,22 @@ export const registerRoutes = async (app, deps) => {
       const seededIdentities = {}
       for (const player of players) {
         const username = player.username?.startsWith('@') ? player.username : `@${player.username}`
+        // @dev_user без явного userId иначе получил бы синтетический
+        // test-user:@dev_user (createTestIdentityHelper) — а любой
+        // authenticated-запрос из мини-аппа без initData claim'ит его заново
+        // под настоящим DEV_USER_ID. upsert() трактует смену userId для того
+        // же username как передачу владения новому человеку: отсоединяет эту
+        // сид-запись (verified, generation, все её identity-ссылки в
+        // pendingInvites) и заводит чистую — verified терялся, а сид-инвайты
+        // на @dev_user переставали приниматься/отклоняться (identity уже не
+        // совпадает). Подставляя тот же userId здесь, сидируем ровно ту
+        // запись, которую позже claim'ит настоящий dev-fallback — идентичность
+        // не рвётся вообще, и терять нечего.
+        const userId = player.userId ?? (username === DEV_USERNAME ? DEV_USER_ID : undefined)
         seededIdentities[username] = await activateTestIdentity({
           ...player,
           username,
-          userId: player.userId,
+          userId,
         })
         // Dev/mock-сиды не должны застревать на логин-экране — verified
         // выставляется отдельно от upsert() (см. isUserVerified/setVerified),

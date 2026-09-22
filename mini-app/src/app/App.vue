@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useTelegram } from '@/composables/useTelegram.js'
 import { useQueue } from '@/composables/useQueue.js'
 import { useAdmin } from '@/composables/useAdmin.js'
-import { useBanStatus, useRegistrationStatus } from '@/composables/useApi.js'
+import { useBanStatus, useRegistrationStatus, markPlayerUnverified } from '@/composables/useApi.js'
 import { usePlayers } from '@/composables/usePlayers.js'
 import QueueView from '@/features/queue/QueueView.vue'
 
@@ -111,6 +111,12 @@ onMounted(async () => {
   // игроков ещё не виден.
   await loadPlayers().catch((error) => {
     console.error('Не удалось загрузить список игроков', error)
+    // registrationStatus.verified иначе так и останется null (загрузка) —
+    // без этого сетевой сбой вешает пользователя на "проверяем доступ"
+    // навсегда вместо того, чтобы дать ему хотя бы увидеть кнопку повтора
+    // на логин-экране. Fail-closed, в духе остальной фичи: не можем
+    // подтвердить — не открываем доступ.
+    markPlayerUnverified()
   })
 })
 </script>
@@ -131,10 +137,13 @@ onMounted(async () => {
           <template v-else>Приложение закроется через {{ closeCountdown }}…</template>
         </p>
       </section>
-      <LoginScreen v-else-if="!registrationStatus.verified" />
+      <div v-else-if="registrationStatus.verified === null" class="access-check" aria-live="polite" aria-busy="true">
+        Проверяем доступ…
+      </div>
+      <LoginScreen v-else-if="registrationStatus.verified === false" />
       <component v-else :is="activeView" />
     </main>
-    <div v-if="!banStatus.isBanned && registrationStatus.verified" class="app__nav">
+    <div v-if="!banStatus.isBanned && registrationStatus.verified === true" class="app__nav">
       <BottomNavigation
         :active-tab="activeTab"
         :tabs="navigationTabs"
@@ -233,6 +242,16 @@ input {
     left: max(16px, calc((100vw - 430px) / 2 + 16px));
     z-index: 20;
   }
+}
+
+.access-check {
+  min-height: min(68dvh, 520px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--color-hint);
+  font-size: 15px;
 }
 
 .blocked-state {

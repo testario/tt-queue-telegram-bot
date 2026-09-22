@@ -11,7 +11,12 @@ export const markPlayerBanned = () => {
   banState.isBanned = true
 }
 
-const registrationState = reactive({ verified: false })
+// null — статус ещё не известен (запрос к /api/players в полёте): пока он
+// null, App.vue не должен рендерить ни LoginScreen, ни обычный интерфейс —
+// иначе на любом заходе мелькает логин-экран, даже когда игрок давно
+// подтверждён, просто ответ ещё не пришёл. true/false — статус подтверждён
+// ответом сервера.
+const registrationState = reactive({ verified: null })
 
 export function useRegistrationStatus() {
   return readonly(registrationState)
@@ -19,6 +24,17 @@ export function useRegistrationStatus() {
 
 export const markPlayerVerified = () => {
   registrationState.verified = true
+}
+
+// Серверно verified монотонен — ни один REST-ответ и ни один SSE-пуш не
+// переводит уже подтверждённого игрока обратно в false (единственный способ
+// потерять подтверждение — смена владельца username, а это уже другой
+// человек и другая сессия, см. router.js). Поэтому здесь тоже нельзя опускать
+// true → false: иначе устаревший снимок GET /api/players, пришедший ПОСЛЕ
+// SSE-пуша player_verified, или сетевой сбой при загрузке списка игроков
+// откатывают уже подтверждённого игрока обратно на логин-экран.
+export const markPlayerUnverified = () => {
+  if (registrationState.verified === null) registrationState.verified = false
 }
 
 export function useApi() {

@@ -46,9 +46,18 @@ if (playersMongoUri && playersRepository.connect) {
 // До запуска HTTP legacy participant identity нельзя безопасно доказать.
 await migrateQueueState({ repository: queueRepository, playersRepository, logger: log })
 
+// РФ блокирует api.telegram.org напрямую — запросы заворачиваются через
+// HTTP(S)-прокси за пределами РФ, если он задан.
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null
+if (proxyUrl) {
+  log.info('Telegram API запросы идут через прокси')
+} else {
+  log.warn('HTTP_PROXY/HTTPS_PROXY не заданы: запросы к Telegram API идут напрямую')
+}
+
 // Минимальный TelegramApi без polling — только для API-запросов:
 // getChatMember (проверка прав admin), sendMessage (уведомления в чат), getUserProfilePhotos (аватары)
-const tgApi = new TelegramApi(token)
+const tgApi = new TelegramApi(token, proxyUrl ? { request: { proxy: proxyUrl } } : undefined)
 
 const webApp = await createWebApp({
   bot: tgApi,

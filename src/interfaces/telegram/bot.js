@@ -322,8 +322,18 @@ const createBot = (
     },
   };
 
+  // РФ блокирует api.telegram.org напрямую — запросы (включая long polling)
+  // заворачиваются через HTTP(S)-прокси за пределами РФ, если он задан.
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
+  if (proxyUrl) {
+    log.info("Telegram API запросы идут через прокси");
+  } else {
+    log.warn("HTTP_PROXY/HTTPS_PROXY не заданы: запросы к Telegram API идут напрямую");
+  }
+
   const bot = new TelegramApi(token, {
     polling: pollingOptions,
+    ...(proxyUrl ? { request: { proxy: proxyUrl } } : {}),
   });
 
   const startLongPolling = async () => {

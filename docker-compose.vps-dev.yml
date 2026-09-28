@@ -26,6 +26,17 @@ services:
     networks:
       - internal
 
+  # Локальный HTTP-прокси до Telegram API (api.telegram.org заблокирован в
+  # РФ на уровне сети). По умолчанию outbound = freedom (прямое подключение,
+  # no-op) — см. xray/README.md, как подключить реальный туннель.
+  xray:
+    image: ghcr.io/xtls/xray-core:latest
+    restart: unless-stopped
+    volumes:
+      - ./xray/config.json:/usr/local/etc/xray/config.json:ro
+    networks:
+      - internal
+
   bot:
     build:
       context: .
@@ -37,11 +48,14 @@ services:
       PLAYERS_MONGODB_URI: mongodb://mongodb:27017
       PLAYERS_MONGODB_DB: tt-queue-bot
       PLAYERS_MONGODB_COLLECTION: players
+      HTTP_PROXY: http://xray:1080
     depends_on:
       redis:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+      xray:
+        condition: service_started
     networks:
       - internal
 
@@ -57,11 +71,14 @@ services:
       PLAYERS_MONGODB_DB: tt-queue-bot
       PLAYERS_MONGODB_COLLECTION: players
       WEBAPP_PORT: 3000
+      HTTP_PROXY: http://xray:1080
     depends_on:
       redis:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+      xray:
+        condition: service_started
     networks:
       - internal
 

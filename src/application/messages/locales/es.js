@@ -19,11 +19,22 @@ const createEsMessages = ({ formatDate }) => ({
   usernameRequired: () =>
     "No pudimos detectar tu usuario de Telegram. Configúralo en tu perfil y vuelve a intentarlo.",
   directInvite: ({ from, to }) => `${from} invita a ${to} a jugar. ¿Aceptar partida?`,
+  tournamentInvite: ({ from, to }) => `🏆 ${from} invita a ${to} a un partido de torneo. ¿Aceptar?`,
+  tournamentAcceptedShort: () => "Invitación al torneo aceptada",
+  tournamentFinished: () => "Partido de torneo terminado",
+  tournamentDisabled: () => "Los partidos de torneo están desactivados por el administrador.",
+  tournamentEnabled: () => "Partidos de torneo activados.",
+  tournamentAlreadyEnabled: () => "Los partidos de torneo ya están activados.",
+  tournamentDisabledByAdmin: () => "Partidos de torneo desactivados.",
+  tournamentAlreadyDisabled: () => "Los partidos de torneo ya están desactivados.",
   directAccepted: ({ from, to }) => `${to} aceptó la invitación de ${from}. Partido creado.`,
   directAcceptedShort: () => "Invitación aceptada",
   directDeclined: ({ from, to }) => `${to} rechazó la invitación de ${from}.`,
   directCancelled: ({ from, to }) => `${from} canceló la invitación para ${to}.`,
-  matchCreated: ({ player1, player2, startDate, endDate }) =>
+  matchCreated: ({ player1, player2, startDate, endDate, type }) =>
+    type === "tournament"
+      ? `🏆 Partido de torneo creado entre ${player1} y ${player2}\n⌚️ Inicio - ${formatDate(startDate)}\n🔚 Los jugadores lo terminan con el botón Finalizar`
+      :
     `🏓 Partido creado entre ${player1} y ${player2}\n🔔 ${readyTimeText} para prepararse\n⌚️ Inicio - ${formatDate(
       startDate
     )}\n🔚 Fin - ${formatDate(endDate)}`,
@@ -97,6 +108,9 @@ const pluralizeTestMatches = (count) => (count === 1 ? "partido de prueba" : "pa
 const createEsUi = () => ({
   commands: {
     play: "Invitar a un oponente: /play @usuario",
+    tournament: "Crear partido de torneo: /tournament @usuario",
+    enableTournament: "Activar torneos (admin)",
+    disableTournament: "Desactivar torneos (admin)",
     search: "Buscar oponente: /search",
     queue: "Mostrar la cola: /queue",
     played: "Quién ya jugó: /played",
@@ -112,6 +126,7 @@ const createEsUi = () => ({
     directAccept: "Aceptar",
     directDecline: "Rechazar",
     directCancel: "Cancelar solicitud",
+    tournamentFinish: "Finalizar",
     noChatBinding: {
       title: "El bot no está configurado",
       text: "La cola solo está disponible en el chat principal. Revisa la configuración del bot.",
@@ -183,4 +198,3 @@ const es = {
 };
 
 export { es };
-

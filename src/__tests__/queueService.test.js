@@ -89,6 +89,17 @@ describe("QueueService", () => {
     expect(result.state.queue).toHaveLength(1);
   });
 
+  test("использует стандартный регламент для неизвестного типа матча", () => {
+    const state = QueueState.createEmpty();
+    const { state: withSearch } = service.registerSearch(state, "@p1", now);
+    const result = service.scheduleMatch(withSearch, "@p1", "@p2", now, {
+      type: "unknown",
+    });
+
+    expect(result.match.type).toBe(Match.types.standard);
+    expect(result.match.endDate).toBeInstanceOf(Date);
+  });
+
   test("moves to next match on finish", () => {
     // Используем фиксированное время внутри рабочего дня, чтобы не зависеть от локального времени запуска тестов
     const matchTime = new Date(2024, 0, 1, 11, 0, 0, 0);
@@ -107,6 +118,106 @@ describe("QueueService", () => {
     expect(afterFinish.played).toEqual(expect.arrayContaining(["@p1", "@p2"]));
     expect(nextMatch.status).toBe(Match.statuses.playing);
     expect(afterFinish.queue[0].player1).toBe("@p3");
+  });
+
+  test("турнирный матч не получает время окончания, а следующий матч ждет его завершения", () => {
+    const matchTime = new Date(2024, 0, 1, 11, 0, 0, 0);
+    const { state: s1 } = service.registerSearch(QueueState.createEmpty(), "@p1", matchTime);
+    const tournament = service.scheduleMatch(s1, "@p1", "@p2", matchTime, {
+      type: Match.types.tournament,
+    });
+    const { state: s2 } = service.registerSearch(tournament.state, "@p3", matchTime);
+    const regular = service.scheduleMatch(s2, "@p3", "@p4", matchTime);
+
+    expect(tournament.match.endDate).toBeNull();
+    expect(tournament.match.startDate.getTime()).toBe(matchTime.getTime());
+    expect(regular.match.startDate).toBeNull();
+    expect(regular.match.endDate).toBeNull();
+
+    const finished = service.finishCurrent(regular.state, matchTime);
+
+    expect(finished.nextMatch.type).toBe(Match.types.standard);
+    expect(finished.nextMatch.startDate.getTime()).toBe(matchTime.getTime() + TIME_READY);
+    expect(finished.nextMatch.endDate.getTime()).toBe(
+      matchTime.getTime() + TIME_READY + DEFAULT_GAME_TIME
+    );
+  });
+
+  test("турнирный матч игнорирует дневной лимит и не отмечает игроков как отыгравших", () => {
+    const matchTime = new Date(2024, 0, 1, 11, 0, 0, 0);
+    const state = new QueueState({ played: ["@p1", "@p2"] });
+
+    const tournament = service.scheduleMatch(state, "@p1", "@p2", matchTime, {
+      type: Match.types.tournament,
+    });
+
+    expect(tournament.ok).toBe(true);
+    const finished = service.finishCurrent(tournament.state, matchTime);
+    expect(finished.state.played).toEqual(["@p1", "@p2"]);
+  });
+
+  test("позволяет принять турнирный матч во время текущей игры", () => {
+    const matchTime = new Date(2024, 0, 1, 11, 0, 0, 0);
+    const { state: s1 } = service.registerSearch(QueueState.createEmpty(), "@p1", matchTime);
+    const current = service.scheduleMatch(s1, "@p1", "@p2", matchTime);
+
+    const tournament = service.scheduleMatch(
+      current.state,
+      "@p3",
+      "@p1",
+      matchTime,
+      { type: Match.types.tournament }
+    );
+
+    expect(tournament.ok).toBe(true);
+    expect(tournament.state.queue).toHaveLength(2);
+    expect(tournament.match.type).toBe(Match.types.tournament);
+  });
+
+  test("позволяет сопернику принять турнирный матч во время текущего турнирного матча", () => {
+    const matchTime = new Date(2024, 0, 1, 11, 0, 0, 0);
+    const current = service.scheduleMatch(
+      QueueState.createEmpty(),
+      "@p1",
+      "@p2",
+      matchTime,
+      { type: Match.types.tournament }
+    );
+
+    const acceptedTournament = service.scheduleMatch(
+      current.state,
+      "@p3",
+      "@p2",
+      matchTime,
+      { type: Match.types.tournament }
+    );
+
+    expect(acceptedTournament.ok).toBe(true);
+    expect(acceptedTournament.state.queue).toHaveLength(2);
+  });
+
+  test("позволяет принять турнирный матч игроку с будущим матчем в очереди", () => {
+    const matchTime = new Date(2024, 0, 1, 11, 0, 0, 0);
+    const { state: s1 } = service.registerSearch(QueueState.createEmpty(), "@p1", matchTime);
+    const current = service.scheduleMatch(s1, "@p1", "@p2", matchTime);
+    const firstTournament = service.scheduleMatch(
+      current.state,
+      "@p3",
+      "@p4",
+      matchTime,
+      { type: Match.types.tournament }
+    );
+
+    const nextTournament = service.scheduleMatch(
+      firstTournament.state,
+      "@p5",
+      "@p3",
+      matchTime,
+      { type: Match.types.tournament }
+    );
+
+    expect(nextTournament.ok).toBe(true);
+    expect(nextTournament.state.queue).toHaveLength(3);
   });
 
   test("cancels current match and promotes next", () => {
@@ -222,4 +333,3 @@ describe("QueueService", () => {
     expect(result.status).toBe("not_found");
   });
 });
-

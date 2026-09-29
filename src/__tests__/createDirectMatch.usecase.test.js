@@ -76,6 +76,14 @@ describe("CreateDirectMatch use case", () => {
     expect(result.invite).toEqual({ player: "@p1", opponent: "@p2" });
     expect(repository.state.searching).toContain("@p1");
   });
-});
 
+  test("создает турнирное приглашение для игроков, уже сыгравших сегодня", async () => {
+    repository.state = new QueueState({ played: ["@p1", "@p2"] });
+
+    const result = await directMatch.execute("@p1", "@p2", { ignorePlayed: true });
+
+    expect(result).toMatchObject({ ok: true, invite: { player: "@p1", opponent: "@p2" } });
+    expect(repository.state.searching).toEqual([]);
+  });
+});
 

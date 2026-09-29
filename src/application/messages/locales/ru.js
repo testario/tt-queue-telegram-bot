@@ -20,16 +20,30 @@ const createRuMessages = ({ formatDate }) => ({
     "Не удалось определить твой Telegram username. Установи его в настройках и повтори команду.",
   directInvite: ({ from, to }) =>
     `${from} приглашает ${to} на игру. Принять приглашение?`,
+  tournamentInvite: ({ from, to }) =>
+    `🏆 ${from} приглашает ${to} на турнирный матч. Время игры не ограничено. Принять приглашение?`,
+  tournamentAcceptedShort: () => "Приглашение на турнирный матч принято",
+  tournamentFinished: () => "Турнирный матч завершен",
+  tournamentDisabled: () => "Режим турнира неактивен, команда недоступна.",
+  tournamentEnabled: () => "Турнирные матчи включены. Используйте /tournament @username.",
+  tournamentAlreadyEnabled: () => "Турнирные матчи уже включены.",
+  tournamentDisabledByAdmin: () => "Турнирные матчи отключены. Уже созданные матчи можно завершить.",
+  tournamentAlreadyDisabled: () => "Турнирные матчи уже отключены.",
   directAccepted: ({ from, to }) =>
     `${to} принял приглашение от ${from}. Матч создан.`,
   directAcceptedShort: () => "Приглашение принято",
   directDeclined: ({ from, to }) =>
     `${to} отклонил приглашение от ${from}.`,
   directCancelled: ({ from, to }) => `${from} отменил приглашение для ${to}.`,
-  matchCreated: ({ player1, player2, startDate, endDate }) =>
-    `🏓 Создан матч между ${player1} и ${player2}\n🔔 Дается ${readyTimeText} на подготовку\n⌚️ Время начала - ${formatDate(
-      startDate
-    )}\n🔚 Время окончания - ${formatDate(endDate)}`,
+  matchCreated: ({ player1, player2, startDate, endDate, type }) => {
+    const startText = startDate
+      ? formatDate(startDate)
+      : "будет определено после предыдущего матча";
+    if (type === "tournament") {
+      return `🏆 Создан турнирный матч между ${player1} и ${player2}\n⌚️ Время начала - ${startText}\n🔚 Время окончания определяют игроки кнопкой «Закончить»`;
+    }
+    return `🏓 Создан матч между ${player1} и ${player2}\n🔔 Дается ${readyTimeText} на подготовку\n⌚️ Время начала - ${startText}\n🔚 Время окончания - ${endDate ? formatDate(endDate) : "будет определено после предыдущего матча"}`;
+  },
   matchAlreadyInQueue: () => "Один из игроков уже играет прямо сейчас",
   matchAlreadyPlayed: () => "Ты уже играл сегодня",
   matchPlayerNotSearching: () => "Этот игрок больше не ищет соперника",
@@ -45,11 +59,9 @@ const createRuMessages = ({ formatDate }) => ({
       ? "Очередь:\n\n" +
         queue.reduce(
           (current, next, index) =>
-            (current += `Матч №${index + 1}\nИграют ${stripAt(next.player1)} и ${stripAt(
+            (current += `${next.type === "tournament" ? "🏆 Турнирный матч" : "Матч"} №${index + 1}\nИграют ${stripAt(next.player1)} и ${stripAt(
               next.player2
-            )}\nДата начала - ${formatDate(next.startDate)}\nДата окончания - ${formatDate(
-              next.endDate
-            )}\n\n`),
+            )}\nДата начала - ${next.startDate ? formatDate(next.startDate) : "будет определено после предыдущего матча"}\nДата окончания - ${next.type === "tournament" ? "по кнопке «Закончить»" : next.endDate ? formatDate(next.endDate) : "будет определено после предыдущего матча"}\n\n`),
           ""
         )
       : "Очередь пуста",
@@ -128,6 +140,9 @@ const pluralizeTestMatches = (count) => (count === 1 ? "тестовый мат�
 const createRuUi = () => ({
   commands: {
     play: "Пригласить соперника: /play @username",
+    tournament: "Создать турнирный матч: /tournament @username",
+    enableTournament: "Включить турнирные матчи (админ)",
+    disableTournament: "Отключить турнирные матчи (админ)",
     search: "Позвать соперника: /search",
     queue: "Показать очередь: /queue",
     played: "Кто уже играл: /played",
@@ -143,6 +158,7 @@ const createRuUi = () => ({
     directAccept: "Принять",
     directDecline: "Отказаться",
     directCancel: "Отменить запрос",
+    tournamentFinish: "Закончить",
     noChatBinding: {
       title: "Бот не настроен",
       text: "Очередь доступна только в основном чате. Проверьте настройки бота.",

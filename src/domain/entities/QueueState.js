@@ -6,7 +6,6 @@
  */
 class QueueState {
   static SCHEMA_VERSION = 2;
-
   constructor({
     queue = [],
     played = [],
@@ -21,6 +20,7 @@ class QueueState {
     bannedUserIds = {},
     lastPlayedResetAt = null,
     holdNextMatch = false,
+    nextMatchId = 1,
   } = {}) {
     this.queue = queue;
     this.played = played;
@@ -45,6 +45,7 @@ class QueueState {
       writable: true,
       enumerable: false,
     });
+    this.nextMatchId = QueueState.resolveNextMatchId(nextMatchId, queue);
   }
 
   static createEmpty(params = {}) {
@@ -114,8 +115,8 @@ class QueueState {
     if (!raw) return QueueState.createEmpty();
     const queue = (raw.queue || []).map((item) => ({
       ...item,
-      startDate: new Date(item.startDate),
-      endDate: new Date(item.endDate),
+      startDate: item.startDate ? new Date(item.startDate) : null,
+      endDate: item.endDate ? new Date(item.endDate) : null,
     }));
     return new QueueState({
       queue,
@@ -131,6 +132,7 @@ class QueueState {
       bannedUserIds: raw.bannedUserIds,
       lastPlayedResetAt: raw.lastPlayedResetAt ? new Date(raw.lastPlayedResetAt) : null,
       holdNextMatch: raw.holdNextMatch,
+      nextMatchId: QueueState.resolveNextMatchId(raw.nextMatchId, queue),
     });
   }
 
@@ -161,6 +163,7 @@ class QueueState {
       ])),
       lastPlayedResetAt: this.lastPlayedResetAt ? new Date(this.lastPlayedResetAt) : null,
       holdNextMatch: this.holdNextMatch,
+      nextMatchId: this.nextMatchId,
     });
   }
 
@@ -235,6 +238,38 @@ class QueueState {
     this.queue.push(match);
   }
 
+  /**
+   * Возвращает следующий уникальный идентификатор матча.
+   * @returns {string}
+   */
+  createMatchId() {
+    const id = `match-${this.nextMatchId}`;
+    this.nextMatchId += 1;
+    return id;
+  }
+
+  /**
+   * Восстанавливает номер следующего матча, не переиспользуя идентификаторы из очереди.
+   * @param {unknown} rawNextMatchId Сохраненный номер следующего матча.
+   * @param {Array<{id?: string}>} queue Очередь матчей.
+   * @returns {number}
+   */
+  static resolveNextMatchId(rawNextMatchId, queue) {
+    const nextMatchId = Number(rawNextMatchId);
+    const savedNextMatchId =
+      Number.isInteger(nextMatchId) && nextMatchId > 0 ? nextMatchId : 1;
+
+    const lastMatchId = queue.reduce((maxId, match) => {
+      const matchId = Number(String(match.id || "").replace("match-", ""));
+      return Number.isInteger(matchId) ? Math.max(maxId, matchId) : maxId;
+    }, 0);
+    return Math.max(savedNextMatchId, lastMatchId + 1);
+  }
+
+  /**
+   * Извлекает и возвращает первый матч в очереди.
+   * @returns {import("./Match.js").Match|undefined}
+   */
   shiftQueue() {
     return this.queue.shift();
   }

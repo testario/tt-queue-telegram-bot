@@ -54,7 +54,9 @@ const createLocalization = ({ locale, fallbackLocale } = {}) => {
   const fallback = pickLocale(fallbackLocale) || locales.ru;
 
   const formatDate = (date) =>
-    date.toLocaleString(requested.dateLocale || requested.code || "ru", TIME_OPTIONS);
+    date
+      ? date.toLocaleString(requested.dateLocale || requested.code || "ru", TIME_OPTIONS)
+      : "—";
 
   const messages = mergeWithFallback(
     requested.createMessages({ formatDate }),
@@ -70,4 +72,3 @@ const createLocalization = ({ locale, fallbackLocale } = {}) => {
 };
 
 export { createLocalization };
-

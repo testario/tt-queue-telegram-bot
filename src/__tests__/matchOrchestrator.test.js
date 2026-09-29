@@ -3,6 +3,7 @@ import { MatchOrchestrator } from "#application/services/MatchOrchestrator.js";
 import { templates } from "#application/messages/templates.js";
 import { InMemoryQueueRepository } from "#infrastructure/repositories/InMemoryQueueRepository.js";
 import { QueueState } from "#domain/entities/QueueState.js";
+import { Match } from "#domain";
 
 class FakeTimer {
   constructor() {
@@ -561,5 +562,28 @@ describe("MatchOrchestrator", () => {
     orchestrator.scheduleLifecycle(match);
     orchestrator.scheduleFinish(match);
     expect(timer.tasks.size).toBe(0);
+  });
+
+  test("не планирует автоматическое завершение турнирного матча", () => {
+    const base = new Date("2024-01-01T00:00:00.000Z");
+    const match = {
+      ...createMatch("@p1", "@p2", new Date(base.getTime() + 1000), null),
+      type: Match.types.tournament,
+    };
+    const timer = new FakeTimer();
+    const orchestrator = new MatchOrchestrator({
+      chatId: 1,
+      timer,
+      notifier: { notify: jest.fn() },
+      repository: { get: jest.fn(), save: jest.fn() },
+      queueService: { finishCurrent: jest.fn() },
+      messages: templates,
+      clock: { now: jest.fn(() => base) },
+    });
+
+    orchestrator.scheduleLifecycle(match);
+    timer.run(orchestrator.buildId("start", match));
+
+    expect(timer.tasks.has(orchestrator.buildId("finish", match))).toBe(false);
   });
 });

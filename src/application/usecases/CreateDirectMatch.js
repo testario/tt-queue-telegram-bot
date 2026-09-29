@@ -48,12 +48,17 @@ class CreateDirectMatch {
    * Готовит приглашение на матч между автором и оппонентом по нику.
    * @param {string|null} player Ник инициатора (с @).
    * @param {string|undefined|null} opponentRaw Строка с ником оппонента.
+   * @param {{ identityToken?: object, opponentIdentity?: object, ignorePlayed?: boolean }} [options]
    * @returns {Promise<
    *   | { ok: true, text: string, invite: { player: string, opponent: string } }
    *   | { ok: false, reason: string, text: string }
    * >}
    */
-  async execute(player, opponentRaw, { identityToken, opponentIdentity } = {}) {
+  async execute(player, opponentRaw, {
+    identityToken,
+    opponentIdentity,
+    ignorePlayed = false,
+  } = {}) {
     const opponent = this.normalizeOpponent(opponentRaw);
 
     if (!player) {
@@ -85,7 +90,7 @@ class CreateDirectMatch {
       }),
     });
 
-    if (normalizedState.isPlayed(opponent, opponentIdentity)) {
+    if (!ignorePlayed && normalizedState.isPlayed(opponent, opponentIdentity)) {
       this.logger.info("Прямое создание матча прервано: оппонент уже играл", {
         player,
         opponent,
@@ -102,6 +107,15 @@ class CreateDirectMatch {
         ok: false,
         reason: "player_banned",
         text: this.messages.searchUnknown(player),
+      };
+    }
+
+    if (ignorePlayed) {
+      this.logger.info("Создано приглашение на матч без дневного лимита", { player, opponent });
+      return {
+        ok: true,
+        invite: { player, opponent, playerIdentity: identityToken, opponentIdentity },
+        text: this.messages.directInvite({ from: player, to: opponent }),
       };
     }
 

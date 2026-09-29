@@ -105,7 +105,7 @@ class QueueService {
    * @param {string} player1 Первый игрок (должен быть в поиске).
    * @param {string} player2 Второй игрок.
    * @param {Date} now Текущее время.
-   * @param {{participantIdentities: Record<string, object>, inviteIdentities?: Record<string, object>}} options
+   * @param {{participantIdentities: Record<string, object>, inviteIdentities?: Record<string, object>, type?: "standard"|"tournament"}} options
    * @returns {{ok: false, reason: string, state: QueueState, cleanup?: boolean}|{ok: true, state: QueueState, match: import("../entities/Match.js").Match}}
    */
   scheduleMatch(
@@ -116,11 +116,14 @@ class QueueService {
     {
       participantIdentities = {},
       inviteIdentities = {},
+      type = Match.types.standard,
     } = {}
   ) {
     const { state: normalizedState } = this.normalizeState(state, now);
     const nextState = normalizedState.clone();
     const participantNames = [player1, player2];
+    const matchType = type === Match.types.tournament ? Match.types.tournament : Match.types.standard;
+    const isTournament = matchType === Match.types.tournament;
     const hasCompleteParticipantIdentities = participantNames.every((username) => {
       const token = participantIdentities[username];
       return QueueState.isCompleteIdentity(token) && token.username === username;
@@ -166,53 +169,56 @@ class QueueService {
       return { ok: false, reason: "player1_identity_mismatch", state: nextState, cleanup };
     };
 
-    if (nextState.isSearching(player1)) {
-      const staleSearch = rejectStaleSearch();
-      if (staleSearch) return staleSearch;
-    } else {
-      if (player1 === player2) {
-        return { ok: false, reason: "same_player", state: nextState };
-      }
-      if (nextState.isPlayed(player1, participantIdentities[player1])
-        || nextState.isPlayed(player2, participantIdentities[player2])) {
-        return { ok: false, reason: "already_played", state: nextState };
-      }
-      if (nextState.isQueued(player1, participantIdentities[player1])
-        || nextState.isQueued(player2, participantIdentities[player2])) {
-        return { ok: false, reason: "already_in_queue", state: nextState };
-      }
-      return { ok: false, reason: "player1_not_searching", state: nextState };
-    }
-
     if (player1 === player2) {
       return { ok: false, reason: "same_player", state: nextState };
     }
-    if (nextState.isPlayed(player1, participantIdentities[player1])
-      || nextState.isPlayed(player2, participantIdentities[player2])) {
-      return { ok: false, reason: "already_played", state: nextState };
-    }
-    if (nextState.isQueued(player1, participantIdentities[player1])
+    if (isTournament) {
+      if (!hasActiveParticipantIdentities()) {
+        return { ok: false, reason: "identity_unavailable", state: nextState };
+      }
+    } else if (nextState.isQueued(player1, participantIdentities[player1])
       || nextState.isQueued(player2, participantIdentities[player2])) {
       return { ok: false, reason: "already_in_queue", state: nextState };
+    } else if (nextState.isSearching(player1)) {
+      const staleSearch = rejectStaleSearch();
+      if (staleSearch) return staleSearch;
+    } else {
+      return { ok: false, reason: "player1_not_searching", state: nextState };
     }
-    nextState.removeSearching(player1, participantIdentities[player1]);
+    if (!isTournament && (nextState.isPlayed(player1, participantIdentities[player1])
+      || nextState.isPlayed(player2, participantIdentities[player2]))) {
+      return { ok: false, reason: "already_played", state: nextState };
+    }
+    if (!isTournament && (nextState.isQueued(player1, participantIdentities[player1])
+      || nextState.isQueued(player2, participantIdentities[player2]))) {
+      return { ok: false, reason: "already_in_queue", state: nextState };
+    }
+    if (!isTournament) nextState.removeSearching(player1, participantIdentities[player1]);
 
     const lastMatch = nextState.queue[nextState.queue.length - 1];
-    const baseStart = lastMatch ? lastMatch.endDate : now;
-    const startDate = new Date(baseStart.getTime() + this.readyMs);
-    const endDate = new Date(startDate.getTime() + this.gameMs);
+    const baseStart = lastMatch?.endDate || now;
+    const canCalculateTime = !lastMatch || Boolean(lastMatch.endDate);
+    const startDate = canCalculateTime
+      ? new Date(baseStart.getTime() + this.getReadyMs(matchType))
+      : null;
+    const endDate =
+      matchType === Match.types.standard && startDate
+        ? new Date(startDate.getTime() + this.gameMs)
+        : null;
     const status =
       nextState.queue.length === 0
         ? Match.statuses.playing
         : Match.statuses.waiting;
 
     const match = Match.create({
+      id: nextState.createMatchId(),
       player1,
       player2,
       startDate,
       endDate,
       status,
       participantIdentities,
+      type: matchType,
     });
 
     nextState.enqueue(match);
@@ -235,7 +241,12 @@ class QueueService {
     const endedMatch = nextState.shiftQueue();
     let nextMatch = null;
 
-    if (endedMatch && !isLunchTime && !isAfterWork) {
+    if (
+      endedMatch &&
+      endedMatch.type !== Match.types.tournament &&
+      !isLunchTime &&
+      !isAfterWork
+    ) {
       nextState.played.push(endedMatch.player1, endedMatch.player2);
       for (const player of [endedMatch.player1, endedMatch.player2]) {
         const identity = endedMatch.participantIdentities?.[player];
@@ -245,9 +256,7 @@ class QueueService {
 
     if (nextState.queue.length > 0 && !holdNextMatch) {
       const current = nextState.queue[0];
-      current.status = Match.statuses.playing;
-      current.startDate = new Date(now.getTime() + this.readyMs);
-      current.endDate = new Date(current.startDate.getTime() + this.gameMs);
+      this.startMatch(current, now);
       nextMatch = current;
       this.recalculateWaiting(nextState);
     }
@@ -290,21 +299,21 @@ class QueueService {
     if (index === 0) {
       const currentTime = now.getTime();
       // Оставшееся время для пользователей: считаем до конца матча, включая подготовку, если отмена пришла раньше старта.
-      const remains = Math.max(0, match.endDate.getTime() - currentTime);
+      const remains = match.endDate
+        ? Math.max(0, match.endDate.getTime() - currentTime)
+        : 0;
       const holdNextMatch = nextState.holdNextMatch;
       nextState.holdNextMatch = false;
 
       let nextMatch = null;
       if (nextState.queue.length > 0) {
         const current = nextState.queue[0];
-        if (holdNextMatch) {
-          current.status = Match.statuses.waiting;
-        } else {
-          current.status = Match.statuses.playing;
-          current.startDate = new Date(currentTime + this.readyMs);
-          current.endDate = new Date(current.startDate.getTime() + this.gameMs);
-          nextMatch = current;
-        }
+      if (holdNextMatch) {
+        current.status = Match.statuses.waiting;
+      } else {
+        this.startMatch(current, now);
+        nextMatch = current;
+      }
         this.recalculateWaiting(nextState);
       }
 
@@ -337,10 +346,41 @@ class QueueService {
     for (let i = 1; i < state.queue.length; i++) {
       const match = state.queue[i];
       match.status = Match.statuses.waiting;
-      match.startDate = new Date(previous.endDate.getTime() + this.readyMs);
-      match.endDate = new Date(match.startDate.getTime() + this.gameMs);
+      if (!previous.endDate) {
+        match.startDate = null;
+        match.endDate = null;
+      } else {
+        match.startDate = new Date(previous.endDate.getTime() + this.getReadyMs(match.type));
+        match.endDate =
+          match.type === Match.types.tournament
+            ? null
+            : new Date(match.startDate.getTime() + this.gameMs);
+      }
       previous = match;
     }
+  }
+
+  /**
+   * Назначает старт следующего матча. Для турнирного матча время окончания не устанавливается.
+   * @param {import("../entities/Match.js").Match} match Матч для запуска.
+   * @param {Date} now Текущее время.
+   */
+  startMatch(match, now) {
+    match.status = Match.statuses.playing;
+    match.startDate = new Date(now.getTime() + this.getReadyMs(match.type));
+    match.endDate =
+      match.type === Match.types.tournament
+        ? null
+        : new Date(match.startDate.getTime() + this.gameMs);
+  }
+
+  /**
+   * Возвращает время подготовки: турнирный матч начинается сразу.
+   * @param {"standard"|"tournament"|undefined} type Тип матча.
+   * @returns {number}
+   */
+  getReadyMs(type) {
+    return type === Match.types.tournament ? 0 : this.readyMs;
   }
 
   /**

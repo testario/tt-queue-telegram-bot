@@ -52,7 +52,7 @@ class AddMatch {
    * Добавляет матч между двумя игроками, уведомляет чат и при необходимости планирует таймеры.
    * @param {string} player1
    * @param {string} player2
-   * @param {{ scheduleLifecycle?: boolean, participantIdentities: Record<string, object>, inviteIdentities?: Record<string, object> }} options
+   * @param {{ scheduleLifecycle?: boolean, participantIdentities?: Record<string, object>, inviteIdentities?: Record<string, object>, type?: "standard"|"tournament" }} options
    * @returns {Promise<
    *   | { ok: true, match: Match, text: string, orphanedSearchers: string[] }
    *   | { ok: false, reason?: string, text: string }
@@ -65,6 +65,7 @@ class AddMatch {
       scheduleLifecycle = true,
       participantIdentities = {},
       inviteIdentities = {},
+      type = Match.types.standard,
     } = {}
   ) {
     this.logger.info("Попытка создать матч", { player1, player2 });
@@ -79,7 +80,7 @@ class AddMatch {
           player1,
           player2,
           now,
-          { participantIdentities, inviteIdentities }
+          { participantIdentities, inviteIdentities, type }
         );
         if (!result.ok) return { state: result.state, result, match: null, save: result.cleanup === true };
 
@@ -103,8 +104,8 @@ class AddMatch {
     this.logger.info("Матч создан", {
       player1: match.player1,
       player2: match.player2,
-      startDate: match.startDate.toISOString(),
-      endDate: match.endDate.toISOString(),
+      startDate: match.startDate?.toISOString() || null,
+      endDate: match.endDate?.toISOString() || null,
       status: match.status,
     });
     // Матч мог возникнуть, пока один из игроков был стороной какого-то ещё не

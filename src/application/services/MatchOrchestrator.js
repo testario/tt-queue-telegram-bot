@@ -161,7 +161,9 @@ class MatchOrchestrator {
         match,
       });
       if (this.disposed) return;
-      this.scheduleFinish(match, { scheduleNext });
+      if (match.type !== Match.types.tournament) {
+        this.scheduleFinish(match, { scheduleNext });
+      }
     });
   }
 
@@ -172,6 +174,7 @@ class MatchOrchestrator {
    */
   scheduleFinish(match, { scheduleNext = true } = {}) {
     if (this.disposed) return;
+    if (!match.endDate) return;
     const finishId = this.buildId("finish", match);
     const finishDelay = Math.max(0, match.endDate.getTime() - this.clock.now().getTime());
     this.timer.schedule(finishId, finishDelay, () =>
@@ -185,6 +188,7 @@ class MatchOrchestrator {
    * @returns {void}
    */
   cancelForMatch(match) {
+    if (!match.startDate) return;
     const startId = this.buildId("start", match);
     const finishId = this.buildId("finish", match);
     const retryId = this.buildId("finish-retry", match);

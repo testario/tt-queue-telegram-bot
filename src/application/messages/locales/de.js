@@ -22,11 +22,22 @@ const createDeMessages = ({ formatDate }) => ({
     "Dein Telegram-Username konnte nicht erkannt werden. Setze ihn in deinem Profil und versuche es erneut.",
   directInvite: ({ from, to }) => `${from} lädt ${to} zum Spiel ein. Einladung annehmen?`,
   directInviteSent: ({ from, to }) => `Einladung für ${to} wurde von ${from} gesendet.`,
+  tournamentInvite: ({ from, to }) => `🏆 ${from} lädt ${to} zu einem Turniermatch ein. Annehmen?`,
+  tournamentAcceptedShort: () => "Turniereinladung angenommen",
+  tournamentFinished: () => "Turniermatch beendet",
+  tournamentDisabled: () => "Turniermatches sind vom Administrator deaktiviert.",
+  tournamentEnabled: () => "Turniermatches sind aktiviert.",
+  tournamentAlreadyEnabled: () => "Turniermatches sind bereits aktiviert.",
+  tournamentDisabledByAdmin: () => "Turniermatches sind deaktiviert.",
+  tournamentAlreadyDisabled: () => "Turniermatches sind bereits deaktiviert.",
   directAccepted: ({ from, to }) => `${to} hat die Einladung von ${from} akzeptiert. Match erstellt.`,
   directAcceptedShort: () => "Einladung angenommen",
   directDeclined: ({ from, to }) => `${to} hat die Einladung von ${from} abgelehnt.`,
   directCancelled: ({ from, to }) => `${from} hat die Einladung für ${to} zurückgezogen.`,
-  matchCreated: ({ player1, player2, startDate, endDate }) =>
+  matchCreated: ({ player1, player2, startDate, endDate, type }) =>
+    type === "tournament"
+      ? `🏆 Turniermatch erstellt zwischen ${player1} und ${player2}\nStart - ${formatDate(startDate)}\nSpieler beenden es mit der Taste Beenden`
+      :
     `🏓 Match erstellt zwischen ${player1} und ${player2}\n🔔 ${readyTimeText} zur Vorbereitung\n⌚️ Start - ${formatDate(
       startDate
     )}\n🔚 Ende - ${formatDate(endDate)}`,
@@ -106,6 +117,9 @@ const pluralizeTestMatches = (count) => (count === 1 ? "Testmatch" : "Testmatche
 const createDeUi = () => ({
   commands: {
     play: "Gegner einladen: /play @username",
+    tournament: "Turniermatch erstellen: /tournament @username",
+    enableTournament: "Turniermatches aktivieren (Admin)",
+    disableTournament: "Turniermatches deaktivieren (Admin)",
     search: "Gegner suchen: /search",
     queue: "Warteschlange anzeigen: /queue",
     played: "Wer schon gespielt hat: /played",
@@ -121,6 +135,7 @@ const createDeUi = () => ({
     directAccept: "Annehmen",
     directDecline: "Ablehnen",
     directCancel: "Anfrage abbrechen",
+    tournamentFinish: "Beenden",
     noChatBinding: {
       title: "Bot ist nicht konfiguriert",
       text: "Die Warteschlange ist nur im Hauptchat verfügbar. Prüfe die Bot-Einstellungen.",

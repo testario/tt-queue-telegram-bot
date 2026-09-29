@@ -52,6 +52,23 @@ describe("QueueState", () => {
     expect(state.holdNextMatch).toBe(true);
   });
 
+  test("восстанавливает следующий идентификатор матча без повторов", () => {
+    const state = QueueState.from({
+      queue: [{ id: "match-5", player1: "@p1", player2: "@p2" }],
+    });
+
+    expect(state.createMatchId()).toBe("match-6");
+  });
+
+  test("не переиспользует ID при устаревшем сохраненном счетчике", () => {
+    const state = QueueState.from({
+      nextMatchId: 1,
+      queue: [{ id: "match-5", player1: "@p1", player2: "@p2" }],
+    });
+
+    expect(state.createMatchId()).toBe("match-6");
+  });
+
   test("hasPlayer учитывает поиск, очередь и сыгравших", () => {
     const state = new QueueState({
       queue: [Match.create({ player1: "@q1", player2: "@q2", startDate: new Date(), endDate: new Date() })],

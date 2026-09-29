@@ -159,6 +159,35 @@ describe("AddMatch use case", () => {
     expect(orchestrator.scheduleLifecycle).not.toHaveBeenCalled();
     expect(repository.saveIfRevision).toHaveBeenCalledWith(0, { some: "state" });
   });
+
+  test("создает турнирный матч без времени окончания", async () => {
+    const { repository, queueService, orchestrator, notifier, clock } = baseDeps();
+    queueService.scheduleMatch.mockReturnValue({
+      ok: true,
+      state: { some: "state" },
+      match: {
+        player1: "@p1",
+        player2: "@p2",
+        startDate: new Date(),
+        endDate: null,
+        status: Match.statuses.playing,
+        type: Match.types.tournament,
+      },
+    });
+    const useCase = new AddMatch({
+      chatId: 42,
+      repository,
+      queueService,
+      orchestrator,
+      notifier,
+      messages: templates,
+      clock,
+    });
+
+    await expect(useCase.execute("@p1", "@p2", { type: Match.types.tournament })).resolves.toMatchObject({
+      ok: true,
+    });
+  });
 });
 
 class StubNotifier {

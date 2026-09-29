@@ -8,6 +8,10 @@ const directDeclinePrefix = "direct_decline:";
 const directCancelPrefix = "direct_cancel:";
 const confirmPlayerPrefix = "confirm_player:";
 const inviteIdPattern = /^[A-Za-z0-9_-]{16}$/;
+const tournamentAcceptPrefix = "tournament_accept:";
+const tournamentDeclinePrefix = "tournament_decline:";
+const tournamentCancelPrefix = "tournament_cancel:";
+const tournamentFinishPrefix = "tournament_finish:";
 
 /**
  * @typedef {Object} PlayWithData
@@ -50,7 +54,15 @@ const inviteIdPattern = /^[A-Za-z0-9_-]{16}$/;
  * @typedef {Object} UnknownData
  * @property {"unknown"} type
  *
- * @typedef {PlayWithData | CancelSearchData | CancelMatchData | TestData | InlineTestData | DirectAcceptData | DirectDeclineData | DirectCancelData | ConfirmPlayerData | UnknownData} ParsedCallbackData
+ * @typedef {Object} TournamentInviteData
+ * @property {"tournament_accept"|"tournament_decline"|"tournament_cancel"} type
+ * @property {string} invitationId
+ *
+ * @typedef {Object} TournamentFinishData
+ * @property {"tournament_finish"} type
+ * @property {string} matchId
+ *
+ * @typedef {PlayWithData | CancelSearchData | CancelMatchData | TestData | InlineTestData | DirectAcceptData | DirectDeclineData | DirectCancelData | ConfirmPlayerData | TournamentInviteData | TournamentFinishData | UnknownData} ParsedCallbackData
  */
 
 /**
@@ -96,6 +108,18 @@ const parseCallbackData = (data) => {
   if (data.startsWith(confirmPlayerPrefix)) {
     const raw = data.slice(confirmPlayerPrefix.length);
     return { type: "confirm_player", userId: /^\d+$/.test(raw) ? raw : null };
+  }
+  if (data.startsWith(tournamentAcceptPrefix)) {
+    return { type: "tournament_accept", invitationId: data.slice(tournamentAcceptPrefix.length) };
+  }
+  if (data.startsWith(tournamentDeclinePrefix)) {
+    return { type: "tournament_decline", invitationId: data.slice(tournamentDeclinePrefix.length) };
+  }
+  if (data.startsWith(tournamentCancelPrefix)) {
+    return { type: "tournament_cancel", invitationId: data.slice(tournamentCancelPrefix.length) };
+  }
+  if (data.startsWith(tournamentFinishPrefix)) {
+    return { type: "tournament_finish", matchId: data.slice(tournamentFinishPrefix.length) };
   }
   return { type: "unknown" };
 };

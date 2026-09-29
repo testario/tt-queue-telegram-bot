@@ -1,7 +1,7 @@
 import { Match } from "#domain";
 import { createNullLogger } from "#infrastructure/logger/Logger.js";
 
-/** Завершает активный турнирный матч по подтверждению его участника. */
+/** Завершает активный турнирный матч по подтверждению участника или администратора. */
 class FinishTournamentMatch {
   /**
    * @param {Object} deps Зависимости юзкейса.
@@ -17,11 +17,12 @@ class FinishTournamentMatch {
   }
 
   /**
-   * @param {string} player Игрок, нажавший кнопку завершения.
+   * @param {string} player Пользователь, нажавший кнопку завершения.
    * @param {string} matchId Идентификатор завершаемого матча.
+   * @param {{ isAdmin?: boolean }} [options] Права пользователя в чате.
    * @returns {Promise<{ok: true}|{ok: false, reason: "not_found"|"not_tournament"|"not_participant"}>}
    */
-  async execute(player, matchId) {
+  async execute(player, matchId, { isAdmin = false } = {}) {
     if (this.finishingMatchIds.has(matchId)) {
       return { ok: false, reason: "not_found" };
     }
@@ -37,12 +38,14 @@ class FinishTournamentMatch {
       if (currentMatch.type !== Match.types.tournament) {
         return { ok: false, reason: "not_tournament" };
       }
-      if (![currentMatch.player1, currentMatch.player2].includes(player)) {
+      const isParticipant = [currentMatch.player1, currentMatch.player2].includes(player);
+      if (!isParticipant && !isAdmin) {
         return { ok: false, reason: "not_participant" };
       }
 
-      this.logger.info("Турнирный матч завершен участником", {
+      this.logger.info("Турнирный матч завершен", {
         player,
+        isAdmin,
         player1: currentMatch.player1,
         player2: currentMatch.player2,
       });

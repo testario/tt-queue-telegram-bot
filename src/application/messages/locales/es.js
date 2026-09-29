@@ -22,6 +22,7 @@ const createEsMessages = ({ formatDate }) => ({
   tournamentInvite: ({ from, to }) => `🏆 ${from} invita a ${to} a un partido de torneo. ¿Aceptar?`,
   tournamentAcceptedShort: () => "Invitación al torneo aceptada",
   tournamentFinished: () => "Partido de torneo terminado",
+  tournamentAccessDenied: () => "Los partidos de torneo solo están disponibles entre participantes del torneo.",
   tournamentDisabled: () => "Los partidos de torneo están desactivados por el administrador.",
   tournamentEnabled: () => "Partidos de torneo activados.",
   tournamentAlreadyEnabled: () => "Los partidos de torneo ya están activados.",

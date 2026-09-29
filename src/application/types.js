@@ -102,6 +102,7 @@
  * @property {(payload: { from: string, to: string }) => string} tournamentInvite
  * @property {() => string} tournamentAcceptedShort
  * @property {() => string} tournamentFinished
+ * @property {() => string} tournamentAccessDenied
  * @property {() => string} tournamentDisabled
  * @property {() => string} tournamentEnabled
  * @property {() => string} tournamentAlreadyEnabled

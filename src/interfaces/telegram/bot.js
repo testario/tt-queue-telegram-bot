@@ -5,6 +5,11 @@ import {
   TIME_READY,
   WORK_SCHEDULE,
 } from "#application/config/time.js";
+import {
+  canCreateTournamentMatch,
+  getTournamentPlayers,
+  normalizeTournamentPlayer,
+} from "#application/config/tournament.js";
 import { createLogger } from "#infrastructure/logger/Logger.js";
 import { QueueService } from "#domain/services/QueueService.js";
 import { InMemoryQueueRepository } from "#infrastructure/repositories/InMemoryQueueRepository.js";
@@ -92,6 +97,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     });
     const key = `@${username}`;
     playerDisplayNames.set(key, displayName);
+    playerDisplayNames.set(normalizeTournamentPlayer(username), displayName);
     return displayName;
   };
 
@@ -109,6 +115,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
   const messages = createMessagesWithDisplay(rawMessages);
   log.info("Инициализация бота", { locale: currentLocale });
   const contexts = new Map();
+  const tournamentPlayers = getTournamentPlayers();
   const queueChatId = process.env.TG_CHAT_ID ? String(process.env.TG_CHAT_ID) : null;
   const metricsChatId = process.env.METRICS_CHAT_ID ? String(process.env.METRICS_CHAT_ID) : null;
   const metricsUri = metricsEnabled ? process.env.METRICS_MONGODB_URI || process.env.MONGODB_URI || null : null;
@@ -425,6 +432,11 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
         baseMessages.directOpponentPlayed(formatPlayerForMessage(player)),
       directInvite: ({ from, to }) =>
         baseMessages.directInvite({
+          from: formatPlayerForMessage(from),
+          to: formatPlayerForMessage(to),
+        }),
+      tournamentInvite: ({ from, to }) =>
+        baseMessages.tournamentInvite({
           from: formatPlayerForMessage(from),
           to: formatPlayerForMessage(to),
         }),
@@ -1424,13 +1436,27 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
 
   bot.onText(/^\/tournament(?:@[\w_]+)?(?:\s+(@[\w_]+))?\s*$/, async (msg, match) => {
     const chatId = resolveChatIdFromMessage(msg);
-    const username = msg.from?.username;
-    const player = username ? `@${username}` : null;
+    const player = normalizeTournamentPlayer(msg.from?.username) || null;
     const opponentRaw = (match && match[1]) || "";
+    const opponent = normalizeTournamentPlayer(opponentRaw);
     rememberUserDisplayName(msg.from);
     trackUsage("command:tournament", { hasOpponent: Boolean(opponentRaw) });
 
     if (!chatId) return;
+
+    if (!player) {
+      await bot.sendMessage(chatId, messages.usernameRequired(), {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
+
+    if (!canCreateTournamentMatch(tournamentPlayers, player, opponent)) {
+      await bot.sendMessage(chatId, messages.tournamentAccessDenied(), {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
 
     if (!tournamentFeature.isEnabled(chatId)) {
       await bot.sendMessage(chatId, messages.tournamentDisabled(), {
@@ -1446,7 +1472,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     }
 
     try {
-      const result = await context.directMatch.execute(player, opponentRaw, { ignorePlayed: true });
+      const result = await context.directMatch.execute(player, opponent, { ignorePlayed: true });
       if (!result.ok) {
         await bot.sendMessage(chatId, result.text, { reply_to_message_id: msg.message_id });
         return;
@@ -1789,6 +1815,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     const callbackId = callbackQuery.id;
     const messageId = callbackQuery.inline_message_id;
     const player2 = "@" + callbackQuery.from.username;
+    const tournamentPlayer = normalizeTournamentPlayer(callbackQuery.from.username);
     const chatId = resolveChatIdFromCallback(callbackQuery);
     rememberUserDisplayName(callbackQuery.from);
     const userId = callbackQuery.from?.id;
@@ -1958,7 +1985,8 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
         }
       }
     } else if (parsed.type === "tournament_finish") {
-      const finishResult = await finishTournamentMatch.execute(player2, parsed.matchId);
+      const isAdmin = await isUserAdmin(chatId, userId);
+      const finishResult = await finishTournamentMatch.execute(tournamentPlayer, parsed.matchId, { isAdmin });
       if (!finishResult.ok) {
         bot
           .answerCallbackQuery(callbackId, { text: ui.callback.matchNotFound, show_alert: true })
@@ -1976,7 +2004,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
       const invite = tournamentFeature.getInvite(chatId, parsed.invitationId);
       const player1 = invite?.player;
       const invited = invite?.opponent;
-      if (!player1 || !invited || player2 !== invited) {
+      if (!player1 || !invited || tournamentPlayer !== invited) {
         bot
           .answerCallbackQuery(callbackId, { text: ui.callback.directNotTarget, show_alert: true })
           .catch(console.error);
@@ -1988,10 +2016,17 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
           .catch(console.error);
         return;
       }
+      if (!canCreateTournamentMatch(tournamentPlayers, player1, invited)) {
+        tournamentFeature.removeInvite(parsed.invitationId);
+        bot
+          .answerCallbackQuery(callbackId, { text: messages.tournamentAccessDenied(), show_alert: true })
+          .catch(console.error);
+        return;
+      }
 
       tournamentFeature.removeInvite(parsed.invitationId);
 
-      const addResult = await addMatch.execute(player1, player2, {
+      const addResult = await addMatch.execute(player1, tournamentPlayer, {
         scheduleLifecycle: !isPauseModeEnabled(chatId),
         type: Match.types.tournament,
       });
@@ -2014,7 +2049,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
       const player1 = invite?.player;
       const invited = invite?.opponent;
       const isDecline = parsed.type === "tournament_decline";
-      const allowed = isDecline ? player2 === invited : player2 === player1;
+      const allowed = isDecline ? tournamentPlayer === invited : tournamentPlayer === player1;
       if (!player1 || !invited || !allowed) {
         bot
           .answerCallbackQuery(callbackId, {
@@ -2027,7 +2062,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
 
       tournamentFeature.removeInvite(parsed.invitationId);
       const text = isDecline
-        ? messages.directDeclined({ from: player1, to: player2 })
+        ? messages.directDeclined({ from: player1, to: tournamentPlayer })
         : messages.directCancelled({ from: player1, to: invited });
       const editOptions = buildEditOptions();
       if (editOptions) {

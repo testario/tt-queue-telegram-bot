@@ -19,11 +19,22 @@ const createFrMessages = ({ formatDate }) => ({
   usernameRequired: () =>
     "Impossible de détecter ton nom d’utilisateur Telegram. Renseigne-le dans ton profil et réessaie.",
   directInvite: ({ from, to }) => `${from} invite ${to} à jouer. Accepter le match ?`,
+  tournamentInvite: ({ from, to }) => `🏆 ${from} invite ${to} à un match de tournoi. Accepter ?`,
+  tournamentAcceptedShort: () => "Invitation au tournoi acceptée",
+  tournamentFinished: () => "Match de tournoi terminé",
+  tournamentDisabled: () => "Les matchs de tournoi sont désactivés par l’administrateur.",
+  tournamentEnabled: () => "Les matchs de tournoi sont activés.",
+  tournamentAlreadyEnabled: () => "Les matchs de tournoi sont déjà activés.",
+  tournamentDisabledByAdmin: () => "Les matchs de tournoi sont désactivés.",
+  tournamentAlreadyDisabled: () => "Les matchs de tournoi sont déjà désactivés.",
   directAccepted: ({ from, to }) => `${to} a accepté l’invitation de ${from}. Match créé.`,
   directAcceptedShort: () => "Invitation acceptée",
   directDeclined: ({ from, to }) => `${to} a refusé l’invitation de ${from}.`,
   directCancelled: ({ from, to }) => `${from} a annulé l’invitation pour ${to}.`,
-  matchCreated: ({ player1, player2, startDate, endDate }) =>
+  matchCreated: ({ player1, player2, startDate, endDate, type }) =>
+    type === "tournament"
+      ? `🏆 Match de tournoi créé entre ${player1} et ${player2}\nDébut - ${formatDate(startDate)}\nLes joueurs le terminent avec le bouton Terminer`
+      :
     `🏓 Match créé entre ${player1} et ${player2}\n🔔 ${readyTimeText} pour se préparer\n⌚️ Début - ${formatDate(
       startDate
     )}\n🔚 Fin - ${formatDate(endDate)}`,
@@ -97,6 +108,9 @@ const pluralizeTestMatches = (count) => (count === 1 ? "match de test" : "matchs
 const createFrUi = () => ({
   commands: {
     play: "Inviter un adversaire : /play @pseudo",
+    tournament: "Créer un match de tournoi : /tournament @pseudo",
+    enableTournament: "Activer les tournois (admin)",
+    disableTournament: "Désactiver les tournois (admin)",
     search: "Chercher un adversaire : /search",
     queue: "Afficher la file : /queue",
     played: "Qui a déjà joué : /played",
@@ -112,6 +126,7 @@ const createFrUi = () => ({
     directAccept: "Accepter",
     directDecline: "Refuser",
     directCancel: "Annuler la demande",
+    tournamentFinish: "Terminer",
     noChatBinding: {
       title: "Bot non configuré",
       text: "La file est disponible uniquement dans le chat principal. Vérifie la configuration du bot.",
@@ -183,4 +198,3 @@ const fr = {
 };
 
 export { fr };
-

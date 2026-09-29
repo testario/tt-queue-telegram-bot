@@ -4,6 +4,7 @@ export { CancelSearch } from "./usecases/CancelSearch.js";
 export { GetPlayed } from "./usecases/GetPlayed.js";
 export { GetQueue } from "./usecases/GetQueue.js";
 export { CreateDirectMatch } from "./usecases/CreateDirectMatch.js";
+export { FinishTournamentMatch, TournamentFeature } from "./features/tournament/index.js";
 export { RegisterSearch } from "./usecases/RegisterSearch.js";
 export { MatchOrchestrator } from "./services/MatchOrchestrator.js";
 export { UsageMetricsService } from "./services/UsageMetricsService.js";

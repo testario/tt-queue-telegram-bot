@@ -19,11 +19,23 @@ const createEnMessages = ({ formatDate }) => ({
   usernameRequired: () =>
     "Could not detect your Telegram username. Set it in your profile and retry.",
   directInvite: ({ from, to }) => `${from} invites ${to} to play. Accept the match?`,
+  tournamentInvite: ({ from, to }) =>
+    `🏆 ${from} invites ${to} to a tournament match. There is no time limit. Accept?`,
+  tournamentAcceptedShort: () => "Tournament invitation accepted",
+  tournamentFinished: () => "Tournament match finished",
+  tournamentDisabled: () => "Tournament matches are disabled by the chat administrator.",
+  tournamentEnabled: () => "Tournament matches enabled. Use /tournament @username.",
+  tournamentAlreadyEnabled: () => "Tournament matches are already enabled.",
+  tournamentDisabledByAdmin: () => "Tournament matches disabled. Existing matches can still be finished.",
+  tournamentAlreadyDisabled: () => "Tournament matches are already disabled.",
   directAccepted: ({ from, to }) => `${to} accepted the invite from ${from}. Match created.`,
   directAcceptedShort: () => "Invitation accepted",
   directDeclined: ({ from, to }) => `${to} declined the invite from ${from}.`,
   directCancelled: ({ from, to }) => `${from} cancelled the invite for ${to}.`,
-  matchCreated: ({ player1, player2, startDate, endDate }) =>
+  matchCreated: ({ player1, player2, startDate, endDate, type }) =>
+    type === "tournament"
+      ? `🏆 Tournament match created between ${player1} and ${player2}\n⌚️ Start time - ${formatDate(startDate)}\n🔚 Players finish it with the Finish button`
+      :
     `🏓 Match created between ${player1} and ${player2}\n🔔 ${readyTimeText} to get ready\n⌚️ Start time - ${formatDate(
       startDate
     )}\n🔚 End time - ${formatDate(endDate)}`,
@@ -96,6 +108,9 @@ const pluralizeTestMatches = (count) => (count === 1 ? "test match" : "test matc
 const createEnUi = () => ({
   commands: {
     play: "Invite an opponent: /play @username",
+    tournament: "Create tournament match: /tournament @username",
+    enableTournament: "Enable tournament matches (admin)",
+    disableTournament: "Disable tournament matches (admin)",
     search: "Call for an opponent: /search",
     queue: "Show the queue: /queue",
     played: "Who already played: /played",
@@ -111,6 +126,7 @@ const createEnUi = () => ({
     directAccept: "Accept",
     directDecline: "Decline",
     directCancel: "Cancel request",
+    tournamentFinish: "Finish",
     noChatBinding: {
       title: "Bot is not configured",
       text: "Queue is available only in the main chat. Check the bot settings.",
@@ -182,4 +198,3 @@ const en = {
 };
 
 export { en };
-

@@ -99,6 +99,14 @@
  * @property {(opponent: string) => string} directOpponentPlayed
  * @property {() => string} usernameRequired
  * @property {(payload: { from: string, to: string }) => string} directInvite
+ * @property {(payload: { from: string, to: string }) => string} tournamentInvite
+ * @property {() => string} tournamentAcceptedShort
+ * @property {() => string} tournamentFinished
+ * @property {() => string} tournamentDisabled
+ * @property {() => string} tournamentEnabled
+ * @property {() => string} tournamentAlreadyEnabled
+ * @property {() => string} tournamentDisabledByAdmin
+ * @property {() => string} tournamentAlreadyDisabled
  * @property {(payload: { from: string, to: string }) => string} directAccepted
  * @property {() => string} directAcceptedShort
  * @property {(payload: { from: string, to: string }) => string} directDeclined
@@ -144,6 +152,9 @@
  * @typedef {Object} BotCommandsUi
  * @property {string} start
  * @property {string} play
+ * @property {string} tournament
+ * @property {string} enableTournament
+ * @property {string} disableTournament
  * @property {string} search
  * @property {string} queue
  * @property {string} played
@@ -177,6 +188,7 @@
  * @property {string} directAccept
  * @property {string} directDecline
  * @property {string} directCancel
+ * @property {string} tournamentFinish
  */
 
 /**
@@ -245,4 +257,3 @@
  */
 
 export {};
-

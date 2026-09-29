@@ -21,6 +21,10 @@ import { CancelSearch } from "#application/usecases/CancelSearch.js";
 import { CancelMatch } from "#application/usecases/CancelMatch.js";
 import { GetQueue } from "#application/usecases/GetQueue.js";
 import { GetPlayed } from "#application/usecases/GetPlayed.js";
+import {
+  FinishTournamentMatch,
+  TournamentFeature,
+} from "#application/features/tournament/index.js";
 import { parseCallbackData } from "#application/parsers/callbackData.js";
 import { UsageMetricsService } from "#application/services/UsageMetricsService.js";
 import { MongoUsageMetricsRepository } from "#infrastructure/metrics/MongoUsageMetricsRepository.js";
@@ -53,6 +57,7 @@ import { Match } from "#domain";
  * @property {CancelMatch} cancelMatch
  * @property {GetQueue} getQueue
  * @property {GetPlayed} getPlayed
+ * @property {FinishTournamentMatch} finishTournamentMatch
  * @property {string|null} inlineMessageId
  */
 
@@ -185,7 +190,20 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     usageMetrics.track({ type, payload });
   };
 
+  const getTournamentInviteExpiration = (now) => {
+    const expiresAt = new Date(now);
+    const { hour, minute = 0 } = WORK_SCHEDULE.workEnd;
+    expiresAt.setHours(hour, minute, 0, 0);
+    if (now >= expiresAt) {
+      expiresAt.setDate(expiresAt.getDate() + 1);
+    }
+    return expiresAt;
+  };
+
   const pauseModeChats = new Set();
+  const tournamentFeature = new TournamentFeature({
+    getInviteExpiration: getTournamentInviteExpiration,
+  });
 
   const normalizeChatKey = (chatId) =>
     chatId === null || chatId === undefined ? null : String(chatId);
@@ -305,6 +323,9 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
 
   const chatSlashCommands = [
     { command: "play", description: ui.commands.play },
+    { command: "tournament", description: ui.commands.tournament },
+    { command: "enable_tournament", description: ui.commands.enableTournament },
+    { command: "disable_tournament", description: ui.commands.disableTournament },
     { command: "search", description: ui.commands.search },
     { command: "queue", description: ui.commands.queue },
     { command: "played", description: ui.commands.played },
@@ -547,6 +568,11 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
       clock,
       logger: log.child(`usecase:CancelMatch:${chatId}`),
     });
+    const finishTournamentMatch = new FinishTournamentMatch({
+      repository,
+      orchestrator,
+      logger: log.child(`usecase:FinishTournamentMatch:${chatId}`),
+    });
     const getQueue = new GetQueue({
       repository,
       messages,
@@ -573,6 +599,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
       directMatch,
       cancelSearch,
       cancelMatch,
+      finishTournamentMatch,
       getQueue,
       getPlayed,
       inlineMessageId: null,
@@ -582,7 +609,11 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
       if (targetChatId !== chatId) return;
 
       const replyMarkup =
-        meta && meta.match && (meta.type === "match_created" || meta.type === "match_started")
+        meta?.type === "match_started" && meta.match?.type === Match.types.tournament
+          ? buildTournamentFinishKeyboard(meta.match)
+          : meta?.type === "match_created" && meta.match?.type === Match.types.tournament
+          ? undefined
+          : meta && meta.match && (meta.type === "match_created" || meta.type === "match_started")
           ? buildMatchCancelKeyboard(meta.match)
           : undefined;
 
@@ -642,6 +673,21 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
 
     return {
       inline_keyboard: [[{ text: ui.inline.confirmNoTime, callback_data: callbackData }]],
+    };
+  };
+
+  /** Формирует кнопку завершения активного турнирного матча. */
+  const buildTournamentFinishKeyboard = (match) => {
+    if (!match) return undefined;
+
+    const callbackData = `tournament_finish:${match.id}`;
+    if (Buffer.byteLength(callbackData, "utf8") > MAX_CALLBACK_DATA_BYTES) {
+      log.warn("Пропускаем кнопку завершения турнирного матча: callback_data слишком длинная");
+      return undefined;
+    }
+
+    return {
+      inline_keyboard: [[{ text: ui.inline.tournamentFinish, callback_data: callbackData }]],
     };
   };
 
@@ -730,9 +776,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     if (isCurrentPlaying) {
       return { hasQueue: true, currentMatchContinues: true, currentMatch: nextMatch };
     }
-    nextMatch.status = Match.statuses.playing;
-    nextMatch.startDate = new Date(now.getTime() + context.queueService.readyMs);
-    nextMatch.endDate = new Date(nextMatch.startDate.getTime() + context.queueService.gameMs);
+    context.queueService.startMatch(nextMatch, now);
     context.queueService.recalculateWaiting(state);
     await context.repository.save(state);
     context.orchestrator.scheduleLifecycle(nextMatch);
@@ -1378,6 +1422,117 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     }
   });
 
+  bot.onText(/^\/tournament(?:@[\w_]+)?(?:\s+(@[\w_]+))?\s*$/, async (msg, match) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const username = msg.from?.username;
+    const player = username ? `@${username}` : null;
+    const opponentRaw = (match && match[1]) || "";
+    rememberUserDisplayName(msg.from);
+    trackUsage("command:tournament", { hasOpponent: Boolean(opponentRaw) });
+
+    if (!chatId) return;
+
+    if (!tournamentFeature.isEnabled(chatId)) {
+      await bot.sendMessage(chatId, messages.tournamentDisabled(), {
+        reply_to_message_id: msg.message_id,
+      });
+      return;
+    }
+
+    const context = getContext(chatId);
+    if (!context) {
+      await bot.sendMessage(chatId, ui.callback.contextMissing);
+      return;
+    }
+
+    try {
+      const result = await context.directMatch.execute(player, opponentRaw, { ignorePlayed: true });
+      if (!result.ok) {
+        await bot.sendMessage(chatId, result.text, { reply_to_message_id: msg.message_id });
+        return;
+      }
+
+      const { invite } = result;
+      const invitationId = tournamentFeature.createInvite(chatId, invite);
+      await bot.sendMessage(
+        chatId,
+        messages.tournamentInvite({ from: invite.player, to: invite.opponent }),
+        {
+          reply_to_message_id: msg.message_id,
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: ui.inline.directAccept,
+                  callback_data: `tournament_accept:${invitationId}`,
+                },
+                {
+                  text: ui.inline.directDecline,
+                  callback_data: `tournament_decline:${invitationId}`,
+                },
+              ],
+              [
+                {
+                  text: ui.inline.directCancel,
+                  callback_data: `tournament_cancel:${invitationId}`,
+                },
+              ],
+            ],
+          },
+        }
+      );
+    } catch (error) {
+      log.error("Ошибка при создании турнирного матча", { chatId, message: error.message });
+      await bot.sendMessage(chatId, ui.callback.contextNotFound);
+    }
+  });
+
+  bot.onText(/^\/enable_tournament(?:@[\w_]+)?\s*$/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    rememberUserDisplayName(msg.from);
+    trackUsage("command:enable_tournament");
+
+    if (!chatId) return;
+
+    const isAdmin = await ensureAdminOrReply({
+      chatId,
+      userId,
+      replyToMessageId: msg.message_id,
+    });
+    if (!isAdmin) return;
+
+    const enabled = tournamentFeature.enable(chatId);
+    await bot.sendMessage(
+      chatId,
+      enabled ? messages.tournamentEnabled() : messages.tournamentAlreadyEnabled(),
+      { reply_to_message_id: msg.message_id }
+    );
+  });
+
+  bot.onText(/^\/disable_tournament(?:@[\w_]+)?\s*$/, async (msg) => {
+    const chatId = resolveChatIdFromMessage(msg);
+    const userId = msg.from?.id;
+    rememberUserDisplayName(msg.from);
+    trackUsage("command:disable_tournament");
+
+    if (!chatId) return;
+
+    const isAdmin = await ensureAdminOrReply({
+      chatId,
+      userId,
+      replyToMessageId: msg.message_id,
+    });
+    if (!isAdmin) return;
+
+    const disabled = tournamentFeature.disable(chatId);
+    await bot.sendMessage(
+      chatId,
+      disabled ? messages.tournamentDisabledByAdmin() : messages.tournamentAlreadyDisabled(),
+      { reply_to_message_id: msg.message_id }
+    );
+  });
+
   bot.on("inline_query", async (query) => {
     const player = "@" + query.from.username;
     const opponentRaw = (query.query || "").trim();
@@ -1660,7 +1815,7 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
     }
 
     context.inlineMessageId = messageId || context.inlineMessageId;
-    const { addMatch, cancelSearch, cancelMatch } = context;
+    const { addMatch, cancelSearch, cancelMatch, finishTournamentMatch } = context;
     const parsed = parseCallbackData(callbackQuery.data || "");
     log.info("Обработка callback", { type: parsed.type, player: player2, chatId });
     trackUsage(`callback:${parsed.type || "unknown"}`, {
@@ -1801,6 +1956,84 @@ const createBot = (token, { logger, locale, metricsEnabled = false } = {}) => {
               handleEditMessageError(error, "Не удалось отправить уведомление об отмене матча")
             );
         }
+      }
+    } else if (parsed.type === "tournament_finish") {
+      const finishResult = await finishTournamentMatch.execute(player2, parsed.matchId);
+      if (!finishResult.ok) {
+        bot
+          .answerCallbackQuery(callbackId, { text: ui.callback.matchNotFound, show_alert: true })
+          .catch(console.error);
+        return;
+      }
+
+      const editOptions = buildEditOptions();
+      if (editOptions) {
+        bot
+          .editMessageText(messages.tournamentFinished(), editOptions)
+          .catch((error) => handleEditMessageError(error, "Не удалось обновить турнирный матч"));
+      }
+    } else if (parsed.type === "tournament_accept") {
+      const invite = tournamentFeature.getInvite(chatId, parsed.invitationId);
+      const player1 = invite?.player;
+      const invited = invite?.opponent;
+      if (!player1 || !invited || player2 !== invited) {
+        bot
+          .answerCallbackQuery(callbackId, { text: ui.callback.directNotTarget, show_alert: true })
+          .catch(console.error);
+        return;
+      }
+      if (!tournamentFeature.isEnabled(chatId)) {
+        bot
+          .answerCallbackQuery(callbackId, { text: messages.tournamentDisabled(), show_alert: true })
+          .catch(console.error);
+        return;
+      }
+
+      tournamentFeature.removeInvite(parsed.invitationId);
+
+      const addResult = await addMatch.execute(player1, player2, {
+        scheduleLifecycle: !isPauseModeEnabled(chatId),
+        type: Match.types.tournament,
+      });
+      if (!addResult.ok) {
+        bot
+          .answerCallbackQuery(callbackId, { text: addResult.text, show_alert: true })
+          .catch(console.error);
+        return;
+      }
+
+      const editOptions = buildEditOptions();
+      if (editOptions) {
+        bot
+          .editMessageText(messages.tournamentAcceptedShort(), editOptions)
+          .catch((error) => handleEditMessageError(error, "Не удалось обновить приглашение на турнирный матч"));
+      }
+      await notifyQueuePausedIfNeeded(chatId, callbackQuery.message?.message_id);
+    } else if (parsed.type === "tournament_decline" || parsed.type === "tournament_cancel") {
+      const invite = tournamentFeature.getInvite(chatId, parsed.invitationId);
+      const player1 = invite?.player;
+      const invited = invite?.opponent;
+      const isDecline = parsed.type === "tournament_decline";
+      const allowed = isDecline ? player2 === invited : player2 === player1;
+      if (!player1 || !invited || !allowed) {
+        bot
+          .answerCallbackQuery(callbackId, {
+            text: isDecline ? ui.callback.directNotTarget : ui.callback.directNotAuthor,
+            show_alert: true,
+          })
+          .catch(console.error);
+        return;
+      }
+
+      tournamentFeature.removeInvite(parsed.invitationId);
+      const text = isDecline
+        ? messages.directDeclined({ from: player1, to: player2 })
+        : messages.directCancelled({ from: player1, to: invited });
+      const editOptions = buildEditOptions();
+      if (editOptions) {
+        bot
+          .editMessageText(text, editOptions)
+          .catch((error) => handleEditMessageError(error, "Не удалось обновить турнирное приглашение"));
       }
     } else if (parsed.type === "direct_accept") {
       const [player1, invited] = parsed.players || [];

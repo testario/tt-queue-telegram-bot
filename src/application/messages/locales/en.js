@@ -23,6 +23,7 @@ const createEnMessages = ({ formatDate }) => ({
     `🏆 ${from} invites ${to} to a tournament match. There is no time limit. Accept?`,
   tournamentAcceptedShort: () => "Tournament invitation accepted",
   tournamentFinished: () => "Tournament match finished",
+  tournamentAccessDenied: () => "Tournament matches are available only between tournament participants.",
   tournamentDisabled: () => "Tournament matches are disabled by the chat administrator.",
   tournamentEnabled: () => "Tournament matches enabled. Use /tournament @username.",
   tournamentAlreadyEnabled: () => "Tournament matches are already enabled.",

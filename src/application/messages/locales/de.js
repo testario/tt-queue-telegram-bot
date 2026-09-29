@@ -22,6 +22,7 @@ const createDeMessages = ({ formatDate }) => ({
   tournamentInvite: ({ from, to }) => `🏆 ${from} lädt ${to} zu einem Turniermatch ein. Annehmen?`,
   tournamentAcceptedShort: () => "Turniereinladung angenommen",
   tournamentFinished: () => "Turniermatch beendet",
+  tournamentAccessDenied: () => "Turniermatches sind nur zwischen Turnierteilnehmern möglich.",
   tournamentDisabled: () => "Turniermatches sind vom Administrator deaktiviert.",
   tournamentEnabled: () => "Turniermatches sind aktiviert.",
   tournamentAlreadyEnabled: () => "Turniermatches sind bereits aktiviert.",

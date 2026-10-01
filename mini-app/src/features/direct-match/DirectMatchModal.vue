@@ -30,18 +30,24 @@ onMounted(() => load().catch((err) => console.error('Не удалось заг�
 // приглашения — второе приглашение поверх первого осиротит его (тот же
 // сценарий, что и с общим поиском в SearchPanel). Регистронезависимо по той
 // же причине, что и self-фильтр в players.
-const unavailable = computed(() => new Set([
+const standardUnavailable = computed(() => new Set([
   ...queueState.queue.flatMap((m) => [m.player1, m.player2]),
   ...queueState.played,
   ...queueState.pendingInvites.flatMap((invite) => [invite.player, invite.opponent]),
 ].map((username) => username?.toLowerCase())))
+
+const pendingPlayers = computed(() => new Set(
+  queueState.pendingInvites
+    .flatMap((invite) => [invite.player, invite.opponent])
+    .map((username) => username?.toLowerCase())
+))
 
 // Фильтрация по строке поиска
 const filteredPlayers = computed(() => {
   const q = search.value.toLowerCase().trim()
   return players.value.filter((p) => {
     if (p.banned) return false
-    if (unavailable.value.has(p.username.toLowerCase())) return false
+    if (!queueState.tournamentEnabled && standardUnavailable.value.has(p.username.toLowerCase())) return false
     if (!q) return true
     return (
       p.username.toLowerCase().includes(q) ||
@@ -76,6 +82,14 @@ const tournamentAvailable = computed(() => {
     && Boolean(opponent)
     && tournamentPlayers.value.has(currentPlayer.toLowerCase())
     && tournamentPlayers.value.has(opponent.toLowerCase())
+    && !pendingPlayers.value.has(currentPlayer.toLowerCase())
+    && !pendingPlayers.value.has(opponent.toLowerCase())
+})
+const standardAvailable = computed(() => {
+  const opponent = resolvedOpponent.value
+  if (!opponent || !currentPlayer) return false
+  return !standardUnavailable.value.has(currentPlayer.toLowerCase())
+    && !standardUnavailable.value.has(opponent.toLowerCase())
 })
 
 // POST /api/direct возвращает reason от CreateDirectMatch/router.js — сюда не
@@ -105,6 +119,8 @@ const submitFromSearch = () => {
 const submit = async (type = 'standard') => {
   const opponent = resolvedOpponent.value
   if (!opponent) return
+  if (type === 'tournament' && !tournamentAvailable.value) return
+  if (type === 'standard' && !standardAvailable.value) return
 
   error.value = null
 
@@ -175,7 +191,7 @@ const submit = async (type = 'standard') => {
     <p v-if="error" class="direct-match-modal__error">{{ error }}</p>
 
     <div class="direct-match-modal__buttons">
-      <AppButton :loading="loading" :disabled="!resolvedOpponent" @click="submit('standard')">
+      <AppButton :loading="loading" :disabled="!standardAvailable" @click="submit('standard')">
         {{ queueState.tournamentEnabled ? 'Обычная игра' : 'Пригласить' }}
       </AppButton>
       <AppButton
@@ -187,6 +203,9 @@ const submit = async (type = 'standard') => {
       >
         Турнирная игра
       </AppButton>
+      <p v-if="queueState.tournamentEnabled && resolvedOpponent && !standardAvailable" class="direct-match-modal__hint">
+        Обычная игра с этим игроком сейчас недоступна
+      </p>
       <AppButton variant="ghost" @click="close">
         Отмена
       </AppButton>

@@ -4,6 +4,7 @@ import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlaye
 import { InMemoryInvitesStore } from '#infrastructure/invites/InMemoryInvitesStore.js'
 import { Match } from '#domain/entities/Match.js'
 import { QueueState } from '#domain/entities/QueueState.js'
+import { createTelegramApiV2 } from '../test-utils/createTelegramApiV2.js'
 
 const instances = []
 
@@ -22,20 +23,26 @@ class FakeTelegramApi {
     this.setMyCommands = jest.fn().mockResolvedValue(undefined)
     this.stopPolling = jest.fn().mockResolvedValue(undefined)
     this.answerCallbackQuery = jest.fn().mockResolvedValue(undefined)
+    this.answerInlineQuery = jest.fn().mockResolvedValue(undefined)
+    this.deleteWebHook = jest.fn().mockResolvedValue(undefined)
     this.getChatMember = jest.fn().mockResolvedValue({ status: 'administrator' })
+    this.api = createTelegramApiV2(this)
+    this.stop = this.stopPolling
+    this.catch = jest.fn()
     instances.push(this)
   }
 
-  onText(pattern, handler) {
-    this.textHandlers.push({ pattern, handler })
-  }
-
   on(event, handler) {
-    this.eventHandlers.set(event, handler)
+    if (event === 'message' && handler.legacyPattern) {
+      this.textHandlers.push({ pattern: handler.legacyPattern, handler: handler.legacyHandler })
+      return
+    }
+
+    this.eventHandlers.set(event, handler.legacyHandler || handler)
   }
 }
 
-jest.unstable_mockModule('node-telegram-bot-api', () => ({ default: FakeTelegramApi }))
+jest.unstable_mockModule('node-telegram-bot-api', () => ({ Bot: FakeTelegramApi }))
 
 const { createBot } = await import('#interfaces/telegram/bot.js')
 
@@ -240,8 +247,7 @@ describe('bot ownership and shutdown', () => {
     await startHandler({ chat: { id: 'queue' }, from: { id: 9, username: 'banned' } })
     expect(fakeBot.sendMessage).toHaveBeenLastCalledWith(
       'queue',
-      expect.stringContaining('заблокированы'),
-      undefined
+      expect.stringContaining('заблокированы')
     )
   })
 

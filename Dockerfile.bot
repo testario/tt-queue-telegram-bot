@@ -9,6 +9,7 @@ RUN npm ci --omit=dev
 COPY src/ ./src/
 
 ENV NODE_ENV=production
+ENV NODE_USE_ENV_PROXY=1
 
 # Healthcheck через файл — бот не имеет HTTP-сервера
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \

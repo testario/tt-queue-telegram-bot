@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import TelegramApi from 'node-telegram-bot-api'
+import { createTelegramClient } from '#infrastructure/telegram/createTelegramClient.js'
 import { createWebApp } from '#interfaces/webapp/index.js'
 import { MongoPlayersRepository } from '#infrastructure/players/MongoPlayersRepository.js'
 import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlayersRepository.js'
@@ -55,9 +55,9 @@ if (proxyUrl) {
   log.warn('HTTP_PROXY/HTTPS_PROXY не заданы: запросы к Telegram API идут напрямую')
 }
 
-// Минимальный TelegramApi без polling — только для API-запросов:
+// Клиент Telegram API v2 без polling — только для API-запросов:
 // getChatMember (проверка прав admin), sendMessage (уведомления в чат), getUserProfilePhotos (аватары)
-const tgApi = new TelegramApi(token, proxyUrl ? { request: { proxy: proxyUrl } } : undefined)
+const tgApi = createTelegramClient(token)
 
 const webApp = await createWebApp({
   bot: tgApi,

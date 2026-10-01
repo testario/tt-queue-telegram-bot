@@ -23,5 +23,6 @@ COPY src/ ./src/
 COPY --from=builder /app/mini-app/dist ./mini-app/dist
 
 ENV NODE_ENV=production
+ENV NODE_USE_ENV_PROXY=1
 
 CMD ["node", "src/index-backend.js"]

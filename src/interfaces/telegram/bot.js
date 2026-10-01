@@ -1,4 +1,4 @@
-import TelegramApi from "node-telegram-bot-api";
+import { createTelegramClient } from '#infrastructure/telegram/createTelegramClient.js';
 import {
   buildSearchInlineKeyboard as buildSearchKeyboardFn,
   buildMatchCancelKeyboard as buildMatchCancelKeyboardFn,
@@ -356,10 +356,7 @@ const createBot = (
     log.warn("HTTP_PROXY/HTTPS_PROXY не заданы: запросы к Telegram API идут напрямую");
   }
 
-  const bot = new TelegramApi(token, {
-    polling: pollingOptions,
-    ...(proxyUrl ? { request: { proxy: proxyUrl } } : {}),
-  });
+  const bot = createTelegramClient(token, { polling: pollingOptions });
 
   const startLongPolling = async () => {
     if (isStopped) return;

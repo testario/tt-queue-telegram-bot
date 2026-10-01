@@ -5,10 +5,10 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "nodemon src/index",
-    "start:metrics": "nodemon --exec \"node src/index.js --metrics\"",
-    "start:bot": "node src/index-bot.js",
-    "start:backend": "node src/index-backend.js",
+    "start": "NODE_USE_ENV_PROXY=1 nodemon src/index",
+    "start:metrics": "NODE_USE_ENV_PROXY=1 nodemon --exec \"node src/index.js --metrics\"",
+    "start:bot": "NODE_USE_ENV_PROXY=1 node src/index-bot.js",
+    "start:backend": "NODE_USE_ENV_PROXY=1 node src/index-backend.js",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "build:webapp": "cd mini-app && npm run build",
     "deploy": "npm run build:webapp && pm2 restart tt-queue-bot"

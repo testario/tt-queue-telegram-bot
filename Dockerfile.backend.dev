@@ -6,5 +6,6 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 ENV NODE_ENV=development
+ENV NODE_USE_ENV_PROXY=1
 
 CMD ["npx", "nodemon", "src/index-backend.js"]

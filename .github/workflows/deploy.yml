@@ -83,5 +83,5 @@ jobs:
 
           pm2 stop tt-queue-bot || true
 
-          NODE_ENV=production PLAYERS_MONGODB_URI="$PLAYERS_MONGODB_URI" pm2 start -a -l pm2.log -o out.log -e err.log --name tt-queue-bot src/index.js
+          NODE_ENV=production NODE_USE_ENV_PROXY=1 PLAYERS_MONGODB_URI="$PLAYERS_MONGODB_URI" pm2 start -a -l pm2.log -o out.log -e err.log --name tt-queue-bot src/index.js
           EOF

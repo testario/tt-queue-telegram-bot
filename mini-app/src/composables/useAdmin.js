@@ -20,6 +20,8 @@ export function useAdmin() {
   const pause = () => api.post('/admin/pause')
   const resume = () => api.post('/admin/continue')
   const emerge = () => api.post('/admin/emerge')
+  const enableTournament = () => api.post('/admin/tournament/enable')
+  const disableTournament = () => api.post('/admin/tournament/disable')
 
-  return { isAdmin, checkAdmin, pause, resume, emerge }
+  return { isAdmin, checkAdmin, pause, resume, emerge, enableTournament, disableTournament }
 }

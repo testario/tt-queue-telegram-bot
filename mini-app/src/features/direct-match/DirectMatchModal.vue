@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useApi } from '@/composables/useApi.js'
 import { usePlayers } from '@/composables/usePlayers.js'
 import { useQueue } from '@/composables/useQueue.js'
+import { useTelegram } from '@/composables/useTelegram.js'
 import { withMinDuration } from '@/shared/lib/withMinDuration.js'
 import AppButton from '@/shared/ui/AppButton.vue'
 import AppModal from '@/shared/ui/AppModal.vue'
@@ -16,6 +17,7 @@ const api = useApi()
 // комментарий у этого computed в usePlayers.js.
 const { state: playersState, players, load } = usePlayers()
 const { state: queueState } = useQueue()
+const { player: currentPlayer } = useTelegram()
 
 const search = ref('')
 const selected = ref(null)   // { username, displayName } — выбранный из списка
@@ -64,6 +66,17 @@ watch(filteredPlayers, (list) => {
 })
 
 const resolvedOpponent = computed(() => selected.value?.username ?? null)
+const tournamentPlayers = computed(() =>
+  new Set(queueState.tournamentPlayers.map((username) => username.toLowerCase()))
+)
+const tournamentAvailable = computed(() => {
+  const opponent = resolvedOpponent.value
+  return queueState.tournamentEnabled
+    && Boolean(currentPlayer)
+    && Boolean(opponent)
+    && tournamentPlayers.value.has(currentPlayer.toLowerCase())
+    && tournamentPlayers.value.has(opponent.toLowerCase())
+})
 
 // POST /api/direct возвращает reason от CreateDirectMatch/router.js — сюда не
 // долетают reason-ы AddMatch (already_in_queue/same_player/...), этот запрос
@@ -73,6 +86,7 @@ const reasonToText = (reason) => ({
   opponent_invite_pending: 'У этого игрока уже есть своё приглашение — дождитесь ответа на него',
   invite_exists: 'У вас уже есть отправленное приглашение — сначала отмените его',
   self_invite: 'Нельзя пригласить самого себя',
+  tournament_unavailable: 'Турнирная игра сейчас недоступна',
 }[reason] ?? 'Не удалось отправить приглашение')
 
 // Enter в поле поиска: если игрок ещё не выбран явным кликом, но строка
@@ -85,10 +99,10 @@ const submitFromSearch = () => {
   if (!selected.value && search.value.trim() && filteredPlayers.value.length === 1) {
     selected.value = filteredPlayers.value[0]
   }
-  submit()
+  if (!queueState.tournamentEnabled) submit()
 }
 
-const submit = async () => {
+const submit = async (type = 'standard') => {
   const opponent = resolvedOpponent.value
   if (!opponent) return
 
@@ -105,7 +119,7 @@ const submit = async () => {
   loading.value = true
 
   try {
-    const result = await withMinDuration(() => api.post('/direct', { opponent }))
+    const result = await withMinDuration(() => api.post('/direct', { opponent, type }))
     if (result.ok) {
       modalRef.value?.startClose()
     } else {
@@ -161,8 +175,17 @@ const submit = async () => {
     <p v-if="error" class="direct-match-modal__error">{{ error }}</p>
 
     <div class="direct-match-modal__buttons">
-      <AppButton :loading="loading" :disabled="!resolvedOpponent" @click="submit">
-        Пригласить
+      <AppButton :loading="loading" :disabled="!resolvedOpponent" @click="submit('standard')">
+        {{ queueState.tournamentEnabled ? 'Обычная игра' : 'Пригласить' }}
+      </AppButton>
+      <AppButton
+        v-if="queueState.tournamentEnabled"
+        variant="ghost"
+        :loading="loading"
+        :disabled="!tournamentAvailable"
+        @click="submit('tournament')"
+      >
+        Турнирная игра
       </AppButton>
       <AppButton variant="ghost" @click="close">
         Отмена

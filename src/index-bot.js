@@ -11,6 +11,8 @@ import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlaye
 import { LifecycleReconciler } from '#infrastructure/timers/LifecycleReconciler.js'
 import { getPlayersMongoConfig } from '#infrastructure/players/config.js'
 import { migrateQueueState } from '#application/usecases/MigrateQueueState.js'
+import { TournamentFeature } from '#application/features/tournament/index.js'
+import { RedisTournamentStore } from '#infrastructure/tournament/RedisTournamentStore.js'
 
 const token = process.env.TG_BOT_API_TOKEN
 const redisUrl = process.env.REDIS_URL
@@ -26,6 +28,7 @@ const { publisher, subscriber } = await createRedisPubSub({ url: redisUrl })
 
 const queueRepository = new RedisQueueRepository({ client: stateClient })
 const invitesStore = new RedisInvitesStore({ client: stateClient })
+const tournamentFeature = new TournamentFeature({ stateStore: new RedisTournamentStore({ client: stateClient }) })
 
 // Хранилище игроков: те же MongoDB defaults, что и в backend-процессе.
 const { uri: playersMongoUri, dbName: playersMongoDb, collectionName: playersMongoCollection } =
@@ -56,6 +59,7 @@ const botResult = createBot(token, {
   queueRepository,
   eventBus,
   invitesStore,
+  tournamentFeature,
   lifecycleManagedExternally: true,
   autoStartPolling: false,
   onDispose: () => lifecycleReconciler?.dispose(),

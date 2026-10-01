@@ -13,6 +13,7 @@ import { CancelSearch } from '#application/usecases/CancelSearch.js'
 import { ClaimPlayerIdentity } from '#application/usecases/ClaimPlayerIdentity.js'
 import { AddMatch } from '#application/usecases/AddMatch.js'
 import { CancelMatch } from '#application/usecases/CancelMatch.js'
+import { FinishTournamentMatch } from '#application/features/tournament/FinishTournamentMatch.js'
 import { CreateDirectMatch } from '#application/usecases/CreateDirectMatch.js'
 import { GetQueue } from '#application/usecases/GetQueue.js'
 import { GetPlayed } from '#application/usecases/GetPlayed.js'
@@ -23,6 +24,7 @@ import { Match } from '#domain'
 import { buildMatchCancelKeyboard } from '#interfaces/telegram/keyboards.js'
 import { updateQueueState, QueueStateConflictError } from '#application/usecases/queueStateCas.js'
 import { toPublicState } from './publicDtos.js'
+import { getTournamentPlayers } from '#application/config/tournament.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -44,7 +46,19 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
     scheduleFinish: () => {},
     cancelForMatch: () => {},
     cancelAll: () => {},
-    handleMatchFinished: async () => {},
+    handleMatchFinished: async (match) => {
+      const { result } = await updateQueueState({
+        repository: queueRepository,
+        logger: log,
+        operation: 'backend_finish_tournament_match',
+        mutate: (state) => {
+          if (state.queue[0]?.id !== match.id) return { state, save: false, result: null }
+          const result = queueService.finishCurrent(state, clock.now())
+          return { state: result.state, result }
+        },
+      })
+      if (result) notifier.notify(queueChatId, messages.tournamentFinished(), { type: 'state_update' })
+    },
   }
 
   // Ретранслируем в чат любое уведомление usecase'ов (например, отмену матча из
@@ -83,6 +97,11 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
     messages,
     clock,
   })
+  const finishTournamentMatch = new FinishTournamentMatch({
+    repository: queueRepository,
+    orchestrator,
+    logger: log,
+  })
   const directMatch = new CreateDirectMatch({
     registerSearch,
     repository: queueRepository,
@@ -106,6 +125,7 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
     directMatch,
     cancelSearch,
     cancelMatch,
+    finishTournamentMatch,
     getQueue,
     getPlayed,
     claimPlayerIdentity,
@@ -294,6 +314,7 @@ export const createWebApp = async ({
   eventBus,
   invitesStore,
   playersRepository,
+  tournamentFeature,
   log,
 }) => {
   const app = Fastify({ logger: false })
@@ -381,6 +402,10 @@ export const createWebApp = async ({
       serverTime: resolvedContext.clock.now().toISOString(),
       revision,
       pendingInvites: invitesStore ? await invitesStore.getAll() : [],
+      ...(tournamentFeature ? {
+        tournamentEnabled: await tournamentFeature.isEnabled(queueChatId),
+        tournamentPlayers: [...getTournamentPlayers()],
+      } : {}),
     })
   }
 
@@ -441,6 +466,7 @@ export const createWebApp = async ({
     log,
     invitesStore,
     playersRepository,
+    tournamentFeature,
   })
 
   // WEBAPP_PORT=0 — валидная команда "пусть ОС выберет свободный порт"

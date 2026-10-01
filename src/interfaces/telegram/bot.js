@@ -127,6 +127,7 @@ const createBot = (
     queueRepository = null,
     eventBus = null,
     invitesStore = null,
+    tournamentFeature: suppliedTournamentFeature = null,
     lifecycleManagedExternally = false,
     onQueueChanged = null,
     autoStartPolling = true,
@@ -275,7 +276,7 @@ const createBot = (
   };
 
   const pauseModeChats = new Set();
-  const tournamentFeature = new TournamentFeature({
+  const tournamentFeature = suppliedTournamentFeature || new TournamentFeature({
     getInviteExpiration: getTournamentInviteExpiration,
   });
 
@@ -1188,6 +1189,12 @@ const createBot = (
         answerStaleDirectInvite(callbackId);
         return null;
       }
+      if (pending?.type === Match.types.tournament
+        && (!(await tournamentFeature.isEnabled(context.chatId))
+          || !canCreateTournamentMatch(tournamentPlayers, pending.player, pending.opponent))) {
+        bot.answerCallbackQuery(callbackId, { text: messages.tournamentDisabled(), show_alert: true }).catch(console.error);
+        return null;
+      }
       const state = await context.repository.get();
       const identity = role === "initiator" ? pending?.playerIdentity : pending?.opponentIdentity;
       if (!pending || !state.isActiveIdentity?.(identity)
@@ -2083,7 +2090,7 @@ const createBot = (
       return;
     }
 
-    if (!tournamentFeature.isEnabled(chatId)) {
+    if (!(await tournamentFeature.isEnabled(chatId))) {
       await bot.sendMessage(chatId, messages.tournamentDisabled(), {
         reply_to_message_id: msg.message_id,
       });
@@ -2160,7 +2167,7 @@ const createBot = (
     });
     if (!isAdmin) return;
 
-    const enabled = tournamentFeature.enable(chatId);
+    const enabled = await tournamentFeature.enable(chatId);
     await bot.sendMessage(
       chatId,
       enabled ? messages.tournamentEnabled() : messages.tournamentAlreadyEnabled(),
@@ -2183,7 +2190,13 @@ const createBot = (
     });
     if (!isAdmin) return;
 
-    const disabled = tournamentFeature.disable(chatId);
+    const disabled = await tournamentFeature.disable(chatId);
+    if (disabled) {
+      const invites = await directInvitesStore.getAll();
+      await Promise.all(invites
+        .filter((invite) => invite.type === Match.types.tournament)
+        .map((invite) => directInvitesStore.deleteById(invite.inviteId)));
+    }
     await bot.sendMessage(
       chatId,
       disabled ? messages.tournamentDisabledByAdmin() : messages.tournamentAlreadyDisabled(),
@@ -2751,7 +2764,7 @@ const createBot = (
           .catch(console.error);
         return;
       }
-      if (!tournamentFeature.isEnabled(chatId)) {
+      if (!(await tournamentFeature.isEnabled(chatId))) {
         bot
           .answerCallbackQuery(callbackId, { text: messages.tournamentDisabled(), show_alert: true })
           .catch(console.error);
@@ -2842,19 +2855,23 @@ const createBot = (
           [player1]: invite.playerIdentity,
           [player2]: invite.opponentIdentity,
         },
+        type: invite.type === Match.types.tournament ? Match.types.tournament : Match.types.standard,
       });
       if (addResult.ok) {
+        const acceptedText = invite.type === Match.types.tournament
+          ? messages.tournamentAcceptedShort()
+          : messages.directAcceptedShort();
         const editOptions = buildEditOptions();
         if (editOptions) {
           bot
-            .editMessageText(messages.directAcceptedShort(), editOptions)
+            .editMessageText(acceptedText, editOptions)
             .catch((error) =>
               handleEditMessageError(error, "Не удалось обновить сообщение о принятии прямого матча")
             );
         } else {
           log.warn("Нет цели для обновления сообщения о принятии прямого матча", { chatId, player1, player2 });
           bot
-            .sendMessage(chatId, messages.directAcceptedShort())
+            .sendMessage(chatId, acceptedText)
             .catch((error) =>
               handleEditMessageError(error, "Не удалось отправить сообщение о принятии прямого матча")
             );
@@ -3036,6 +3053,7 @@ const createBot = (
     messages,
     ui,
     buildMatchCancelKeyboard,
+    tournamentFeature,
     startPolling: startLongPolling,
     dispose,
     onDispose,

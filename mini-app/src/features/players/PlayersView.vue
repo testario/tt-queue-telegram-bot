@@ -8,6 +8,7 @@ import { withMinDuration } from '@/shared/lib/withMinDuration.js'
 import AppButton from '@/shared/ui/AppButton.vue'
 import AppIcon from '@/shared/ui/AppIcon.vue'
 import PlayerAvatar from '@/shared/ui/PlayerAvatar.vue'
+import MatchTypeModal from '@/features/direct-match/MatchTypeModal.vue'
 
 const api = useApi()
 const { state: playersState, players: visiblePlayers, load } = usePlayers()
@@ -18,6 +19,8 @@ const search = ref('')
 const activeFilter = ref('all')
 const invitingUsername = ref(null)
 const inviteErrorText = ref('')
+const selectedOpponent = ref(null)
+const showMatchTypeModal = ref(false)
 
 onMounted(() => load().catch((error) => console.error('Не удалось загрузить список игроков', error)))
 
@@ -53,6 +56,18 @@ const currentPlayerHasOutgoingInvite = computed(() =>
   Boolean(currentPlayer) && queueState.pendingInvites.some((inv) => inv.player === currentPlayer)
 )
 
+const tournamentPlayers = computed(() =>
+  new Set(queueState.tournamentPlayers.map((username) => username.toLowerCase()))
+)
+
+const canCreateTournament = (username) =>
+  queueState.tournamentEnabled
+  && Boolean(currentPlayer)
+  && !currentPlayerHasOutgoingInvite.value
+  && !invitedPlayers.value.has(username)
+  && tournamentPlayers.value.has(currentPlayer.toLowerCase())
+  && tournamentPlayers.value.has(username.toLowerCase())
+
 // usePlayers() уже отфильтровывает currentPlayer при выдаче списка — этот пункт
 // здесь дублирующий, но бесплатный: если фильтрация в usePlayers когда-нибудь
 // уедет или список начнёт наполняться в обход неё, canInvite для собственной
@@ -85,14 +100,15 @@ const playersWithStatus = computed(() =>
       isInviteInitiator,
       fullName,
       searchHaystack,
-      canInvite: Boolean(currentPlayer)
+      canInviteStandard: Boolean(currentPlayer)
         && !player.banned // дублирует фильтр в filteredPlayers — дешёвая защита на случай, если он уедет
         && !unavailablePlayers.value.has(player.username)
         && !currentPlayerInQueue.value
         && !currentPlayerPlayed.value
         && !currentPlayerHasOutgoingInvite.value,
+      canInvite: false,
     }
-  })
+  }).map((player) => ({ ...player, canInvite: player.canInviteStandard || canCreateTournament(player.username) }))
 )
 
 const filteredPlayers = computed(() => {
@@ -115,9 +131,10 @@ const inviteReasonToText = (reason) => ({
   opponent_invite_pending: 'У этого игрока уже есть своё приглашение — дождитесь ответа на него',
   invite_exists: 'У вас уже есть отправленное приглашение — сначала отмените его',
   opponent_played: 'Этот игрок уже играл сегодня',
+  tournament_unavailable: 'Турнирная игра сейчас недоступна',
 }[reason] ?? 'Не удалось отправить приглашение')
 
-const invite = async (username) => {
+const invite = async (username, type = 'standard') => {
   // Пока один запрос ещё в кулдауне (см. withMinDuration), тап по другому
   // игроку перезаписал бы invitingUsername и погасил бы спиннер/дизейбл не
   // у того, чей запрос ещё летит — ранний выход держит инвариант "не больше
@@ -128,7 +145,7 @@ const invite = async (username) => {
   invitingUsername.value = username
   inviteErrorText.value = ''
   try {
-    const result = await withMinDuration(() => api.post('/direct', { opponent: username }))
+    const result = await withMinDuration(() => api.post('/direct', { opponent: username, type }))
     if (!result.ok) inviteErrorText.value = inviteReasonToText(result.reason)
   } catch (error) {
     console.error('Не удалось отправить приглашение', error)
@@ -136,6 +153,21 @@ const invite = async (username) => {
   } finally {
     invitingUsername.value = null
   }
+}
+
+const chooseMatchType = (username) => {
+  if (!queueState.tournamentEnabled) {
+    invite(username)
+    return
+  }
+  selectedOpponent.value = username
+  showMatchTypeModal.value = true
+}
+
+const inviteWithSelectedType = (type) => {
+  const username = selectedOpponent.value
+  selectedOpponent.value = null
+  if (username) invite(username, type)
 }
 </script>
 
@@ -204,7 +236,7 @@ const invite = async (username) => {
           class="players-view__invite"
           :loading="invitingUsername === player.username"
           :disabled="invitingUsername !== null && invitingUsername !== player.username"
-          @click="invite(player.username)"
+          @click="chooseMatchType(player.username)"
         >
           Позвать
         </AppButton>
@@ -217,6 +249,13 @@ const invite = async (username) => {
         Подходящих игроков нет
       </p>
     </section>
+
+    <MatchTypeModal
+      v-if="showMatchTypeModal"
+      :tournament-available="canCreateTournament(selectedOpponent || '')"
+      @select="inviteWithSelectedType"
+      @close="showMatchTypeModal = false"
+    />
   </div>
 </template>
 

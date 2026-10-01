@@ -7,6 +7,7 @@ import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlaye
 import { SseManager } from '#interfaces/webapp/sse.js'
 import { QueueState } from '#domain/entities/QueueState.js'
 import { createTestIdentityHelper } from '#application/usecases/createTestIdentityHelper.js'
+import { TournamentFeature } from '#application/features/tournament/TournamentFeature.js'
 
 const token = 'webapp-test-token'
 
@@ -28,6 +29,7 @@ const createHarness = async ({
   applyPauseMode = jest.fn(),
   playersRepository: playersRepositoryOverride = undefined,
   sseManager: sseManagerOverride = undefined,
+  tournamentFeature = undefined,
 } = {}) => {
   process.env.NODE_ENV = production ? 'production' : 'test'
 
@@ -152,6 +154,7 @@ const createHarness = async ({
     log,
     playersRepository,
     invitesStore,
+    tournamentFeature,
   })
 
   return {
@@ -1016,6 +1019,36 @@ describe('webapp REST routes', () => {
     })
 
     expect(response.json()).toEqual({ ok: true })
+    await harness.app.close()
+  })
+
+  test('admin toggles tournament mode and removes pending tournament invitations', async () => {
+    const tournamentFeature = new TournamentFeature()
+    const harness = await createHarness({ production: true, tournamentFeature })
+    harness.bot.getChatMember.mockResolvedValue({ status: 'administrator' })
+    const invite = await harness.invitesStore.create({
+      player: '@alice',
+      opponent: '@bob',
+      playerIdentity: { username: '@alice', userId: 1, generation: 1 },
+      opponentIdentity: { username: '@bob', userId: 2, generation: 1 },
+      type: 'tournament',
+    })
+
+    const enabled = await harness.app.inject({
+      method: 'POST',
+      url: '/api/admin/tournament/enable',
+      headers: authHeader('admin', 10),
+    })
+    expect(enabled.json()).toEqual({ ok: true })
+    expect(tournamentFeature.isEnabled('queue-chat')).toBe(true)
+
+    const disabled = await harness.app.inject({
+      method: 'POST',
+      url: '/api/admin/tournament/disable',
+      headers: authHeader('admin', 10),
+    })
+    expect(disabled.json()).toEqual({ ok: true })
+    await expect(harness.invitesStore.getById(invite.inviteId)).resolves.toBeNull()
     await harness.app.close()
   })
 

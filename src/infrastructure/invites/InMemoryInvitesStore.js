@@ -93,6 +93,7 @@ export class InMemoryInvitesStore {
     if (input && typeof input === 'object') {
       if (input.playerUserId !== undefined && input.playerUserId !== null) invite.playerUserId = input.playerUserId
       if (input.opponentUserId !== undefined && input.opponentUserId !== null) invite.opponentUserId = input.opponentUserId
+      if (input.type !== undefined) invite.type = input.type
     }
     this._byId.set(inviteId, invite)
     this._byPlayer.set(player, inviteId)

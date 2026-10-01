@@ -41,6 +41,9 @@ components:
         status:
           type: string
           enum: [playing, waiting]
+        type:
+          type: string
+          enum: [standard, tournament]
 
     QueueState:
       type: object
@@ -68,6 +71,14 @@ components:
         emergeActive:
           type: boolean
           description: Активна ли экстренная пауза матча.
+        tournamentEnabled:
+          type: boolean
+          description: Включён ли режим турнирных матчей.
+        tournamentPlayers:
+          type: array
+          description: Пользователи, которым доступны турнирные матчи.
+          items:
+            type: string
         serverTime:
           type: string
           format: date-time
@@ -92,6 +103,9 @@ components:
         expiresAt:
           type: integer
           format: int64
+        type:
+          type: string
+          enum: [standard, tournament]
 
     Player:
       type: object
@@ -624,6 +638,10 @@ paths:
                   type: string
                   description: Username приглашаемого (с `@`).
                   example: "@petr"
+                type:
+                  type: string
+                  enum: [standard, tournament]
+                  default: standard
       responses:
         "200":
           description: Результат приглашения.
@@ -835,6 +853,61 @@ paths:
           $ref: "#/components/responses/UsernameRequired"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/admin/tournament/enable:
+    post:
+      summary: Включить турнирный режим
+      operationId: enableTournament
+      tags: [Admin]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Режим включён или уже был включён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /api/tournament/finish:
+    post:
+      summary: Завершить текущий турнирный матч
+      operationId: finishTournamentMatch
+      tags: [Queue]
+      security:
+        - TelegramInitData: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [matchId]
+              properties:
+                matchId:
+                  type: string
+      responses:
+        "200":
+          description: Результат завершения. Доступно участникам матча и администраторам.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  /api/admin/tournament/disable:
+    post:
+      summary: Выключить турнирный режим
+      operationId: disableTournament
+      tags: [Admin]
+      security:
+        - TelegramInitData: []
+      responses:
+        "200":
+          description: Режим выключен или уже был выключен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
 
 tags:
   - name: State

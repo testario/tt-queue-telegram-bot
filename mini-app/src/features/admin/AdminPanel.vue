@@ -5,7 +5,15 @@ import { useQueue } from '@/composables/useQueue.js'
 import AppButton from '@/shared/ui/AppButton.vue'
 import PlayerManager from './PlayerManager.vue'
 
-const { isAdmin, checkAdmin, pause, resume, emerge } = useAdmin()
+const {
+  isAdmin,
+  checkAdmin,
+  pause,
+  resume,
+  emerge,
+  enableTournament,
+  disableTournament,
+} = useAdmin()
 const { state } = useQueue()
 
 // Какое из действий сейчас выполняется, а не общий булев флаг — "Поставить
@@ -21,6 +29,7 @@ onMounted(() => checkAdmin())
 
 const isPaused = computed(() => state.paused)
 const isEmergeActive = computed(() => state.emergeActive)
+const isTournamentEnabled = computed(() => state.tournamentEnabled)
 const hasActiveMatch = computed(() => {
   const m = state.queue[0]
   return m?.status === 'playing'
@@ -55,6 +64,8 @@ const confirmAndAct = async (message, name, action) => {
 const errorMessages = {
   already_paused: 'Пауза уже активна',
   not_paused: 'Пауза не активна',
+  tournament_already_enabled: 'Турнирный режим уже включён',
+  tournament_already_disabled: 'Турнирный режим уже выключен',
   admin_required: 'Требуются права администратора',
   connection_error: 'Ошибка соединения',
 }
@@ -119,6 +130,26 @@ const resultText = computed(() => {
         @click="confirmAndAct('Экстренная пауза остановит текущий матч. Продолжить?', 'emerge', emerge)"
       >
         Экстренная пауза матча
+      </AppButton>
+
+      <AppButton
+        v-if="!isTournamentEnabled"
+        variant="ghost"
+        :loading="pendingAction === 'enableTournament'"
+        :disabled="pendingAction !== null && pendingAction !== 'enableTournament'"
+        @click="handleAction('enableTournament', enableTournament)"
+      >
+        Включить турнирный режим
+      </AppButton>
+
+      <AppButton
+        v-else
+        variant="ghost"
+        :loading="pendingAction === 'disableTournament'"
+        :disabled="pendingAction !== null && pendingAction !== 'disableTournament'"
+        @click="handleAction('disableTournament', disableTournament)"
+      >
+        Выключить турнирный режим
       </AppButton>
 
     </div>

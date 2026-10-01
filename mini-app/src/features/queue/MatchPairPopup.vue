@@ -18,17 +18,20 @@ const now = ref(Date.now())
 let timer = null
 
 const isPlaying = computed(() => props.match.status === 'playing')
+const isTournament = computed(() => props.match.type === 'tournament')
 const startTime = computed(() => formatTime(props.match.startDate))
 const endTime = computed(() => formatTime(props.match.endDate))
 const statusText = computed(() => (isPlaying.value ? 'live' : 'ожидает'))
-const scheduleText = computed(() => `${startTime.value} - ${endTime.value}`)
+const scheduleText = computed(() => isTournament.value ? 'Без ограничения времени' : `${startTime.value} - ${endTime.value}`)
 
 const remainingText = computed(() => {
+  if (!props.match.endDate) return '—'
   const ms = props.match.endDate.getTime() - now.value
   return formatCountdown(ms)
 })
 
 const progressPercent = computed(() => {
+  if (!props.match.endDate) return 0
   const start = props.match.startDate.getTime()
   const end = props.match.endDate.getTime()
   const duration = end - start
@@ -82,7 +85,7 @@ watch(() => props.match, startTimer)
       </div>
     </div>
 
-    <div v-if="isPlaying" class="match-popup__progress-card">
+    <div v-if="isPlaying && !isTournament" class="match-popup__progress-card">
       <div class="match-popup__progress-top">
         <span>До конца</span>
         <strong>{{ remainingText }}</strong>
@@ -93,7 +96,7 @@ watch(() => props.match, startTimer)
     </div>
 
     <div v-else class="match-popup__schedule">
-      <span>Временной интервал</span>
+      <span>{{ isTournament ? 'Турнирная игра' : 'Временной интервал' }}</span>
       <strong>{{ scheduleText }}</strong>
     </div>
 

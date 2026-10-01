@@ -7,12 +7,14 @@ import SearchPanel from '@/features/search/SearchPanel.vue'
 import PlayedSection from '@/features/played/PlayedSection.vue'
 import InviteCard from '@/features/direct-match/InviteCard.vue'
 
-const { state, player, cancelMatch } = useQueue()
+const { state, player, cancelMatch, finishTournamentMatch } = useQueue()
 
 const selectedMatchKey = ref(null)
 const cancelling = ref(false)
+const finishingTournament = ref(false)
 
 const isMyMatch = (match) => match.player1 === player || match.player2 === player
+const canFinishTournament = (match) => match.type === 'tournament' && isMyMatch(match)
 
 const handleCancel = async () => {
   if (cancelling.value) return
@@ -23,6 +25,18 @@ const handleCancel = async () => {
     console.error('Не удалось отменить матч', e)
   } finally {
     cancelling.value = false
+  }
+}
+
+const handleFinishTournament = async (match) => {
+  if (finishingTournament.value || !match.id) return
+  finishingTournament.value = true
+  try {
+    await finishTournamentMatch(match.id)
+  } catch (error) {
+    console.error('Не удалось завершить турнирный матч', error)
+  } finally {
+    finishingTournament.value = false
   }
 }
 
@@ -70,7 +84,17 @@ const openMatchPopup = (match) => {
 
       <!-- Активный матч -->
       <section v-if="currentMatch" class="section">
-        <MatchCard :key="getMatchKey(currentMatch)" :match="currentMatch" :is-current="true" :cancelable="isMyMatch(currentMatch)" @select="openMatchPopup" @cancel="handleCancel" />
+        <MatchCard
+          :key="getMatchKey(currentMatch)"
+          :match="currentMatch"
+          :is-current="true"
+          :cancelable="isMyMatch(currentMatch) && currentMatch.type !== 'tournament'"
+          :finishable="canFinishTournament(currentMatch)"
+          :finishing="finishingTournament"
+          @select="openMatchPopup"
+          @cancel="handleCancel"
+          @finish="handleFinishTournament"
+        />
       </section>
 
       <!-- Нет матчей -->

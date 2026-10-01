@@ -8,6 +8,8 @@ const state = reactive({
   played: [],
   paused: false,
   emergeActive: false,
+  tournamentEnabled: false,
+  tournamentPlayers: [],
   serverTime: null,
   pendingInvites: [],
   loading: true,
@@ -62,12 +64,14 @@ const applyState = (data) => {
   state.queue = (data.queue || []).map((m) => ({
     ...m,
     startDate: new Date(m.startDate),
-    endDate: new Date(m.endDate),
+    endDate: m.endDate ? new Date(m.endDate) : null,
   }))
   state.searching = data.searching || []
   state.played = data.played || []
   state.paused = data.paused || false
   state.emergeActive = data.emergeActive || false
+  state.tournamentEnabled = data.tournamentEnabled === true
+  state.tournamentPlayers = data.tournamentPlayers || []
   state.serverTime = data.serverTime ? new Date(data.serverTime) : null
   state.pendingInvites = data.pendingInvites || []
   state.loaded = true
@@ -149,7 +153,7 @@ const connectSse = () => {
 }
 
 export function useQueue() {
-  const { get, del } = useApi()
+  const { get, post, del } = useApi()
   const { player } = useTelegram()
 
   const init = async () => {
@@ -176,5 +180,10 @@ export function useQueue() {
     }
   }
 
-  return { state: readonly(state), player, init, cancelMatch }
+  const finishTournamentMatch = async (matchId) => {
+    const result = await post('/tournament/finish', { matchId })
+    if (!result.ok) throw new Error(result.reason || 'tournament_finish_failed')
+  }
+
+  return { state: readonly(state), player, init, cancelMatch, finishTournamentMatch }
 }

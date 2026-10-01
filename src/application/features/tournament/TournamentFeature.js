@@ -7,14 +7,16 @@ class TournamentFeature {
    * @param {(now: Date) => Date} [deps.getInviteExpiration] Время истечения приглашения.
    * @param {(callback: () => void, delayMs: number) => unknown} [deps.schedule] Планировщик очистки.
    * @param {(handle: unknown) => void} [deps.cancel] Отмена планировщика.
+   * @param {{ isEnabled: (chatId: string) => boolean|Promise<boolean>, enable: (chatId: string) => boolean|Promise<boolean>, disable: (chatId: string) => boolean|Promise<boolean> }} [deps.stateStore] Durable-хранилище режима.
    */
-  constructor({ getInviteExpiration, schedule, cancel } = {}) {
+  constructor({ getInviteExpiration, schedule, cancel, stateStore } = {}) {
     this.enabledChats = new Set();
     this.invites = new Map();
     this.nextInviteId = 1;
     this.getInviteExpiration = getInviteExpiration || TournamentFeature.getEndOfDay;
     this.schedule = schedule || ((callback, delayMs) => setTimeout(callback, delayMs));
     this.cancel = cancel || ((handle) => clearTimeout(handle));
+    this.stateStore = stateStore || null;
   }
 
   /**
@@ -31,7 +33,9 @@ class TournamentFeature {
    */
   isEnabled(chatId) {
     const key = this.normalizeChatId(chatId);
-    return key ? this.enabledChats.has(key) : false;
+    if (!key) return false;
+    if (this.stateStore) return this.stateStore.isEnabled(key);
+    return this.enabledChats.has(key);
   }
 
   /**
@@ -40,7 +44,9 @@ class TournamentFeature {
    */
   enable(chatId) {
     const key = this.normalizeChatId(chatId);
-    if (!key || this.enabledChats.has(key)) return false;
+    if (!key) return false;
+    if (this.stateStore) return this.stateStore.enable(key);
+    if (this.enabledChats.has(key)) return false;
     this.enabledChats.add(key);
     return true;
   }
@@ -51,7 +57,14 @@ class TournamentFeature {
    */
   disable(chatId) {
     const key = this.normalizeChatId(chatId);
-    if (!key || !this.enabledChats.has(key)) return false;
+    if (!key) return false;
+    if (this.stateStore) {
+      return Promise.resolve(this.stateStore.disable(key)).then((disabled) => {
+        if (disabled) this.removeChatInvites(key);
+        return disabled;
+      });
+    }
+    if (!this.enabledChats.has(key)) return false;
     this.enabledChats.delete(key);
     this.removeChatInvites(key);
     return true;

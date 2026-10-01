@@ -85,6 +85,7 @@ const {
   messages,
   ui,
   log,
+  tournamentFeature,
 } = botResult;
 
 let shutdownPromise = null;
@@ -161,6 +162,7 @@ webAppPromise = createWebApp({
   playersRepository,
   invitesStore,
   eventBus,
+  tournamentFeature,
 }).catch((err) => {
   log.error("Не удалось запустить WebApp", { message: err.message });
 });

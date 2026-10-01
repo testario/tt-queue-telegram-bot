@@ -5,11 +5,13 @@ const addDefined = (target, key, value) => {
 export const isSyntheticFormerUsername = (username) => /^@__former_/.test(username || '')
 
 export const toPublicMatch = (match) => ({
+  id: match?.id,
   player1: match?.player1,
   player2: match?.player2,
   startDate: match?.startDate,
   endDate: match?.endDate,
   status: match?.status,
+  type: match?.type,
 })
 
 export const toPublicInvite = (invite) => {
@@ -20,6 +22,7 @@ export const toPublicInvite = (invite) => {
   }
   addDefined(result, 'createdAt', invite?.createdAt)
   addDefined(result, 'expiresAt', invite?.expiresAt)
+  addDefined(result, 'type', invite?.type)
   return result
 }
 
@@ -45,6 +48,8 @@ export const toPublicState = ({
   serverTime,
   revision,
   pendingInvites,
+  tournamentEnabled,
+  tournamentPlayers,
 }) => {
   const result = {
     queue: (state?.queue || []).map(toPublicMatch),
@@ -63,5 +68,7 @@ export const toPublicState = ({
   // параллельных запросах) даёт клиенту надёжный маркер "какой снимок свежее",
   // не зависящий от рассинхронизации часов между процессами.
   addDefined(result, 'revision', revision)
+  addDefined(result, 'tournamentEnabled', tournamentEnabled)
+  addDefined(result, 'tournamentPlayers', tournamentPlayers)
   return result
 }

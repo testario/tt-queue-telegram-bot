@@ -8,6 +8,8 @@ import {
   buildConfirmRegistrationKeyboard,
 } from '#interfaces/telegram/keyboards.js'
 import { QueueState } from '#domain'
+import { Match } from '#domain/entities/Match.js'
+import { canCreateTournamentMatch, getTournamentPlayers } from '#application/config/tournament.js'
 import { recoverTimers } from '#infrastructure/timers/recoverTimers.js'
 import { updateQueueState } from '#application/usecases/queueStateCas.js'
 import {
@@ -41,6 +43,7 @@ export const registerRoutes = async (app, deps) => {
     log,
     playersRepository,
     invitesStore,
+    tournamentFeature,
   } = deps
 
   const context = getContext(queueChatId)
@@ -60,6 +63,10 @@ export const registerRoutes = async (app, deps) => {
       serverTime: context.clock.now().toISOString(),
       revision,
       pendingInvites: await invitesStore.getAll(),
+      ...(tournamentFeature ? {
+        tournamentEnabled: await tournamentFeature.isEnabled(queueChatId),
+        tournamentPlayers: [...getTournamentPlayers()],
+      } : {}),
     })
   }
 
@@ -1044,9 +1051,23 @@ export const registerRoutes = async (app, deps) => {
     return { ok: result.ok, status: result.status }
   })
 
+  app.post('/api/tournament/finish', { preHandler: [auth, requireVerified] }, async (req) => {
+    const { matchId } = req.body || {}
+    if (!matchId || !context.finishTournamentMatch) return { ok: false, reason: 'not_found' }
+
+    const adminIds = await getChatAdminIds()
+    const result = await context.finishTournamentMatch.execute(req.player, matchId, {
+      identityToken: req.identityToken,
+      isAdmin: adminIds.has(String(req.tgUser.id)),
+    })
+    if (result.ok) sseManager.broadcast('state_update', await buildStatePayload())
+    return result
+  })
+
   // POST /api/direct — прямое приглашение
   app.post('/api/direct', { preHandler: [auth, requireVerified] }, async (req, reply) => {
-    const { opponent } = req.body
+    const { opponent, type = Match.types.standard } = req.body
+    const isTournament = type === Match.types.tournament
 
     const normalizedOpponent = context.directMatch.normalizeOpponent(opponent)
     if (await isUsernameBanned(normalizedOpponent)) {
@@ -1055,6 +1076,10 @@ export const registerRoutes = async (app, deps) => {
     if (!normalizedOpponent) {
       const result = await context.directMatch.execute(req.player, opponent, { identityToken: req.identityToken })
       return { ok: result.ok, reason: result.reason }
+    }
+    if (isTournament && (!(await tournamentFeature?.isEnabled(queueChatId))
+      || !canCreateTournamentMatch(getTournamentPlayers(), req.player, normalizedOpponent))) {
+      return { ok: false, reason: 'tournament_unavailable' }
     }
     // CreateDirectMatch.execute тоже это проверяет (и остаётся источником
     // истины — этот путь и команда /play в чате идут через один и тот же
@@ -1099,6 +1124,7 @@ export const registerRoutes = async (app, deps) => {
         playerIdentity: req.identityToken,
         opponentIdentity,
         createdAt: Date.now(),
+        type: isTournament ? Match.types.tournament : Match.types.standard,
       })
     } catch (err) {
       log.error('Не удалось создать прямое приглашение', { message: err.message })
@@ -1111,6 +1137,7 @@ export const registerRoutes = async (app, deps) => {
       result = await context.directMatch.execute(req.player, normalizedOpponent, {
         identityToken: req.identityToken,
         opponentIdentity,
+        ignorePlayed: isTournament,
       })
     } catch (err) {
       await invitesStore.deleteById?.(invite.inviteId)
@@ -1126,7 +1153,9 @@ export const registerRoutes = async (app, deps) => {
         bot,
         playersRepository,
         invite,
-        text: messages.directInvite({ from: invite.player, to: invite.opponent }),
+        text: invite.type === Match.types.tournament
+          ? messages.tournamentInvite({ from: invite.player, to: invite.opponent })
+          : messages.directInvite({ from: invite.player, to: invite.opponent }),
         replyMarkup: buildDirectInviteKeyboard(invite, ui),
         directReplyMarkup: buildDirectInviteRecipientKeyboard(invite, ui),
         fallbackChatId: queueChatId,
@@ -1139,7 +1168,9 @@ export const registerRoutes = async (app, deps) => {
         notifyDirectInviteInitiator({
           bot,
           invite,
-          text: messages.directInviteSent({ from: invite.player, to: invite.opponent }),
+          text: invite.type === Match.types.tournament
+            ? messages.tournamentInvite({ from: invite.player, to: invite.opponent })
+            : messages.directInviteSent({ from: invite.player, to: invite.opponent }),
           replyMarkup: buildDirectInviteInitiatorKeyboard(invite, ui),
           fallbackChatId: queueChatId,
           log,
@@ -1162,6 +1193,10 @@ export const registerRoutes = async (app, deps) => {
         return { ok: false, reason: 'invite_not_found' }
       }
       if (!pending) return { ok: false, reason: 'invite_not_found' }
+      if (pending.type === Match.types.tournament && (!(await tournamentFeature?.isEnabled(queueChatId))
+        || !canCreateTournamentMatch(getTournamentPlayers(), pending.player, req.player))) {
+        return { ok: false, reason: 'tournament_unavailable' }
+      }
       const currentState = await context.repository.get()
       if (!currentState.isActiveIdentity?.(req.identityToken)
         || !QueueState.sameIdentity(currentState.getActiveIdentity?.(req.player), pending.opponentIdentity)) {
@@ -1192,6 +1227,7 @@ export const registerRoutes = async (app, deps) => {
         [invite.player]: invite.playerIdentity,
         [req.player]: invite.opponentIdentity,
       },
+      type: invite.type === Match.types.tournament ? Match.types.tournament : Match.types.standard,
     })
     if (result.ok) {
       sseManager.broadcast('state_update', await buildStatePayload())
@@ -1200,7 +1236,9 @@ export const registerRoutes = async (app, deps) => {
       // Telegram не ждём — это не должно задерживать ответ клиенту.
       resolveSearchAnnouncement(invite.player, req.player, result.match)
       discardOrphanedSearchAnnouncements(result.orphanedSearchers)
-      notifyChat(messages.directAccepted({ from: invite.player, to: req.player }))
+      notifyChat(invite.type === Match.types.tournament
+        ? messages.tournamentAcceptedShort()
+        : messages.directAccepted({ from: invite.player, to: req.player }))
     } else {
       sseManager.broadcast('state_update', await buildStatePayload())
     }
@@ -1350,6 +1388,22 @@ export const registerRoutes = async (app, deps) => {
   // handleEmerge сам отправляет сообщение в Telegram через respondEmergeMessage
   app.post('/api/admin/emerge', { preHandler: [auth, requireVerified, requireAdmin] }, async (req) => {
     await handleEmerge({ chatId: queueChatId, context, userId: req.tgUser.id })
+    sseManager.broadcast('state_update', await buildStatePayload())
+    return { ok: true }
+  })
+
+  app.post('/api/admin/tournament/enable', { preHandler: [auth, requireVerified, requireAdmin] }, async () => {
+    if (!(await tournamentFeature?.enable(queueChatId))) return { ok: false, reason: 'tournament_already_enabled' }
+    sseManager.broadcast('state_update', await buildStatePayload())
+    return { ok: true }
+  })
+
+  app.post('/api/admin/tournament/disable', { preHandler: [auth, requireVerified, requireAdmin] }, async () => {
+    if (!(await tournamentFeature?.disable(queueChatId))) return { ok: false, reason: 'tournament_already_disabled' }
+    const invites = await invitesStore.getAll()
+    await Promise.all(invites
+      .filter((invite) => invite.type === Match.types.tournament)
+      .map((invite) => invitesStore.deleteById(invite.inviteId)))
     sseManager.broadcast('state_update', await buildStatePayload())
     return { ok: true }
   })

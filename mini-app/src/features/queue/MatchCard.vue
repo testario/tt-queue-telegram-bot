@@ -21,9 +21,14 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  finishable: {
+    type: Boolean,
+    default: false,
+  },
+  finishing: Boolean,
 })
 
-defineEmits(['select', 'cancel'])
+defineEmits(['select', 'cancel', 'finish'])
 
 const now = ref(Date.now())
 let progressTimer = null
@@ -34,6 +39,7 @@ onUnmounted(() => clearInterval(progressTimer))
 const startTime = computed(() => formatTime(props.match.startDate))
 const endTime = computed(() => formatTime(props.match.endDate))
 const isPlaying = computed(() => props.match.status === 'playing')
+const isTournament = computed(() => props.match.type === 'tournament')
 const isMatchStarted = computed(() => now.value >= props.match.startDate.getTime())
 const progressPercent = computed(() => {
   const start = props.match.startDate.getTime()
@@ -68,8 +74,12 @@ const progressPercent = computed(() => {
       <PlayerTag :name="match.player2" />
     </div>
 
-    <div v-if="isCurrent && isPlaying" class="match-card__timer">
+    <div v-if="isCurrent && isPlaying && !isTournament" class="match-card__timer">
       <CountdownTimer :end-date="match.endDate" />
+    </div>
+
+    <div v-else-if="isTournament" class="match-card__tournament">
+      🏆 Турнирная игра без лимита времени
     </div>
 
     <div v-else class="match-card__time">
@@ -82,6 +92,9 @@ const progressPercent = computed(() => {
 
     <button v-if="cancelable" class="match-card__cancel" @click.stop="$emit('cancel', match)">
       Отменить
+    </button>
+    <button v-if="finishable" class="match-card__finish" :disabled="finishing" @click.stop="$emit('finish', match)">
+      {{ finishing ? 'Завершаем...' : 'Закончить' }}
     </button>
   </div>
 </template>
@@ -166,6 +179,14 @@ const progressPercent = computed(() => {
     font-weight: 600;
   }
 
+  &__tournament {
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  &--current &__tournament { color: #ddf0ff; }
+
   &__progress {
     height: 8px;
     overflow: hidden;
@@ -205,7 +226,26 @@ const progressPercent = computed(() => {
     cursor: pointer;
   }
 
+  &__finish {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--color-success), transparent 80%);
+    color: var(--color-success);
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+
+    &:disabled { opacity: 0.5; cursor: wait; }
+  }
+
   &--current &__cancel {
+    background: #ffffff33;
+    color: #ffffff;
+  }
+
+  &--current &__finish {
     background: #ffffff33;
     color: #ffffff;
   }

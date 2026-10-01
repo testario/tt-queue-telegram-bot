@@ -19,10 +19,12 @@ const myInvite = computed(() =>
   state.pendingInvites?.find((inv) => inv.opponent === player) ?? null
 )
 
+const isTournamentInvite = computed(() => myInvite.value?.type === 'tournament')
+
 const inviteResolved = computed(() => {
   if (!myInvite.value) return false
   const inviter = myInvite.value.player
-  if (state.played.includes(player) || state.played.includes(inviter)) return true
+  if (!isTournamentInvite.value && (state.played.includes(player) || state.played.includes(inviter))) return true
   return state.queue.some(
     (m) =>
       (m.player1 === inviter || m.player2 === inviter) &&
@@ -34,7 +36,8 @@ const accept = async () => {
   if (!myInvite.value || pendingAction.value) return
   pendingAction.value = 'accept'
   try {
-    await api.post('/direct/accept', { inviteId: myInvite.value.inviteId })
+    const result = await api.post('/direct/accept', { inviteId: myInvite.value.inviteId })
+    if (!result.ok) console.error('Не удалось принять приглашение', result.reason)
   } catch (error) {
     console.error('Не удалось принять приглашение', error)
   } finally {
@@ -62,8 +65,8 @@ const decline = async () => {
         <AppIcon name="mail" />
       </span>
       <div>
-        <p class="invite-card__label">Входящий инвайт</p>
-        <h2>{{ myInvite.player }} зовет на игру</h2>
+        <p class="invite-card__label">{{ isTournamentInvite ? 'Входящий турнирный инвайт' : 'Входящий инвайт' }}</p>
+        <h2>{{ myInvite.player }} зовет {{ isTournamentInvite ? 'на турнирную игру' : 'на игру' }}</h2>
       </div>
     </div>
     <div class="invite-card__actions">

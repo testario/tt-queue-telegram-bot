@@ -10,6 +10,8 @@ import { RedisInvitesStore } from '#infrastructure/invites/RedisInvitesStore.js'
 import { createLogger } from '#infrastructure/logger/Logger.js'
 import { getPlayersMongoConfig } from '#infrastructure/players/config.js'
 import { migrateQueueState } from '#application/usecases/MigrateQueueState.js'
+import { TournamentFeature } from '#application/features/tournament/index.js'
+import { RedisTournamentStore } from '#infrastructure/tournament/RedisTournamentStore.js'
 
 const log = createLogger({ prefix: 'backend' })
 const redisUrl = process.env.REDIS_URL
@@ -27,6 +29,7 @@ const queueRepository = new RedisQueueRepository({ client: stateClient, logger: 
 // subscriber — для подписки на события от bot-процесса (SSE-broadcast)
 const eventBus = new RedisEventBus({ publisher, subscriber })
 const invitesStore = new RedisInvitesStore({ client: stateClient })
+const tournamentFeature = new TournamentFeature({ stateStore: new RedisTournamentStore({ client: stateClient }) })
 
 // MongoDB для списка игроков (нужен для /api/players и аватаров)
 const { uri: playersMongoUri, dbName: playersMongoDb, collectionName: playersMongoCollection } =
@@ -66,6 +69,7 @@ const webApp = await createWebApp({
   invitesStore,
   playersRepository,
   queueChatId: process.env.TG_CHAT_ID,
+  tournamentFeature,
   log,
 })
 

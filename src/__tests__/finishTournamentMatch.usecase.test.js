@@ -37,6 +37,17 @@ describe("FinishTournamentMatch", () => {
     });
   });
 
+  test("дает администратору завершить матч", async () => {
+    const orchestrator = { handleMatchFinished: jest.fn() };
+    const useCase = new FinishTournamentMatch({
+      repository: { get: jest.fn().mockResolvedValue({ queue: [match] }) },
+      orchestrator,
+    });
+
+    await expect(useCase.execute("@admin", "match-1", { isAdmin: true })).resolves.toEqual({ ok: true });
+    expect(orchestrator.handleMatchFinished).toHaveBeenCalledWith(match);
+  });
+
   test("не завершает следующий матч по кнопке из устаревшего сообщения", async () => {
     const orchestrator = { handleMatchFinished: jest.fn() };
     const useCase = new FinishTournamentMatch({

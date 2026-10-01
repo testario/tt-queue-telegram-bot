@@ -28,6 +28,7 @@ const createRuMessages = ({ formatDate }) => ({
     `🏆 ${from} приглашает ${to} на турнирный матч. Время игры не ограничено. Принять приглашение?`,
   tournamentAcceptedShort: () => "Приглашение на турнирный матч принято",
   tournamentFinished: () => "Турнирный матч завершен",
+  tournamentAccessDenied: () => "Турнирные матчи доступны только между участниками турнира.",
   tournamentDisabled: () => "Режим турнира неактивен, команда недоступна.",
   tournamentEnabled: () => "Турнирные матчи включены. Используйте /tournament @username.",
   tournamentAlreadyEnabled: () => "Турнирные матчи уже включены.",

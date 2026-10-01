@@ -25,6 +25,7 @@ const createFrMessages = ({ formatDate }) => ({
   tournamentInvite: ({ from, to }) => `🏆 ${from} invite ${to} à un match de tournoi. Accepter ?`,
   tournamentAcceptedShort: () => "Invitation au tournoi acceptée",
   tournamentFinished: () => "Match de tournoi terminé",
+  tournamentAccessDenied: () => "Les matchs de tournoi sont réservés aux participants du tournoi.",
   tournamentDisabled: () => "Les matchs de tournoi sont désactivés par l’administrateur.",
   tournamentEnabled: () => "Les matchs de tournoi sont activés.",
   tournamentAlreadyEnabled: () => "Les matchs de tournoi sont déjà activés.",

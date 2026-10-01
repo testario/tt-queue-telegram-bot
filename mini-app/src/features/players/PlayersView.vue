@@ -106,9 +106,16 @@ const playersWithStatus = computed(() =>
         && !currentPlayerInQueue.value
         && !currentPlayerPlayed.value
         && !currentPlayerHasOutgoingInvite.value,
-      canInvite: false,
+      canInviteTournament: canCreateTournament(player.username),
     }
-  }).map((player) => ({ ...player, canInvite: player.canInviteStandard || canCreateTournament(player.username) }))
+  }).map((player) => ({
+    ...player,
+    canInvite: queueState.tournamentEnabled ? Boolean(currentPlayer) : player.canInviteStandard,
+  }))
+)
+
+const selectedPlayer = computed(() =>
+  playersWithStatus.value.find((player) => player.username === selectedOpponent.value) ?? null
 )
 
 const filteredPlayers = computed(() => {
@@ -118,7 +125,7 @@ const filteredPlayers = computed(() => {
   return playersWithStatus.value.filter((player) => {
     if (player.banned) return false
     if (activeFilter.value === 'searching' && !player.isSearching) return false
-    if (activeFilter.value === 'available' && !player.canInvite) return false
+    if (activeFilter.value === 'available' && !player.canInviteStandard) return false
     return queryTokens.every((token) => player.searchHaystack.includes(token))
   })
 })
@@ -165,9 +172,12 @@ const chooseMatchType = (username) => {
 }
 
 const inviteWithSelectedType = (type) => {
-  const username = selectedOpponent.value
+  const player = selectedPlayer.value
   selectedOpponent.value = null
-  if (username) invite(username, type)
+  const isAvailable = type === 'tournament'
+    ? player?.canInviteTournament
+    : player?.canInviteStandard
+  if (player?.username && isAvailable) invite(player.username, type)
 }
 </script>
 
@@ -207,13 +217,13 @@ const inviteWithSelectedType = (type) => {
     </div>
 
     <div v-if="currentPlayerInQueue" class="players-view__played-banner">
-      Вы уже в очереди — приглашения недоступны
+      {{ queueState.tournamentEnabled ? 'Обычная игра недоступна — проверьте варианты в выборе игры' : 'Вы уже в очереди — приглашения недоступны' }}
     </div>
     <div v-else-if="currentPlayerPlayed" class="players-view__played-banner">
-      Вы уже играли в этой части дня — приглашения недоступны
+      {{ queueState.tournamentEnabled ? 'Обычная игра недоступна — проверьте варианты в выборе игры' : 'Вы уже играли в этой части дня — приглашения недоступны' }}
     </div>
     <div v-else-if="currentPlayerHasOutgoingInvite" class="players-view__played-banner">
-      Вы уже кого-то позвали — дождитесь ответа, прежде чем звать другого
+      {{ queueState.tournamentEnabled ? 'Сначала дождитесь ответа на текущее приглашение' : 'Вы уже кого-то позвали — дождитесь ответа, прежде чем звать другого' }}
     </div>
 
     <p v-if="inviteErrorText" class="players-view__error-banner">{{ inviteErrorText }}</p>
@@ -252,7 +262,8 @@ const inviteWithSelectedType = (type) => {
 
     <MatchTypeModal
       v-if="showMatchTypeModal"
-      :tournament-available="canCreateTournament(selectedOpponent || '')"
+      :standard-available="selectedPlayer?.canInviteStandard"
+      :tournament-available="selectedPlayer?.canInviteTournament"
       @select="inviteWithSelectedType"
       @close="showMatchTypeModal = false"
     />

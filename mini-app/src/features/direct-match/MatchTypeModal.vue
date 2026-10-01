@@ -3,6 +3,7 @@ import AppButton from '@/shared/ui/AppButton.vue'
 import AppModal from '@/shared/ui/AppModal.vue'
 
 defineProps({
+  standardAvailable: Boolean,
   tournamentAvailable: Boolean,
 })
 
@@ -18,7 +19,7 @@ const select = (type) => {
   <AppModal aria-label="Выбрать тип игры" content-class="match-type-modal" @close="$emit('close')" v-slot="{ close }">
     <h3 class="match-type-modal__title">Какую игру сыграем?</h3>
 
-    <AppButton @click="select('standard')">
+    <AppButton :disabled="!standardAvailable" @click="select('standard')">
       Обычная игра
     </AppButton>
 
@@ -30,7 +31,13 @@ const select = (type) => {
       Турнирная игра
     </AppButton>
 
-    <p v-if="!tournamentAvailable" class="match-type-modal__hint">
+    <p v-if="!standardAvailable && !tournamentAvailable" class="match-type-modal__hint">
+      Сейчас этого игрока нельзя пригласить
+    </p>
+    <p v-else-if="!standardAvailable" class="match-type-modal__hint">
+      Обычная игра сейчас недоступна
+    </p>
+    <p v-else-if="!tournamentAvailable" class="match-type-modal__hint">
       Турнирная игра доступна только участникам турнира
     </p>
 

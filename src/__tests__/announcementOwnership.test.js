@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals'
 import { buildBackendContext } from '#interfaces/webapp/index.js'
+import { QueueState } from '#domain/entities/QueueState.js'
 
 const match = {
   player1: '@alice',
@@ -48,6 +49,39 @@ describe('split-process announcement ownership', () => {
     await Promise.resolve()
 
     expect(bot.sendMessage).toHaveBeenCalledWith('queue', 'Игрок @alice отменил запись', undefined)
+  })
+
+  test('announces a tournament match completion in the chat', async () => {
+    const bot = { sendMessage: jest.fn().mockResolvedValue(undefined) }
+    const tournamentMatch = {
+      ...match,
+      id: 'tournament-1',
+      type: 'tournament',
+      endDate: null,
+    }
+    let state = new QueueState({ queue: [tournamentMatch] })
+    const queueRepository = {
+      getVersioned: jest.fn().mockResolvedValue({ state, revision: 0 }),
+      saveIfRevision: jest.fn().mockImplementation(async (_revision, nextState) => {
+        state = nextState
+        return true
+      }),
+    }
+    const context = buildBackendContext({
+      queueRepository,
+      queueChatId: 'queue',
+      messages: { tournamentFinished: jest.fn(() => 'Турнирный матч завершен') },
+      ui: {},
+      bot,
+      eventBus: null,
+      log: { error: jest.fn(), info: jest.fn(), warn: jest.fn() },
+    })
+
+    await context.orchestrator.handleMatchFinished(tournamentMatch)
+    await Promise.resolve()
+
+    expect(bot.sendMessage).toHaveBeenCalledWith('queue', 'Турнирный матч завершен', undefined)
+    expect(state.queue).toEqual([])
   })
 
   test('still drops state_update notifications, which carry no user-facing text', async () => {

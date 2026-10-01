@@ -57,7 +57,7 @@ export const buildBackendContext = ({ queueRepository, queueChatId, messages, ui
           return { state: result.state, result }
         },
       })
-      if (result) notifier.notify(queueChatId, messages.tournamentFinished(), { type: 'state_update' })
+      if (result) notifier.notify(queueChatId, messages.tournamentFinished(), { type: 'tournament_finished' })
     },
   }
 

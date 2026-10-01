@@ -1,5 +1,6 @@
 import { Bot } from 'node-telegram-bot-api'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { fetch as undiciFetch, ProxyAgent } from 'undici'
 
 const normalizeReplyOptions = (options = {}) => {
   if (!options.reply_to_message_id || options.reply_parameters) return options
@@ -18,7 +19,9 @@ class TelegramApiAdapter {
     this.pollingErrorHandlers = []
     this.pollingPromise = null
     this.handlerContext = new AsyncLocalStorage()
-    this.bot = new Bot(token)
+    this.fetch = options.fetch ?? undiciFetch
+    this.proxyAgent = options.proxyUrl ? new ProxyAgent(options.proxyUrl) : null
+    this.bot = new Bot(token, this.proxyAgent ? { fetch: this.fetchWithProxy.bind(this) } : undefined)
     this.api = this.bot.api
 
     this.bot.catch((error) => {
@@ -132,6 +135,10 @@ class TelegramApiAdapter {
 
   runHandler(handler, ...args) {
     return this.handlerContext.run(true, () => handler(...args))
+  }
+
+  fetchWithProxy(url, options) {
+    return this.fetch(url, { ...options, dispatcher: this.proxyAgent })
   }
 }
 

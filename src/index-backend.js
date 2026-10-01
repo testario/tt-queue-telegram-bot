@@ -57,7 +57,7 @@ if (proxyUrl) {
 
 // Клиент Telegram API v2 без polling — только для API-запросов:
 // getChatMember (проверка прав admin), sendMessage (уведомления в чат), getUserProfilePhotos (аватары)
-const tgApi = createTelegramClient(token)
+const tgApi = createTelegramClient(token, { proxyUrl })
 
 const webApp = await createWebApp({
   bot: tgApi,

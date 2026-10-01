@@ -16,6 +16,21 @@ describe('Telegram API v2 client', () => {
     })
   })
 
+  it('uses the configured HTTP proxy for Telegram requests', async () => {
+    const fetch = jest.fn().mockResolvedValue({ ok: true })
+    const client = createTelegramClient('token', {
+      proxyUrl: 'http://127.0.0.1:8080',
+      fetch,
+    })
+
+    await client.api.transport.fetchImpl('https://api.telegram.org', { method: 'POST' })
+
+    expect(fetch).toHaveBeenCalledWith('https://api.telegram.org', {
+      method: 'POST',
+      dispatcher: client.proxyAgent,
+    })
+  })
+
   it('supports every Telegram method used by the WebApp', async () => {
     const client = createTelegramClient('token')
     const getChatAdministrators = jest.fn().mockResolvedValue([])

@@ -54,6 +54,32 @@ import { Match } from "#domain";
 import { QueueState } from "#domain/entities/QueueState.js";
 import { sendDirectInviteNotification } from "#interfaces/telegram/directInviteNotification.js";
 
+const getProxyHost = (proxyUrl) => {
+  if (!proxyUrl) return null;
+
+  try {
+    return new URL(proxyUrl).host;
+  } catch {
+    return "invalid";
+  }
+};
+
+const getTransportErrorContext = (error) => {
+  const cause = error?.cause;
+  const rootCause = cause?.cause;
+  return {
+    code: error?.code || null,
+    causeCode: cause?.code || null,
+    causeName: cause?.name || null,
+    causeAddress: cause?.address || null,
+    causePort: cause?.port || null,
+    rootCauseCode: rootCause?.code || null,
+    rootCauseName: rootCause?.name || null,
+    rootCauseAddress: rootCause?.address || null,
+    rootCausePort: rootCause?.port || null,
+  };
+};
+
 /**
  * @typedef {import("#application/types.js").Logger} Logger
  * @typedef {import("#application/types.js").BotMessages} BotMessages
@@ -350,13 +376,14 @@ const createBot = (
   // РФ блокирует api.telegram.org напрямую — запросы (включая long polling)
   // заворачиваются через HTTP(S)-прокси за пределами РФ, если он задан.
   const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
+  const proxyHost = getProxyHost(proxyUrl);
   if (proxyUrl) {
-    log.info("Telegram API запросы идут через прокси");
+    log.info("Telegram API запросы идут через прокси", { proxyHost });
   } else {
     log.warn("HTTP_PROXY/HTTPS_PROXY не заданы: запросы к Telegram API идут напрямую");
   }
 
-  const bot = createTelegramClient(token, { polling: pollingOptions });
+  const bot = createTelegramClient(token, { polling: pollingOptions, proxyUrl });
 
   const startLongPolling = async () => {
     if (isStopped) return;
@@ -2981,7 +3008,11 @@ const createBot = (
   });
 
   bot.on("polling_error", (error) => {
-    log.error("Ошибка polling", { message: error.message });
+    log.error("Ошибка polling", {
+      message: error.message,
+      proxyHost,
+      ...getTransportErrorContext(error),
+    });
   });
 
   if (queueChatId) {

@@ -11,7 +11,7 @@ import { QueueState } from '#domain'
 import { Match } from '#domain/entities/Match.js'
 import { canCreateTournamentMatch, getTournamentPlayers } from '#application/config/tournament.js'
 import { recoverTimers } from '#infrastructure/timers/recoverTimers.js'
-import { updateQueueState } from '#application/usecases/queueStateCas.js'
+import { normalizeQueueState, updateQueueState } from '#application/usecases/queueStateCas.js'
 import {
   sendDirectInviteNotification,
   notifyDirectInviteInitiator,
@@ -50,6 +50,15 @@ export const registerRoutes = async (app, deps) => {
   const legacyTestContext = !context?.claimPlayerIdentity && !context?.testIdentityActivation
 
   const buildStatePayload = async () => {
+    if (typeof context.queueService?.normalizeState === 'function') {
+      await normalizeQueueState({
+        repository: context.repository,
+        queueService: context.queueService,
+        now: context.clock.now(),
+        logger: log,
+        operation: 'normalize_webapp_state',
+      })
+    }
     // getVersioned даёт revision — монотонный маркер порядка снимков, нужный
     // клиенту, чтобы не откатить UI устаревшим payload'ом, пришедшим позже
     // свежего (см. toPublicState).

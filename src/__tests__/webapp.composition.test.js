@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals'
 import { createWebApp, buildBackendContext } from '#interfaces/webapp/index.js'
+import { QueueState } from '#domain/entities/QueueState.js'
 
 describe('all-in-one webapp composition', () => {
   const previousNodeEnv = process.env.NODE_ENV
@@ -140,11 +141,16 @@ describe('all-in-one webapp composition', () => {
     const eventBus = {
       subscribe: async (handler) => { handlers.push(handler) },
     }
+    let queueState = QueueState.createEmpty()
+    let revision = 0
     const queueRepository = {
-      get: jest.fn().mockResolvedValue({ queue: [], searching: [], played: [] }),
-      getVersioned: jest.fn().mockResolvedValue({
-        state: { queue: [], searching: [], played: [] },
-        revision: 0,
+      get: jest.fn(async () => queueState.clone()),
+      getVersioned: jest.fn(async () => ({ state: queueState.clone(), revision })),
+      saveIfRevision: jest.fn(async (expectedRevision, nextState) => {
+        if (expectedRevision !== revision) return false
+        queueState = nextState.clone()
+        revision += 1
+        return true
       }),
     }
     const appResult = await createWebApp({

@@ -40,4 +40,36 @@ async function updateQueueState({ repository, mutate, logger, operation }) {
   throw error;
 }
 
-export { MAX_QUEUE_WRITE_ATTEMPTS, QueueStateConflictError, updateQueueState };
+/**
+ * Применяет сброс списка сыгравших по расписанию и сохраняет состояние только
+ * если нормализация действительно его изменила.
+ *
+ * @param {Object} deps
+ * @param {import("#application/types.js").QueueRepository} deps.repository
+ * @param {import("#application/types.js").QueueService} deps.queueService
+ * @param {Date} deps.now
+ * @param {import("#application/types.js").Logger} deps.logger
+ * @param {string} deps.operation
+ * @returns {Promise<Object>}
+ */
+async function normalizeQueueState({ repository, queueService, now, logger, operation }) {
+  return updateQueueState({
+    repository,
+    logger,
+    operation,
+    mutate: (state) => {
+      const normalized = queueService.normalizeState(state, now);
+      return {
+        state: normalized.state,
+        save: normalized.stateChanged,
+      };
+    },
+  });
+}
+
+export {
+  MAX_QUEUE_WRITE_ATTEMPTS,
+  QueueStateConflictError,
+  normalizeQueueState,
+  updateQueueState,
+};

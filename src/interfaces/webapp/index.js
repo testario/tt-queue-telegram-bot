@@ -22,7 +22,11 @@ import { I18N_CONFIG } from '#application/config/i18n.js'
 import { DEFAULT_GAME_TIME, PAUSE_CANCEL_MATCH_MS, TIME_READY, WORK_SCHEDULE } from '#application/config/time.js'
 import { Match } from '#domain'
 import { buildMatchCancelKeyboard } from '#interfaces/telegram/keyboards.js'
-import { updateQueueState, QueueStateConflictError } from '#application/usecases/queueStateCas.js'
+import {
+  normalizeQueueState,
+  updateQueueState,
+  QueueStateConflictError,
+} from '#application/usecases/queueStateCas.js'
 import { toPublicState } from './publicDtos.js'
 import { getTournamentPlayers } from '#application/config/tournament.js'
 
@@ -386,8 +390,19 @@ export const createWebApp = async ({
 
   // Функция получения текущего состояния для SSE-рассылки
   const resolvedContext = resolvedGetContext ? resolvedGetContext(queueChatId) : null
+  const normalizePlayedState = async (operation) => {
+    if (typeof resolvedContext?.queueService?.normalizeState !== 'function') return
+    await normalizeQueueState({
+      repository: resolvedContext.repository,
+      queueService: resolvedContext.queueService,
+      now: resolvedContext.clock.now(),
+      logger: log,
+      operation,
+    })
+  }
   const buildStatePayload = async () => {
     if (!resolvedContext) return {}
+    await normalizePlayedState('normalize_webapp_sse_state')
     // getVersioned даёт revision — монотонный маркер порядка снимков (см.
     // комментарий в router.js рядом с аналогичным вызовом).
     const { state, revision } = typeof resolvedContext.repository.getVersioned === 'function'
@@ -408,6 +423,32 @@ export const createWebApp = async ({
       } : {}),
     })
   }
+
+  let playedResetTimer = null
+  const schedulePlayedReset = () => {
+    if (typeof resolvedContext?.queueService?.getNextPlayedResetAt !== 'function') return
+    const now = resolvedContext.clock.now()
+    const resetAt = resolvedContext.queueService.getNextPlayedResetAt(now)
+    const delay = Math.max(0, resetAt.getTime() - now.getTime())
+    playedResetTimer = setTimeout(async () => {
+      try {
+        await normalizePlayedState('normalize_scheduled_webapp_state')
+        sseManager.broadcast('state_update', await buildStatePayload())
+      } catch (error) {
+        log.error('Не удалось сбросить список сыгравших по расписанию', { message: error.message })
+      } finally {
+        schedulePlayedReset()
+      }
+    }, delay)
+    playedResetTimer.unref?.()
+  }
+
+  await normalizePlayedState('normalize_webapp_startup_state')
+  schedulePlayedReset()
+  app.addHook('onClose', () => {
+    if (playedResetTimer) clearTimeout(playedResetTimer)
+    playedResetTimer = null
+  })
 
   // Подписываемся на источник событий:
   // - backend-only (eventBus + queueRepository): Redis Pub/Sub → SSE

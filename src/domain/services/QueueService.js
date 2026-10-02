@@ -384,13 +384,29 @@ class QueueService {
   }
 
   /**
+   * Возвращает ближайшую границу, на которой нужно очистить список сыгравших.
+   * @param {Date} now Текущее время.
+   * @returns {Date}
+   */
+  getNextPlayedResetAt(now) {
+    const { workStart, lunchStart, workEnd } = this.resolveSchedule(now);
+    const nextReset = [workStart, lunchStart, workEnd].find((resetAt) => now < resetAt);
+    if (nextReset) return nextReset;
+
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return this.toTodayTime(tomorrow, this.workSchedule.workStart);
+  }
+
+  /**
    * Нормализует состояние с учетом расписания дня.
    * @param {QueueState} state Текущее состояние.
    * @param {Date} now Текущее время.
-   * @returns {{state: QueueState, isLunchTime: boolean, isAfterWork: boolean}}
+   * @returns {{state: QueueState, isLunchTime: boolean, isAfterWork: boolean, stateChanged: boolean}}
    */
   normalizeState(state, now) {
     const nextState = state.clone();
+    let stateChanged = false;
     const {
       workStartTime,
       lunchStart,
@@ -400,8 +416,9 @@ class QueueService {
       workEndTime,
     } = this.resolveSchedule(now);
 
-    if (!nextState.lastPlayedResetAt) {
+    if (!nextState.lastPlayedResetAt || Number.isNaN(nextState.lastPlayedResetAt.getTime())) {
       nextState.lastPlayedResetAt = new Date(now);
+      stateChanged = true;
     }
 
     const lastResetTime = nextState.lastPlayedResetAt.getTime();
@@ -418,18 +435,19 @@ class QueueService {
       nextState.played = [];
       nextState.playedIdentities = [];
       nextState.lastPlayedResetAt = new Date(now);
+      stateChanged = true;
     }
 
     const isLunchTime = now >= lunchStart && now < lunchEnd;
     const isAfterWork = now >= workEnd;
 
-    return { state: nextState, isLunchTime, isAfterWork };
+    return { state: nextState, isLunchTime, isAfterWork, stateChanged };
   }
 
   /**
    * Формирует временные метки для текущего дня по расписанию.
    * @param {Date} now Текущее время.
-   * @returns {{workStartTime: number, lunchStart: Date, lunchEnd: Date, workEnd: Date, lunchStartTime: number, workEndTime: number}}
+   * @returns {{workStart: Date, workStartTime: number, lunchStart: Date, lunchEnd: Date, workEnd: Date, lunchStartTime: number, workEndTime: number}}
    */
   resolveSchedule(now) {
     const lunchStart = this.toTodayTime(now, this.workSchedule.lunchStart);
@@ -440,6 +458,7 @@ class QueueService {
     const workEnd = this.toTodayTime(now, this.workSchedule.workEnd);
 
     return {
+      workStart,
       workStartTime: workStart.getTime(),
       lunchStart,
       lunchEnd,

@@ -490,6 +490,13 @@ describe("QueueService", () => {
     expect(result.playedIdentities).toEqual([]);
   });
 
+  test("returns the next played reset boundary", () => {
+    expect(service.getNextPlayedResetAt(new Date(2024, 0, 1, 12, 0, 0, 0)))
+      .toEqual(new Date(2024, 0, 1, 13, 0, 0, 0));
+    expect(service.getNextPlayedResetAt(new Date(2024, 0, 1, 18, 0, 0, 0)))
+      .toEqual(new Date(2024, 0, 2, 10, 0, 0, 0));
+  });
+
   test("не добавляет сыгравших во время обеда", () => {
     const beforeLunch = new Date(2024, 0, 1, 12, 50, 0, 0);
     const lunchTime = new Date(2024, 0, 1, 13, 5, 0, 0);

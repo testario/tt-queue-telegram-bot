@@ -6,6 +6,7 @@ import { InMemoryInvitesStore } from '#infrastructure/invites/InMemoryInvitesSto
 import { InMemoryPlayersRepository } from '#infrastructure/players/InMemoryPlayersRepository.js'
 import { SseManager } from '#interfaces/webapp/sse.js'
 import { QueueState } from '#domain/entities/QueueState.js'
+import { QueueService } from '#domain/services/QueueService.js'
 import { createTestIdentityHelper } from '#application/usecases/createTestIdentityHelper.js'
 import { TournamentFeature } from '#application/features/tournament/TournamentFeature.js'
 
@@ -30,10 +31,13 @@ const createHarness = async ({
   playersRepository: playersRepositoryOverride = undefined,
   sseManager: sseManagerOverride = undefined,
   tournamentFeature = undefined,
+  initialState = undefined,
+  clock = { now: () => new Date('2026-01-01T00:00:00.000Z') },
+  queueService = { readyMs: 0, gameMs: 0 },
 } = {}) => {
   process.env.NODE_ENV = production ? 'production' : 'test'
 
-  let currentState = new QueueState({
+  let currentState = new QueueState(initialState || {
     queue: [],
     searching: [],
     played: [],
@@ -89,8 +93,8 @@ const createHarness = async ({
   const context = {
     testIdentityActivation,
     repository,
-    clock: { now: () => new Date('2026-01-01T00:00:00.000Z') },
-    queueService: { readyMs: 0, gameMs: 0 },
+    clock,
+    queueService,
     orchestrator: { cancelAll: jest.fn() },
     registerSearch: { execute: jest.fn().mockResolvedValue({ status: 'added' }) },
     cancelSearch: { execute: jest.fn().mockResolvedValue({ status: 'removed' }) },
@@ -216,6 +220,25 @@ describe('webapp REST routes', () => {
   afterAll(() => {
     if (previousNodeEnv === undefined) delete process.env.NODE_ENV
     else process.env.NODE_ENV = previousNodeEnv
+  })
+
+  test('resets played players before returning the Mini App state for a new workday', async () => {
+    const harness = await createHarness({
+      initialState: {
+        played: ['@played'],
+        playedIdentities: [{ username: '@played', userId: 1, generation: 1 }],
+        lastPlayedResetAt: new Date('2025-12-31T19:00:00.000Z'),
+      },
+      clock: { now: () => new Date('2026-01-01T10:01:00.000Z') },
+      queueService: new QueueService({ readyMs: 0, gameMs: 0 }),
+    })
+
+    const response = await harness.app.inject({ method: 'GET', url: '/api/state' })
+
+    expect(response.json().played).toEqual([])
+    expect(harness.state.playedIdentities).toEqual([])
+    expect(harness.state.lastPlayedResetAt).toEqual(new Date('2026-01-01T10:01:00.000Z'))
+    await harness.app.close()
   })
 
   test('activates a test identity before granting route access', async () => {

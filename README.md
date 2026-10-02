@@ -20,6 +20,40 @@
 ## Тесты
 - Unit: `npm test` (Jest, покрыты доменный сервис и use-case создания матча).
 
+## Пересоздание Docker-сервисов
+
+Скрипты выполняются из любой директории и по умолчанию используют
+`docker-compose.yml`:
+
+```bash
+./scripts/recreate-frontend.sh
+./scripts/recreate-backend.sh
+./scripts/recreate-bot.sh
+./scripts/recreate-all.sh
+./scripts/update.sh
+```
+
+`recreate-all.sh` останавливает bot и backend перед одновременным пересозданием,
+чтобы они не работали с разными версиями состояния очереди. Redis, MongoDB и
+xray при этом не перезапускаются. `update.sh` сначала делает `git pull --ff-only`,
+затем вызывает этот же согласованный rollout.
+
+Для dev-стенда используйте одноимённые скрипты из `scripts/dev/`:
+
+```bash
+./scripts/dev/recreate-frontend.sh
+./scripts/dev/recreate-backend.sh
+./scripts/dev/recreate-bot.sh
+./scripts/dev/recreate-all.sh
+./scripts/dev/update.sh
+./scripts/dev/force-recreate.sh --yes
+```
+
+`force-recreate.sh` полностью пересоздаёт dev-контейнеры и сеть, включая Redis,
+MongoDB и xray. Скрипт также удаляет dev-volumes — очередь, игроки и другие
+данные dev-стенда будут очищены. Он требует явного `--yes` и не предназначен
+для production.
+
 ## Mini App без Telegram
 - Запуск браузерного mock-режима: `cd mini-app && npm run dev:mock`.
 - Открыть: `http://127.0.0.1:5173/app/`.
